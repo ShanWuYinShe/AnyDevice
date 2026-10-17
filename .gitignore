@@ -5,6 +5,7 @@ any_device
 
 # Workwork / Temp
 .workwork/
+.worktrees/
 
 # OS / IDE
 .DS_Store

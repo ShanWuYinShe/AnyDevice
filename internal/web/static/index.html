@@ -6,13 +6,16 @@
     <title>AnyDevice - 跨端双向设备映射中心</title>
     <style>
         :root {
-            --bg: #090d16;
-            --card-bg: rgba(22, 30, 46, 0.85);
+            --bg-base: #0a0f1d;
+            --bg-sidebar: #0e1526;
+            --bg-card: rgba(22, 31, 50, 0.7);
+            --bg-card-hover: rgba(30, 42, 68, 0.85);
             --border: rgba(255, 255, 255, 0.08);
+            --border-hover: rgba(255, 255, 255, 0.16);
             --primary: #10b981;
-            --primary-glow: rgba(16, 185, 129, 0.35);
+            --primary-glow: rgba(16, 185, 129, 0.3);
             --secondary: #3b82f6;
-            --secondary-glow: rgba(59, 130, 246, 0.35);
+            --secondary-glow: rgba(59, 130, 246, 0.3);
             --accent: #8b5cf6;
             --text-main: #f8fafc;
             --text-muted: #94a3b8;
@@ -25,294 +28,399 @@
             padding: 0;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
             -webkit-tap-highlight-color: transparent;
-            touch-action: manipulation;
         }
 
         body {
-            background-color: var(--bg);
+            background-color: var(--bg-base);
             color: var(--text-main);
             min-height: 100vh;
+            width: 100vw;
+            display: flex;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        /* Desktop Sleek Scrollbars */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.12);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.25);
+        }
+
+        /* Desktop Layout Structure */
+        .app-layout {
+            display: flex;
+            width: 100%;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Left Sidebar (Desktop) */
+        .sidebar {
+            width: 240px;
+            background: var(--bg-sidebar);
+            border-right: 1px solid var(--border);
             display: flex;
             flex-direction: column;
-            align-items: center;
-            justify-content: flex-start;
-            padding: 14px;
-            background-image: 
-                radial-gradient(circle at 50% 10%, rgba(16, 185, 129, 0.08), transparent 45%),
-                radial-gradient(circle at 80% 80%, rgba(59, 130, 246, 0.05), transparent 40%);
-        }
-
-        .container {
-            width: 100%;
-            max-width: 480px;
-            background: var(--card-bg);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid var(--border);
-            border-radius: 24px;
-            padding: 20px;
-            box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.6);
-            margin: auto 0;
-        }
-
-        .header {
-            display: flex;
-            align-items: center;
             justify-content: space-between;
-            margin-bottom: 16px;
+            padding: 20px 14px;
+            flex-shrink: 0;
+            z-index: 10;
         }
 
-        .logo-area {
+        .brand-box {
             display: flex;
             align-items: center;
             gap: 12px;
+            padding: 0 8px 18px 8px;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 18px;
         }
 
-        .logo-badge {
-            width: 38px;
-            height: 38px;
-            border-radius: 12px;
+        .brand-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
             background: linear-gradient(135deg, #10b981, #3b82f6);
             display: flex;
             align-items: center;
             justify-content: center;
-            box-shadow: 0 4px 14px var(--primary-glow);
+            box-shadow: 0 4px 12px var(--primary-glow);
         }
 
-        .logo-badge svg {
-            width: 22px;
-            height: 22px;
+        .brand-icon svg {
+            width: 20px;
+            height: 20px;
             fill: #fff;
         }
 
-        .title {
-            font-size: 1.12rem;
-            font-weight: 700;
+        .brand-title {
+            font-size: 1.05rem;
+            font-weight: 800;
             letter-spacing: -0.02em;
+            color: #fff;
         }
 
-        .status-pill {
+        .brand-sub {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+        }
+
+        .nav-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            flex: 1;
+        }
+
+        .nav-item {
             display: flex;
             align-items: center;
-            gap: 6px;
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 0.75rem;
+            gap: 12px;
+            padding: 10px 14px;
+            border-radius: 10px;
+            font-size: 0.85rem;
             font-weight: 600;
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid var(--border);
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: 1px solid transparent;
+        }
+
+        .nav-item svg {
+            width: 18px;
+            height: 18px;
+            fill: currentColor;
+        }
+
+        .nav-item:hover {
+            color: var(--text-main);
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .nav-item.active {
+            color: var(--text-main);
+            background: rgba(16, 185, 129, 0.12);
+            border-color: rgba(16, 185, 129, 0.25);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .nav-item.active svg {
+            fill: var(--primary);
+        }
+
+        .sidebar-footer {
+            border-top: 1px solid var(--border);
+            padding-top: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .server-status-pill {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            font-size: 0.72rem;
+            color: var(--text-muted);
         }
 
         .status-dot {
             width: 8px;
             height: 8px;
             border-radius: 50%;
-            background: #64748b;
-            transition: all 0.3s ease;
-        }
-
-        .status-dot.connected {
             background: #10b981;
             box-shadow: 0 0 8px #10b981;
         }
 
-        /* Role Segmented Switcher */
-        .role-switcher {
-            display: flex;
-            background: rgba(0, 0, 0, 0.35);
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 4px;
-            margin-bottom: 16px;
-            gap: 4px;
-        }
-
-        .role-btn {
+        /* Main Stage Content */
+        .main-stage {
             flex: 1;
-            padding: 9px;
-            border-radius: 10px;
-            border: none;
-            background: transparent;
-            color: var(--text-muted);
-            font-size: 0.82rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.25s ease;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 6px;
-        }
-
-        .role-btn.active {
-            background: rgba(255, 255, 255, 0.1);
-            color: var(--text-main);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-        }
-
-        .role-btn.active.receiver {
-            background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(5, 150, 105, 0.15));
-            color: var(--primary);
-            border: 1px solid rgba(16, 185, 129, 0.3);
-        }
-
-        .role-btn.active.controller {
-            background: linear-gradient(135deg, rgba(139, 92, 246, 0.2), rgba(124, 58, 237, 0.15));
-            color: #c084fc;
-            border: 1px solid rgba(139, 92, 246, 0.3);
-        }
-
-        /* Master Connect Button */
-        .main-btn {
-            width: 100%;
-            padding: 14px;
-            border-radius: 14px;
-            border: none;
-            font-size: 0.95rem;
-            font-weight: 700;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            background: linear-gradient(135deg, #10b981, #059669);
-            color: #fff;
-            box-shadow: 0 8px 24px var(--primary-glow);
-            margin-bottom: 16px;
-            transition: all 0.25s ease;
-        }
-
-        .main-btn.active {
-            background: linear-gradient(135deg, #ef4444, #dc2626);
-            box-shadow: 0 8px 24px rgba(239, 68, 68, 0.35);
-        }
-
-        /* Receiver Panel */
-        .receiver-panel {
-            display: block;
-        }
-
-        .section-title {
-            font-size: 0.75rem;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            color: var(--text-muted);
-            margin-bottom: 10px;
-            font-weight: 600;
-        }
-
-        .device-selector-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-bottom: 16px;
-        }
-
-        .device-card {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 12px;
-            cursor: pointer;
-            transition: all 0.25s ease;
+            height: 100vh;
+            overflow-y: auto;
+            padding: 24px 30px;
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 20px;
+            background-image: 
+                radial-gradient(circle at 80% 10%, rgba(16, 185, 129, 0.05), transparent 45%),
+                radial-gradient(circle at 20% 90%, rgba(59, 130, 246, 0.05), transparent 40%);
         }
 
-        .device-card.active {
-            background: rgba(16, 185, 129, 0.08);
-            border-color: var(--primary);
-            box-shadow: 0 0 14px rgba(16, 185, 129, 0.15);
+        .top-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
         }
 
-        .device-card.active.mouse-card {
-            background: rgba(59, 130, 246, 0.08);
-            border-color: var(--secondary);
-            box-shadow: 0 0 14px rgba(59, 130, 246, 0.15);
+        .page-title {
+            font-size: 1.25rem;
+            font-weight: 800;
+            letter-spacing: -0.01em;
         }
 
-        .device-header {
+        .page-desc {
+            font-size: 0.78rem;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        /* Quick Stat Metrics Cards */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+        }
+
+        .metric-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 16px 18px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            transition: all 0.2s ease;
+        }
+
+        .metric-card:hover {
+            border-color: var(--border-hover);
+            background: var(--bg-card-hover);
+        }
+
+        .metric-icon-box {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .metric-icon-box svg {
+            width: 22px;
+            height: 22px;
+            fill: #fff;
+        }
+
+        .metric-label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+
+        .metric-value {
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: #fff;
+            margin-top: 2px;
+            font-family: monospace;
+        }
+
+        /* Tabs Content Areas */
+        .tab-panel {
+            display: none;
+            flex-direction: column;
+            gap: 20px;
+            animation: fadeIn 0.25s ease;
+        }
+
+        .tab-panel.active {
+            display: flex;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Two-Column Dashboard Grid */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1.1fr 0.9fr;
+            gap: 20px;
+        }
+
+        .content-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .card-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
         }
 
-        .device-icon-box {
-            width: 28px;
-            height: 28px;
-            border-radius: 8px;
-            background: rgba(255, 255, 255, 0.06);
+        .card-title-group {
             display: flex;
             align-items: center;
-            justify-content: center;
+            gap: 10px;
         }
 
-        .device-icon-box svg {
-            width: 16px;
-            height: 16px;
-            fill: var(--text-main);
+        .card-title-group svg {
+            width: 20px;
+            height: 20px;
+            fill: var(--primary);
         }
 
-        .device-card.active .device-icon-box {
-            background: var(--primary);
-        }
-
-        .device-card.active.mouse-card .device-icon-box {
-            background: var(--secondary);
-        }
-
-        .device-toggle-badge {
-            font-size: 0.7rem;
-            padding: 2px 7px;
-            border-radius: 10px;
-            background: rgba(255, 255, 255, 0.06);
-            color: var(--text-muted);
-            font-weight: 600;
-        }
-
-        .device-card.active .device-toggle-badge {
-            background: var(--primary);
-            color: #fff;
-        }
-
-        .device-card.active.mouse-card .device-toggle-badge {
-            background: var(--secondary);
-            color: #fff;
-        }
-
-        .device-info-name {
-            font-size: 0.88rem;
+        .card-title {
+            font-size: 0.95rem;
             font-weight: 700;
         }
 
-        .device-info-desc {
-            font-size: 0.7rem;
-            color: var(--text-muted);
-        }
-
-        /* Modules */
-        .module-container {
-            display: none;
-            background: rgba(255, 255, 255, 0.02);
+        /* Pairing Card Specifics */
+        .qr-pairing-box {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            background: rgba(0, 0, 0, 0.35);
             border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 14px;
-            margin-bottom: 14px;
+            border-radius: 14px;
+            padding: 16px;
         }
 
-        .module-container.visible {
-            display: block;
-        }
-
-        .visualizer-wrapper {
-            width: 100%;
-            height: 75px;
-            background: rgba(0, 0, 0, 0.4);
+        .qr-pairing-box img {
             border-radius: 10px;
+            background: #fff;
+            padding: 6px;
+            width: 130px;
+            height: 130px;
+            flex-shrink: 0;
+        }
+
+        .pairing-instructions {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .pairing-url-box {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-family: monospace;
+            color: var(--text-main);
+            font-weight: 700;
+            font-size: 0.85rem;
+        }
+
+        .copy-btn {
+            padding: 4px 8px;
+            border-radius: 6px;
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            font-size: 0.72rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            margin-left: auto;
+        }
+
+        .copy-btn:hover {
+            opacity: 0.9;
+        }
+
+        /* Network Select Dropdown */
+        .nic-selector-area {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .nic-select-box {
+            width: 100%;
+            background: #0f172a;
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            border-radius: 10px;
+            padding: 10px 14px;
+            font-size: 0.82rem;
+            outline: none;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+
+        .nic-select-box:hover, .nic-select-box:focus {
+            border-color: var(--primary);
+        }
+
+        /* Audio Visualizer Stage */
+        .visualizer-stage {
+            width: 100%;
+            height: 120px;
+            background: rgba(0, 0, 0, 0.45);
             border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 14px;
             overflow: hidden;
-            margin-bottom: 12px;
             position: relative;
         }
 
@@ -322,22 +430,44 @@
             display: block;
         }
 
-        .control-group {
-            margin-bottom: 10px;
+        /* Mouse Screen Mini-Radar */
+        .mouse-radar-box {
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            background: #040814;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 12px;
+            position: relative;
+            overflow: hidden;
+            box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.8);
         }
 
-        .control-header {
+        .radar-cursor {
+            width: 12px;
+            height: 12px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-2px, -2px);
+            pointer-events: none;
+            z-index: 10;
+        }
+
+        .radar-cursor svg {
+            width: 100%;
+            height: 100%;
+            fill: #38bdf8;
+            filter: drop-shadow(0 0 8px #38bdf8);
+        }
+
+        /* Slider Controls */
+        .control-row {
             display: flex;
+            align-items: center;
             justify-content: space-between;
-            font-size: 0.78rem;
-            color: var(--text-muted);
             margin-bottom: 6px;
-        }
-
-        .control-val {
-            color: var(--text-main);
-            font-weight: 700;
-            font-family: monospace;
+            font-size: 0.82rem;
+            color: var(--text-muted);
         }
 
         input[type="range"] {
@@ -351,434 +481,470 @@
 
         input[type="range"]::-webkit-slider-thumb {
             -webkit-appearance: none;
-            width: 16px;
-            height: 16px;
+            width: 18px;
+            height: 18px;
             border-radius: 50%;
             background: var(--primary);
             cursor: pointer;
             box-shadow: 0 0 10px var(--primary-glow);
         }
 
-        /* Mouse Screen View */
-        .mouse-screen-box {
-            width: 100%;
-            aspect-ratio: 16 / 9;
-            background: #020617;
-            border-radius: 12px;
-            border: 1px solid rgba(59, 130, 246, 0.25);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .virtual-cursor {
-            width: 14px;
-            height: 14px;
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-2px, -2px);
-            pointer-events: none;
-            z-index: 10;
-        }
-
-        .virtual-cursor svg {
-            width: 100%;
-            height: 100%;
-            fill: #38bdf8;
-            filter: drop-shadow(0 0 6px #38bdf8);
-        }
-
-        /* Controller (Touchpad) Panel */
-        .controller-panel {
+        /* Touchpad Area for Mobile */
+        .mobile-only {
             display: none;
         }
 
-        .touchpad-box {
-            width: 100%;
-            height: 220px;
-            background: linear-gradient(180deg, #0f172a, #090d16);
-            border: 2px dashed rgba(139, 92, 246, 0.35);
-            border-radius: 16px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            color: var(--text-muted);
-            font-size: 0.82rem;
-            position: relative;
-            user-select: none;
-            touch-action: none;
-            margin-bottom: 12px;
-            box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.6);
-        }
-
-        .touchpad-box.active {
-            border-color: var(--accent);
-            border-style: solid;
-            background: linear-gradient(180deg, rgba(139, 92, 246, 0.08), #090d16);
-        }
-
-        .touchpad-hint {
-            pointer-events: none;
-            text-align: center;
-            line-height: 1.6;
-        }
-
-        .touch-indicator {
-            position: absolute;
-            width: 44px;
-            height: 44px;
-            border-radius: 50%;
-            background: rgba(139, 92, 246, 0.25);
-            border: 2px solid var(--accent);
-            transform: translate(-50%, -50%);
-            pointer-events: none;
-            opacity: 0;
-            transition: opacity 0.2s;
-        }
-
-        .mouse-buttons-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-bottom: 14px;
-        }
-
-        .hw-mouse-btn {
-            padding: 14px;
-            border-radius: 12px;
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid var(--border);
-            color: var(--text-main);
-            font-weight: 700;
-            font-size: 0.88rem;
-            cursor: pointer;
-            text-align: center;
-            user-select: none;
-            transition: all 0.15s ease;
-        }
-
-        .hw-mouse-btn:active, .hw-mouse-btn.active {
-            background: var(--accent);
-            color: #fff;
-            transform: translateY(1px);
-        }
-
-        .footer {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 0.72rem;
-            color: var(--text-muted);
-            border-top: 1px solid var(--border);
-            padding-top: 12px;
+        @media (max-width: 768px) {
+            body {
+                overflow-y: auto;
+            }
+            .sidebar {
+                display: none;
+            }
+            .main-stage {
+                padding: 16px;
+                height: auto;
+                overflow: visible;
+            }
+            .metrics-grid {
+                grid-template-columns: 1fr;
+            }
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+            .mobile-only {
+                display: block;
+            }
+            .touchpad-box {
+                width: 100%;
+                height: 220px;
+                background: linear-gradient(180deg, #0f172a, #090d16);
+                border: 2px dashed rgba(139, 92, 246, 0.35);
+                border-radius: 16px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                user-select: none;
+                touch-action: none;
+                margin-top: 10px;
+            }
+            .touchpad-box.active {
+                border-color: var(--accent);
+                border-style: solid;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <div class="header">
-            <div class="logo-area">
-                <div class="logo-badge">
-                    <svg viewBox="0 0 24 24"><path d="M4 6h16v12H4zM2 4v16h20V4zm10 13a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>
+    <div class="app-layout">
+        <!-- Desktop Sidebar -->
+        <aside class="sidebar">
+            <div>
+                <div class="brand-box">
+                    <div class="brand-icon">
+                        <svg viewBox="0 0 24 24"><path d="M4 6h16v12H4zM2 4v16h20V4zm10 13a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>
+                    </div>
+                    <div>
+                        <div class="brand-title">AnyDevice</div>
+                        <div class="brand-sub">桌面控制中心 v1.2</div>
+                    </div>
                 </div>
+
+                <nav class="nav-list">
+                    <div class="nav-item active" data-tab="overview">
+                        <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+                        <span>控制中心概览</span>
+                    </div>
+                    <div class="nav-item" data-tab="audio">
+                        <svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+                        <span>音频映射中心</span>
+                    </div>
+                    <div class="nav-item" data-tab="mouse">
+                        <svg viewBox="0 0 24 24"><path d="M13 2v8h7V7a5 5 0 0 0-5-5h-2zm-2 0H9a5 5 0 0 0-5 5v3h7V2zm9 10h-7v10h2a5 5 0 0 0 5-5v-5zm-9 10V12H4v5a5 5 0 0 0 5 5h2z"/></svg>
+                        <span>鼠标与跨端交互</span>
+                    </div>
+                    <div class="nav-item" data-tab="network">
+                        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+                        <span>通信网卡配置</span>
+                    </div>
+                </nav>
+            </div>
+
+            <div class="sidebar-footer">
+                <div class="server-status-pill">
+                    <span class="status-dot"></span>
+                    <span id="serverRunningText">服务正常运行中</span>
+                </div>
+                <div style="font-size: 0.7rem; color: var(--text-muted); text-align: center;">
+                    AnyDevice 跨端互通引擎
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <main class="main-stage">
+            <!-- Top Header Bar -->
+            <div class="top-bar">
                 <div>
-                    <div class="title">AnyDevice</div>
-                    <div style="font-size: 0.72rem; color: var(--text-muted);">跨端双向设备映射中心</div>
+                    <h1 class="page-title" id="pageTitle">设备协同控制中心</h1>
+                    <div class="page-desc">本机作为广播主机 (Host)，正在将声音与鼠标信号广播至局域网</div>
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <button class="copy-btn" id="startAudioBtn" style="padding: 8px 14px; font-size: 0.8rem; background: linear-gradient(135deg, #10b981, #059669);">
+                        🎧 开启本地监听
+                    </button>
                 </div>
             </div>
-            <div class="status-pill">
-                <span class="status-dot" id="statusDot"></span>
-                <span id="statusText">未连接</span>
-            </div>
-        </div>
 
-        <!-- LAN Connect Card with QR Code & Network Card Selector -->
-        <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border); border-radius: 14px; padding: 12px; margin-bottom: 14px;">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-                <span style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted);">📱 扫码连接此设备</span>
-                <span id="qrToggleBtn" style="font-size: 0.72rem; color: var(--secondary); cursor: pointer; user-select: none;">[展开/收起]</span>
-            </div>
-
-            <!-- Network Interface Dropdown Selector -->
-            <div style="margin-bottom: 10px;">
-                <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">
-                    <span>🌐 广播/连接网卡 (点此自由切换):</span>
-                    <span id="nicSwitchTip" style="color: var(--primary); font-size: 0.68rem; display: none; font-weight: 700;">✓ 已切换</span>
-                </div>
-                <select id="nicSelect" style="width: 100%; background: #0f172a; border: 1px solid rgba(255, 255, 255, 0.15); color: var(--text-main); border-radius: 8px; padding: 7px 10px; font-size: 0.75rem; outline: none; cursor: pointer;">
-                    <option value="">正在检测可用网卡列表...</option>
-                </select>
-            </div>
-
-            <div id="qrBox" style="display: flex; align-items: center; gap: 12px; background: rgba(0, 0, 0, 0.35); padding: 10px; border-radius: 10px;">
-                <img id="qrImg" src="/api/qrcode" alt="QR" width="84" height="84" style="border-radius: 6px; background: white; padding: 3px; flex-shrink: 0;">
-                <div style="flex: 1; font-size: 0.72rem; color: var(--text-muted); display: flex; flex-direction: column; gap: 4px;">
-                    <div>手机或另一端连接相同 Wi-Fi 扫码即用</div>
-                    <div id="lanUrlDisplay" style="font-family: monospace; color: var(--text-main); font-weight: 700; word-break: break-all;">加载中...</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Role Mode Switcher (Receiver vs Controller) -->
-        <div class="role-switcher">
-            <button class="role-btn active receiver" id="roleReceiverBtn">
-                <span>📥 接收端模式 (听声音/看鼠标)</span>
-            </button>
-            <button class="role-btn" id="roleControllerBtn">
-                <span>🎮 控制端模式 (无线触控板)</span>
-            </button>
-        </div>
-
-        <!-- Master Switch / Connect Button -->
-        <button class="main-btn" id="masterBtn">
-            <span id="masterText">开启设备连接</span>
-        </button>
-
-        <!-- ================= PANEL 1: RECEIVER (被映射端/接收端) ================= -->
-        <div class="receiver-panel" id="receiverPanel">
-            <div class="section-title">选择映射到本设备的硬件通道</div>
-            <div class="device-selector-grid">
-                <!-- Audio Card -->
-                <div class="device-card active" id="audioCard">
-                    <div class="device-header">
-                        <div class="device-icon-box">
-                            <svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
-                        </div>
-                        <span class="device-toggle-badge" id="audioBadge">已选</span>
+            <!-- Top Stat Metrics Cards -->
+            <section class="metrics-grid">
+                <div class="metric-card">
+                    <div class="metric-icon-box" style="background: rgba(16, 185, 129, 0.15);">
+                        <svg viewBox="0 0 24 24" style="fill: var(--primary);"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
                     </div>
                     <div>
-                        <div class="device-info-name">🎧 系统音频</div>
-                        <div class="device-info-desc">电脑声音串流到本端播放</div>
+                        <div class="metric-label">系统音频流</div>
+                        <div class="metric-value" id="metricAudioStatus" style="color: var(--primary);">48kHz 立体声</div>
                     </div>
                 </div>
 
-                <!-- Mouse Card -->
-                <div class="device-card mouse-card" id="mouseCard">
-                    <div class="device-header">
-                        <div class="device-icon-box">
-                            <svg viewBox="0 0 24 24"><path d="M13 2v8h7V7a5 5 0 0 0-5-5h-2zm-2 0H9a5 5 0 0 0-5 5v3h7V2zm9 10h-7v10h2a5 5 0 0 0 5-5v-5zm-9 10V12H4v5a5 5 0 0 0 5 5h2z"/></svg>
-                        </div>
-                        <span class="device-toggle-badge" id="mouseBadge">未选</span>
+                <div class="metric-card">
+                    <div class="metric-icon-box" style="background: rgba(59, 130, 246, 0.15);">
+                        <svg viewBox="0 0 24 24" style="fill: var(--secondary);"><path d="M13 2v8h7V7a5 5 0 0 0-5-5h-2zm-2 0H9a5 5 0 0 0-5 5v3h7V2zm9 10h-7v10h2a5 5 0 0 0 5-5v-5zm-9 10V12H4v5a5 5 0 0 0 5 5h2z"/></svg>
                     </div>
                     <div>
-                        <div class="device-info-name">🖱️ 本地鼠标</div>
-                        <div class="device-info-desc">电脑光标映射到本端监视</div>
+                        <div class="metric-label">鼠标映射引擎</div>
+                        <div class="metric-value" id="metricMouseStatus" style="color: var(--secondary);">60 FPS 捕获</div>
+                    </div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-icon-box" style="background: rgba(139, 92, 246, 0.15);">
+                        <svg viewBox="0 0 24 24" style="fill: var(--accent);"><path d="M4 6h16v12H4zM2 4v16h20V4zm10 13a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>
+                    </div>
+                    <div>
+                        <div class="metric-label">已连接设备</div>
+                        <div class="metric-value" id="metricClientCount" style="color: #c084fc;">1 台在线</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB 1: OVERVIEW DASHBOARD -->
+            <div class="tab-panel active" id="tab-overview">
+                <div class="dashboard-grid">
+                    <!-- Column 1: QR & Pairing Card -->
+                    <div class="content-card">
+                        <div class="card-header">
+                            <div class="card-title-group">
+                                <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+                                <span class="card-title">跨端连接与扫码配对</span>
+                            </div>
+                        </div>
+
+                        <!-- Network Adapter Selector -->
+                        <div class="nic-selector-area">
+                            <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; display: flex; justify-content: space-between;">
+                                <span>🌐 选择广播/监听网卡:</span>
+                                <span id="nicSwitchTip" style="color: var(--primary); font-weight: 700; display: none;">✓ 已无感切换</span>
+                            </div>
+                            <select id="nicSelect" class="nic-select-box">
+                                <option value="">正在检测网卡列表...</option>
+                            </select>
+                        </div>
+
+                        <!-- QR Code & Link Display -->
+                        <div class="qr-pairing-box">
+                            <img id="qrImg" src="/api/qrcode" alt="QR Code">
+                            <div class="pairing-instructions">
+                                <div style="color: #fff; font-weight: 700;">手机/平板免装 App 扫码即连</div>
+                                <div>手机连入同一 Wi-Fi 后扫码，手机将立刻变身电脑的无线音箱或触控板。</div>
+                                <div class="pairing-url-box">
+                                    <span id="lanUrlDisplay">加载中...</span>
+                                    <button class="copy-btn" id="copyUrlBtn">复制网址</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Column 2: Live Monitor Radar -->
+                    <div class="content-card">
+                        <div class="card-header">
+                            <div class="card-title-group">
+                                <svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+                                <span class="card-title">声源实时动态波形</span>
+                            </div>
+                        </div>
+                        <div class="visualizer-stage">
+                            <canvas id="visualizer"></canvas>
+                        </div>
+
+                        <div class="card-header" style="margin-top: 10px;">
+                            <div class="card-title-group">
+                                <svg viewBox="0 0 24 24"><path d="M13 2v8h7V7a5 5 0 0 0-5-5h-2zm-2 0H9a5 5 0 0 0-5 5v3h7V2zm9 10h-7v10h2a5 5 0 0 0 5-5v-5zm-9 10V12H4v5a5 5 0 0 0 5 5h2z"/></svg>
+                                <span class="card-title">光标雷达与坐标监视</span>
+                            </div>
+                            <span id="screenRes" style="font-size: 0.72rem; color: var(--secondary); font-family: monospace;">1920 × 1080</span>
+                        </div>
+                        <div class="mouse-radar-box" id="mouseRadarBox">
+                            <div class="radar-cursor" id="radarCursor">
+                                <svg viewBox="0 0 24 24"><path d="M3 2l10 17 3-6 6-3L3 2z"/></svg>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Mobile Only Section: Touchpad for phone browser visitors -->
+                <div class="content-card mobile-only">
+                    <div class="card-header">
+                        <span class="card-title">🎮 无线触控板 (手机控制电脑鼠标)</span>
+                    </div>
+                    <div class="touchpad-box" id="touchpad">
+                        <div style="text-align: center; font-size: 0.75rem; color: var(--text-muted);">
+                            👆 单指滑动移光标 · 🎯 轻点左键 · ✌️ 双指右键
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Audio Module Controls -->
-            <div class="module-container visible" id="audioModule">
-                <div class="control-header" style="margin-bottom: 6px;">
-                    <span style="font-weight: 600; color: var(--text-main);">🎧 无线扬声器示波器</span>
-                    <span id="audioStatusText" style="font-size: 0.72rem; color: var(--primary);">48kHz 立体声</span>
-                </div>
-                <div class="visualizer-wrapper">
-                    <canvas id="visualizer"></canvas>
-                </div>
-                <div class="control-group">
-                    <div class="control-header">
-                        <span>音量调节</span>
-                        <span class="control-val" id="volVal">100%</span>
+            <!-- TAB 2: AUDIO MANAGEMENT -->
+            <div class="tab-panel" id="tab-audio">
+                <div class="content-card">
+                    <div class="card-header">
+                        <span class="card-title">系统音频通道配置</span>
                     </div>
-                    <input type="range" id="volSlider" min="0" max="150" value="100">
-                </div>
-                <div class="control-group" style="margin-bottom: 0;">
-                    <div class="control-header">
-                        <span>缓冲延迟</span>
-                        <span class="control-val" id="bufferVal">40 ms</span>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div>
+                            <div class="control-row">
+                                <span>播放音量增益</span>
+                                <span class="metric-value" id="volVal" style="font-size: 0.9rem;">100%</span>
+                            </div>
+                            <input type="range" id="volSlider" min="0" max="150" value="100">
+                        </div>
+                        <div>
+                            <div class="control-row">
+                                <span>抗抖动缓冲延迟 (ms)</span>
+                                <span class="metric-value" id="bufferVal" style="font-size: 0.9rem;">40 ms</span>
+                            </div>
+                            <input type="range" id="bufferSlider" min="15" max="250" value="40" step="5">
+                        </div>
                     </div>
-                    <input type="range" id="bufferSlider" min="15" max="250" value="40" step="5">
+                    <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 6px;">
+                        💡 提示：看视频、打游戏建议保持 30~50ms 低延迟；若在较弱 Wi-Fi 下出现偶发爆音，可调大至 80~120ms。
+                    </div>
                 </div>
             </div>
 
-            <!-- Mouse View Module Controls -->
-            <div class="module-container" id="mouseModule">
-                <div class="control-header" style="margin-bottom: 8px;">
-                    <span style="font-weight: 600; color: var(--text-main);">🖱️ 电脑光标映射</span>
-                    <span id="screenRes" style="font-size: 0.72rem; color: var(--secondary);">1920 × 1080</span>
-                </div>
-                <div class="mouse-screen-box" id="mouseScreenBox">
-                    <div class="virtual-cursor" id="virtualCursor">
-                        <svg viewBox="0 0 24 24"><path d="M3 2l10 17 3-6 6-3L3 2z"/></svg>
+            <!-- TAB 3: MOUSE SETTINGS -->
+            <div class="tab-panel" id="tab-mouse">
+                <div class="content-card">
+                    <div class="card-header">
+                        <span class="card-title">鼠标跨端映射与反向操控</span>
+                    </div>
+                    <div style="display: flex; flex-direction: column; gap: 14px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <div style="font-weight: 700; font-size: 0.9rem;">正向光标监视</div>
+                                <div style="font-size: 0.75rem; color: var(--text-muted);">将台式机当前鼠标光标与按键状态实时推送到连接的移动设备</div>
+                            </div>
+                            <span style="color: var(--primary); font-weight: 700; font-size: 0.85rem;">已启用 (60 FPS)</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border); padding-top: 14px;">
+                            <div>
+                                <div style="font-weight: 700; font-size: 0.9rem;">反向触控注入</div>
+                                <div style="font-size: 0.75rem; color: var(--text-muted);">允许手机/平板在触控板上滑动时，通过 Windows 原生接口驱动台式机物理光标</div>
+                            </div>
+                            <span style="color: var(--secondary); font-weight: 700; font-size: 0.85rem;">就绪 (user32.dll)</span>
+                        </div>
                     </div>
                 </div>
-                <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 8px;" id="mouseCoords">
-                    坐标: X: 0 | Y: 0
-                </div>
             </div>
-        </div>
 
-        <!-- ================= PANEL 2: CONTROLLER (反向遥控端/触控板) ================= -->
-        <div class="controller-panel" id="controllerPanel">
-            <div class="section-title">无线触控板 (反向操控电脑光标)</div>
-            <div class="touchpad-box" id="touchpad">
-                <div class="touch-indicator" id="touchIndicator"></div>
-                <div class="touchpad-hint">
-                    <div>👆 单指滑动：移动电脑鼠标</div>
-                    <div>🎯 单指轻点：鼠标左键</div>
-                    <div>✌️ 双指轻点：鼠标右键</div>
-                    <div>📜 双指滑动：鼠标滚轮</div>
+            <!-- TAB 4: NETWORK ADAPTERS -->
+            <div class="tab-panel" id="tab-network">
+                <div class="content-card">
+                    <div class="card-header">
+                        <span class="card-title">本机所有网络适配器</span>
+                    </div>
+                    <div id="fullNetworkList" style="display: flex; flex-direction: column; gap: 8px;">
+                        <!-- Injected via JS -->
+                    </div>
                 </div>
             </div>
-            <div class="mouse-buttons-row">
-                <button class="hw-mouse-btn" id="btnTouchLeft">鼠标左键</button>
-                <button class="hw-mouse-btn" id="btnTouchRight">鼠标右键</button>
-            </div>
-            <div class="control-group">
-                <div class="control-header">
-                    <span>触控板灵敏度</span>
-                    <span class="control-val" id="sensVal">1.5x</span>
-                </div>
-                <input type="range" id="sensSlider" min="0.5" max="3.0" value="1.5" step="0.1">
-            </div>
-        </div>
-
-        <!-- Footer -->
-        <div class="footer">
-            <div style="color: var(--primary); display: flex; align-items: center; gap: 4px;">
-                <span>🛡️ 屏幕常亮保护中</span>
-            </div>
-            <div id="clientStatus">在线设备: 1 台</div>
-        </div>
+        </main>
     </div>
 
     <script>
         // State
-        let isConnected = false;
-        let currentMode = 'receiver'; // 'receiver' or 'controller'
-        let audioEnabled = true;
-        let mouseEnabled = false;
+        let isListening = false;
         let ws = null;
         let audioCtx = null;
         let gainNode = null;
         let analyser = null;
         let nextAudioTime = 0;
         let targetBufferMs = 40;
-        let sensitivity = 1.5;
-        let wakeLock = null;
 
         // Elements
-        const masterBtn = document.getElementById('masterBtn');
-        const masterText = document.getElementById('masterText');
-        const statusDot = document.getElementById('statusDot');
-        const statusText = document.getElementById('statusText');
-        const roleReceiverBtn = document.getElementById('roleReceiverBtn');
-        const roleControllerBtn = document.getElementById('roleControllerBtn');
-        const receiverPanel = document.getElementById('receiverPanel');
-        const controllerPanel = document.getElementById('controllerPanel');
+        const navItems = document.querySelectorAll('.nav-item');
+        const tabPanels = document.querySelectorAll('.tab-panel');
+        const pageTitle = document.getElementById('pageTitle');
+        const nicSelect = document.getElementById('nicSelect');
+        const nicSwitchTip = document.getElementById('nicSwitchTip');
+        const lanUrlDisplay = document.getElementById('lanUrlDisplay');
+        const qrImg = document.getElementById('qrImg');
+        const copyUrlBtn = document.getElementById('copyUrlBtn');
+        const startAudioBtn = document.getElementById('startAudioBtn');
 
-        // Receiver elements
-        const audioCard = document.getElementById('audioCard');
-        const audioBadge = document.getElementById('audioBadge');
-        const mouseCard = document.getElementById('mouseCard');
-        const mouseBadge = document.getElementById('mouseBadge');
-        const audioModule = document.getElementById('audioModule');
-        const mouseModule = document.getElementById('mouseModule');
+        // Metrics & Radar
+        const metricClientCount = document.getElementById('metricClientCount');
+        const screenRes = document.getElementById('screenRes');
+        const mouseRadarBox = document.getElementById('mouseRadarBox');
+        const radarCursor = document.getElementById('radarCursor');
+        const canvas = document.getElementById('visualizer');
+        const canvasCtx = canvas.getContext('2d');
+
+        // Sliders
         const volSlider = document.getElementById('volSlider');
         const volVal = document.getElementById('volVal');
         const bufferSlider = document.getElementById('bufferSlider');
         const bufferVal = document.getElementById('bufferVal');
-        const canvas = document.getElementById('visualizer');
-        const canvasCtx = canvas.getContext('2d');
-        const mouseScreenBox = document.getElementById('mouseScreenBox');
-        const virtualCursor = document.getElementById('virtualCursor');
-        const mouseCoords = document.getElementById('mouseCoords');
-        const screenRes = document.getElementById('screenRes');
-
-        // Touchpad elements
-        const touchpad = document.getElementById('touchpad');
-        const touchIndicator = document.getElementById('touchIndicator');
-        const btnTouchLeft = document.getElementById('btnTouchLeft');
-        const btnTouchRight = document.getElementById('btnTouchRight');
-        const sensSlider = document.getElementById('sensSlider');
-        const sensVal = document.getElementById('sensVal');
-        const clientStatus = document.getElementById('clientStatus');
 
         function resizeCanvas() {
-            canvas.width = canvas.parentElement.clientWidth * window.devicePixelRatio;
-            canvas.height = canvas.parentElement.clientHeight * window.devicePixelRatio;
+            if (canvas && canvas.parentElement) {
+                canvas.width = canvas.parentElement.clientWidth * window.devicePixelRatio;
+                canvas.height = canvas.parentElement.clientHeight * window.devicePixelRatio;
+            }
         }
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
-        // Screen WakeLock
-        async function requestWakeLock() {
+        // Desktop Navigation Tab Switching
+        const tabTitles = {
+            overview: '设备协同控制中心',
+            audio: '音频映射与声卡控制',
+            mouse: '鼠标跨端交互与遥控',
+            network: '通信网卡与路由设置'
+        };
+
+        navItems.forEach(item => {
+            item.addEventListener('click', () => {
+                const tabKey = item.getAttribute('data-tab');
+                navItems.forEach(n => n.classList.remove('active'));
+                tabPanels.forEach(p => p.classList.remove('active'));
+
+                item.classList.add('active');
+                const targetPanel = document.getElementById(`tab-${tabKey}`);
+                if (targetPanel) targetPanel.classList.add('active');
+                if (pageTitle && tabTitles[tabKey]) pageTitle.innerText = tabTitles[tabKey];
+            });
+        });
+
+        // Copy URL
+        copyUrlBtn.addEventListener('click', () => {
+            const url = lanUrlDisplay.innerText;
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(url).then(() => {
+                    copyUrlBtn.innerText = '已复制！';
+                    setTimeout(() => copyUrlBtn.innerText = '复制网址', 2000);
+                });
+            }
+        });
+
+        // Load Network Interfaces
+        async function loadNetworkInterfaces() {
             try {
-                if ('wakeLock' in navigator) {
-                    wakeLock = await navigator.wakeLock.request('screen');
+                const res = await fetch('/api/interfaces');
+                if (!res.ok) return;
+                const data = await res.json();
+                nicSelect.innerHTML = '';
+                const fullList = document.getElementById('fullNetworkList');
+                if (fullList) fullList.innerHTML = '';
+
+                data.interfaces.forEach(iface => {
+                    const opt = document.createElement('option');
+                    opt.value = iface.ip;
+                    const typeLabel = iface.is_virtual ? '⚠️ 虚拟' : '🌐 物理';
+                    opt.innerText = `${typeLabel} · ${iface.name} (${iface.ip})`;
+                    if (iface.ip === data.current_ip) {
+                        opt.selected = true;
+                    }
+                    nicSelect.appendChild(opt);
+
+                    if (fullList) {
+                        const row = document.createElement('div');
+                        row.style.cssText = 'display: flex; justify-content: space-between; padding: 10px 14px; background: rgba(0,0,0,0.3); border-radius: 8px; font-size: 0.8rem;';
+                        row.innerHTML = `<span>${typeLabel} <b>${iface.name}</b></span><span style="font-family: monospace;">${iface.ip}</span>`;
+                        fullList.appendChild(row);
+                    }
+                });
+
+                if (lanUrlDisplay && data.current_url) {
+                    lanUrlDisplay.innerText = data.current_url;
                 }
-            } catch (e) {}
-        }
-
-        // Switch Role: Receiver vs Controller
-        roleReceiverBtn.addEventListener('click', () => {
-            currentMode = 'receiver';
-            roleReceiverBtn.className = 'role-btn active receiver';
-            roleControllerBtn.className = 'role-btn';
-            receiverPanel.style.display = 'block';
-            controllerPanel.style.display = 'none';
-            syncMappingSettings();
-        });
-
-        roleControllerBtn.addEventListener('click', () => {
-            currentMode = 'controller';
-            roleControllerBtn.className = 'role-btn active controller';
-            roleReceiverBtn.className = 'role-btn';
-            receiverPanel.style.display = 'none';
-            controllerPanel.style.display = 'block';
-            syncMappingSettings();
-        });
-
-        // Toggle Receiver Devices
-        audioCard.addEventListener('click', () => {
-            audioEnabled = !audioEnabled;
-            updateDeviceUI();
-            syncMappingSettings();
-        });
-
-        mouseCard.addEventListener('click', () => {
-            mouseEnabled = !mouseEnabled;
-            updateDeviceUI();
-            syncMappingSettings();
-        });
-
-        function updateDeviceUI() {
-            if (audioEnabled) {
-                audioCard.classList.add('active');
-                audioBadge.innerText = '已选';
-                audioModule.classList.add('visible');
-            } else {
-                audioCard.classList.remove('active');
-                audioBadge.innerText = '未选';
-                audioModule.classList.remove('visible');
-            }
-
-            if (mouseEnabled) {
-                mouseCard.classList.add('active');
-                mouseBadge.innerText = '已选';
-                mouseModule.classList.add('visible');
-            } else {
-                mouseCard.classList.remove('active');
-                mouseBadge.innerText = '未选';
-                mouseModule.classList.remove('visible');
+            } catch (err) {
+                console.error('Failed to load interfaces:', err);
             }
         }
 
-        function syncMappingSettings() {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    action: 'set_mapping',
-                    audio: currentMode === 'receiver' && audioEnabled,
-                    mouse: currentMode === 'receiver' && mouseEnabled
-                }));
+        nicSelect.addEventListener('change', async (e) => {
+            const targetIp = e.target.value;
+            if (!targetIp) return;
+
+            try {
+                const res = await fetch(`/api/interfaces/select?ip=${encodeURIComponent(targetIp)}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (lanUrlDisplay) lanUrlDisplay.innerText = data.current_url;
+                    if (qrImg) qrImg.src = `/api/qrcode?t=${Date.now()}`;
+                    if (nicSwitchTip) {
+                        nicSwitchTip.style.display = 'inline';
+                        setTimeout(() => nicSwitchTip.style.display = 'none', 3000);
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to switch network card:', err);
             }
+        });
+
+        // WebSocket Connection for Live Audio & Mouse Radar
+        function connectWS() {
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${proto}//${location.host}/ws`;
+
+            ws = new WebSocket(wsUrl);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                ws.send(JSON.stringify({ action: 'set_mapping', audio: true, mouse: true }));
+                drawVisualizer();
+            };
+
+            ws.onmessage = (event) => {
+                if (event.data instanceof ArrayBuffer) {
+                    if (isListening && audioCtx) {
+                        playAudioChunk(event.data);
+                    }
+                } else if (typeof event.data === 'string') {
+                    try {
+                        const msg = JSON.parse(event.data);
+                        if (msg.type === 'mouse') {
+                            updateMouseRadar(msg);
+                        }
+                    } catch (e) {}
+                }
+            };
         }
 
-        // Initialize Audio
-        function initAudio() {
+        function updateMouseRadar(evt) {
+            if (mouseRadarBox && radarCursor) {
+                const boxW = mouseRadarBox.clientWidth;
+                const boxH = mouseRadarBox.clientHeight;
+                radarCursor.style.transform = `translate(${evt.x * boxW}px, ${evt.y * boxH}px)`;
+            }
+            if (screenRes) screenRes.innerText = `${evt.screen_w} × ${evt.screen_h}`;
+        }
+
+        // Audio controls
+        startAudioBtn.addEventListener('click', () => {
             if (!audioCtx) {
                 const AudioContext = window.AudioContext || window.webkitAudioContext;
                 audioCtx = new AudioContext({ sampleRate: 48000 });
@@ -787,78 +953,15 @@
                 analyser.fftSize = 256;
                 gainNode.connect(analyser);
                 analyser.connect(audioCtx.destination);
-                gainNode.gain.value = volSlider.value / 100.0;
             }
-            if (audioCtx.state === 'suspended') {
-                audioCtx.resume();
-            }
-        }
+            if (audioCtx.state === 'suspended') audioCtx.resume();
 
-        masterBtn.addEventListener('click', () => {
-            if (isConnected) disconnect();
-            else connect();
+            isListening = !isListening;
+            startAudioBtn.innerText = isListening ? '🔇 静音本地声音' : '🎧 开启本地监听';
+            startAudioBtn.style.background = isListening ? 'linear-gradient(135deg, #ef4444, #dc2626)' : 'linear-gradient(135deg, #10b981, #059669)';
         });
 
-        function connect() {
-            initAudio();
-            requestWakeLock();
-
-            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${proto}//${location.host}/ws`;
-
-            ws = new WebSocket(wsUrl);
-            ws.binaryType = 'arraybuffer';
-
-            ws.onopen = () => {
-                isConnected = true;
-                statusDot.className = 'status-dot connected';
-                statusText.innerText = '已连接';
-                masterBtn.classList.add('active');
-                masterText.innerText = '断开设备连接';
-                syncMappingSettings();
-                drawVisualizer();
-            };
-
-            ws.onmessage = (event) => {
-                if (event.data instanceof ArrayBuffer) {
-                    if (currentMode === 'receiver' && audioEnabled) {
-                        playAudioChunk(event.data);
-                    }
-                } else if (typeof event.data === 'string') {
-                    try {
-                        const msg = JSON.parse(event.data);
-                        if (msg.type === 'mouse' && currentMode === 'receiver' && mouseEnabled) {
-                            handleHostMouseEvent(msg);
-                        }
-                    } catch (e) {}
-                }
-            };
-
-            ws.onclose = () => disconnect();
-            ws.onerror = () => {
-                statusDot.className = 'status-dot error';
-                statusText.innerText = '连接出错';
-            };
-        }
-
-        function disconnect() {
-            isConnected = false;
-            if (ws) {
-                ws.close();
-                ws = null;
-            }
-            if (wakeLock) {
-                wakeLock.release().catch(() => {});
-                wakeLock = null;
-            }
-            statusDot.className = 'status-dot';
-            statusText.innerText = '未连接';
-            masterBtn.classList.remove('active');
-            masterText.innerText = '开启设备连接';
-        }
-
         function playAudioChunk(arrayBuffer) {
-            if (!audioCtx) return;
             const int16 = new Int16Array(arrayBuffer);
             const frameCount = int16.length / 2;
             if (frameCount <= 0) return;
@@ -874,7 +977,6 @@
 
             const now = audioCtx.currentTime;
             const targetSec = targetBufferMs / 1000.0;
-
             if (nextAudioTime < now || nextAudioTime > now + targetSec + 0.15) {
                 nextAudioTime = now + targetSec;
             }
@@ -883,161 +985,21 @@
             source.buffer = audioBuffer;
             source.connect(gainNode);
             source.start(nextAudioTime);
-
             nextAudioTime += audioBuffer.duration;
         }
 
-        function handleHostMouseEvent(evt) {
-            const boxWidth = mouseScreenBox.clientWidth;
-            const boxHeight = mouseScreenBox.clientHeight;
-            virtualCursor.style.transform = `translate(${evt.x * boxWidth}px, ${evt.y * boxHeight}px)`;
-            mouseCoords.innerText = `电脑坐标: X: ${evt.raw_x} | Y: ${evt.raw_y} (${(evt.x * 100).toFixed(1)}%)`;
-            screenRes.innerText = `${evt.screen_w} × ${evt.screen_h}`;
-        }
-
-        // ================= TOUCHPAD CONTROLLER LOGIC =================
-        let touchStartX = 0, touchStartY = 0;
-        let lastTouchX = 0, lastTouchY = 0;
-        let touchStartTime = 0;
-        let touchCount = 0;
-        let isTouching = false;
-
-        touchpad.addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            if (!isConnected) return;
-
-            touchpad.classList.add('active');
-            touchCount = e.touches.length;
-            touchStartTime = Date.now();
-            isTouching = true;
-
-            const t = e.touches[0];
-            const rect = touchpad.getBoundingClientRect();
-            touchStartX = lastTouchX = t.clientX;
-            touchStartY = lastTouchY = t.clientY;
-
-            touchIndicator.style.left = (t.clientX - rect.left) + 'px';
-            touchIndicator.style.top = (t.clientY - rect.top) + 'px';
-            touchIndicator.style.opacity = '1';
-        }, { passive: false });
-
-        touchpad.addEventListener('touchmove', (e) => {
-            e.preventDefault();
-            if (!isConnected || !isTouching) return;
-
-            const rect = touchpad.getBoundingClientRect();
-            const t = e.touches[0];
-            touchIndicator.style.left = (t.clientX - rect.left) + 'px';
-            touchIndicator.style.top = (t.clientY - rect.top) + 'px';
-
-            if (e.touches.length === 1) {
-                // 1 Finger: Move Host Mouse Cursor
-                const dx = (t.clientX - lastTouchX) * sensitivity;
-                const dy = (t.clientY - lastTouchY) * sensitivity;
-
-                if (Math.abs(dx) > 0.2 || Math.abs(dy) > 0.2) {
-                    sendRemoteInput({
-                        type: 'move',
-                        dx: Math.round(dx),
-                        dy: Math.round(dy)
-                    });
-                }
-            } else if (e.touches.length === 2) {
-                // 2 Fingers: Vertical Scroll Wheel
-                const dy = (t.clientY - lastTouchY) * 2;
-                if (Math.abs(dy) > 1) {
-                    sendRemoteInput({
-                        type: 'scroll',
-                        dy: Math.round(dy * 2)
-                    });
-                }
-            }
-
-            lastTouchX = t.clientX;
-            lastTouchY = t.clientY;
-        }, { passive: false });
-
-        touchpad.addEventListener('touchend', (e) => {
-            e.preventDefault();
-            touchIndicator.style.opacity = '0';
-            touchpad.classList.remove('active');
-            isTouching = false;
-
-            const elapsed = Date.now() - touchStartTime;
-            const dist = Math.hypot(lastTouchX - touchStartX, lastTouchY - touchStartY);
-
-            // Tap gesture (< 250ms and moved < 10px)
-            if (elapsed < 250 && dist < 10) {
-                if (touchCount === 1) {
-                    // Single tap = Left Click
-                    sendRemoteInput({ type: 'click', btn: 'left' });
-                } else if (touchCount === 2) {
-                    // Two-finger tap = Right Click
-                    sendRemoteInput({ type: 'click', btn: 'right' });
-                }
-            }
-        }, { passive: false });
-
-        // Physical Touch Buttons
-        btnTouchLeft.addEventListener('pointerdown', () => {
-            btnTouchLeft.classList.add('active');
-            sendRemoteInput({ type: 'button', btn: 'left', down: true });
-        });
-        btnTouchLeft.addEventListener('pointerup', () => {
-            btnTouchLeft.classList.remove('active');
-            sendRemoteInput({ type: 'button', btn: 'left', down: false });
-        });
-
-        btnTouchRight.addEventListener('pointerdown', () => {
-            btnTouchRight.classList.add('active');
-            sendRemoteInput({ type: 'button', btn: 'right', down: true });
-        });
-        btnTouchRight.addEventListener('pointerup', () => {
-            btnTouchRight.classList.remove('active');
-            sendRemoteInput({ type: 'button', btn: 'right', down: false });
-        });
-
-        function sendRemoteInput(payload) {
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({
-                    action: 'remote_input',
-                    ...payload
-                }));
-            }
-        }
-
-        // Sliders
-        sensSlider.addEventListener('input', (e) => {
-            sensitivity = parseFloat(e.target.value);
-            sensVal.innerText = sensitivity.toFixed(1) + 'x';
-        });
-
-        volSlider.addEventListener('input', (e) => {
-            const val = e.target.value;
-            volVal.innerText = val + '%';
-            if (gainNode) gainNode.gain.value = val / 100.0;
-        });
-
-        bufferSlider.addEventListener('input', (e) => {
-            targetBufferMs = parseInt(e.target.value);
-            bufferVal.innerText = targetBufferMs + ' ms';
-        });
-
         function drawVisualizer() {
-            if (!isConnected || currentMode !== 'receiver' || !audioEnabled) {
-                canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
-                return;
-            }
             requestAnimationFrame(drawVisualizer);
+            if (!analyser) return;
 
             const bufferLength = analyser.frequencyBinCount;
             const dataArray = new Uint8Array(bufferLength);
             analyser.getByteTimeDomainData(dataArray);
 
-            canvasCtx.fillStyle = 'rgba(10, 14, 23, 0.4)';
+            canvasCtx.fillStyle = 'rgba(10, 15, 29, 0.45)';
             canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
 
-            canvasCtx.lineWidth = 2.5 * window.devicePixelRatio;
+            canvasCtx.lineWidth = 2 * window.devicePixelRatio;
             canvasCtx.strokeStyle = '#10b981';
             canvasCtx.shadowBlur = 8;
             canvasCtx.shadowColor = '#10b981';
@@ -1057,82 +1019,108 @@
             canvasCtx.shadowBlur = 0;
         }
 
-        const qrToggleBtn = document.getElementById('qrToggleBtn');
-        const qrBox = document.getElementById('qrBox');
-        const lanUrlDisplay = document.getElementById('lanUrlDisplay');
-        const nicSelect = document.getElementById('nicSelect');
-        const nicSwitchTip = document.getElementById('nicSwitchTip');
-        const qrImg = document.getElementById('qrImg');
+        // Sliders
+        volSlider.addEventListener('input', (e) => {
+            const val = e.target.value;
+            volVal.innerText = val + '%';
+            if (gainNode) gainNode.gain.value = val / 100.0;
+        });
 
-        if (qrToggleBtn && qrBox) {
-            qrToggleBtn.addEventListener('click', () => {
-                qrBox.style.display = (qrBox.style.display === 'none') ? 'flex' : 'none';
-            });
-        }
+        bufferSlider.addEventListener('input', (e) => {
+            targetBufferMs = parseInt(e.target.value);
+            bufferVal.innerText = targetBufferMs + ' ms';
+        });
 
-        async function loadNetworkInterfaces() {
-            if (!nicSelect) return;
-            try {
-                const res = await fetch('/api/interfaces');
-                if (!res.ok) return;
-                const data = await res.json();
-                nicSelect.innerHTML = '';
+        // Touchpad Gesture Simulation for Remote Input
+        const touchpad = document.getElementById('touchpad');
+        if (touchpad) {
+            let lastTouchX = 0, lastTouchY = 0;
+            let touchStartTime = 0;
+            let hasMoved = false;
 
-                data.interfaces.forEach(iface => {
-                    const opt = document.createElement('option');
-                    opt.value = iface.ip;
-                    const typeLabel = iface.is_virtual ? '⚠️ 虚拟' : '🌐 物理';
-                    opt.innerText = `${typeLabel} · ${iface.name} (${iface.ip})`;
-                    if (iface.ip === data.current_ip) {
-                        opt.selected = true;
-                    }
-                    nicSelect.appendChild(opt);
-                });
-
-                if (lanUrlDisplay && data.current_url) {
-                    lanUrlDisplay.innerText = data.current_url;
+            touchpad.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 1) {
+                    lastTouchX = e.touches[0].clientX;
+                    lastTouchY = e.touches[0].clientY;
+                    touchStartTime = Date.now();
+                    hasMoved = false;
+                    touchpad.classList.add('active');
+                } else if (e.touches.length === 2) {
+                    lastTouchY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                    touchStartTime = Date.now();
+                    hasMoved = false;
                 }
-            } catch (err) {
-                console.log('Failed to load network interfaces:', err);
-            }
-        }
+            }, { passive: false });
 
-        if (nicSelect) {
-            nicSelect.addEventListener('change', async (e) => {
-                const targetIp = e.target.value;
-                if (!targetIp) return;
-
-                try {
-                    const res = await fetch(`/api/interfaces/select?ip=${encodeURIComponent(targetIp)}`);
-                    if (res.ok) {
-                        const data = await res.json();
-                        if (lanUrlDisplay) lanUrlDisplay.innerText = data.current_url;
-                        if (qrImg) qrImg.src = `/api/qrcode?t=${Date.now()}`;
-                        if (nicSwitchTip) {
-                            nicSwitchTip.style.display = 'inline';
-                            setTimeout(() => { nicSwitchTip.style.display = 'none'; }, 3000);
+            touchpad.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                if (e.touches.length === 1) {
+                    const cx = e.touches[0].clientX;
+                    const cy = e.touches[0].clientY;
+                    const dx = Math.round((cx - lastTouchX) * 1.5);
+                    const dy = Math.round((cy - lastTouchY) * 1.5);
+                    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
+                        hasMoved = true;
+                        lastTouchX = cx;
+                        lastTouchY = cy;
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({
+                                action: 'remote_input',
+                                type: 'move',
+                                dx: dx,
+                                dy: dy
+                            }));
                         }
                     }
-                } catch (err) {
-                    console.error('Failed to switch network card:', err);
+                } else if (e.touches.length === 2) {
+                    const currentY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+                    const dy = Math.round((currentY - lastTouchY) * 2);
+                    if (Math.abs(dy) > 2) {
+                        hasMoved = true;
+                        lastTouchY = currentY;
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({
+                                action: 'remote_input',
+                                type: 'scroll',
+                                dy: dy
+                            }));
+                        }
+                    }
+                }
+            }, { passive: false });
+
+            touchpad.addEventListener('touchend', (e) => {
+                touchpad.classList.remove('active');
+                const duration = Date.now() - touchStartTime;
+                if (!hasMoved && duration < 350) {
+                    if (e.changedTouches.length === 1) {
+                        // Single tap = left click
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            ws.send(JSON.stringify({
+                                action: 'remote_input',
+                                type: 'click',
+                                btn: 'left'
+                            }));
+                        }
+                    }
                 }
             });
         }
 
-        loadNetworkInterfaces();
-
+        // Periodic Status Fetch
         async function fetchStatus() {
             try {
                 const res = await fetch('/api/status');
                 if (res.ok) {
                     const data = await res.json();
-                    clientStatus.innerText = `在线设备: ${data.clients} 台`;
-                    if (data.primary_url && lanUrlDisplay && (!nicSelect || !nicSelect.value)) {
-                        lanUrlDisplay.innerText = data.primary_url;
-                    }
+                    if (metricClientCount) metricClientCount.innerText = `${data.clients} 台在线`;
                 }
             } catch (e) {}
         }
+
+        // Init
+        loadNetworkInterfaces();
+        connectWS();
         setInterval(fetchStatus, 3000);
         fetchStatus();
     </script>

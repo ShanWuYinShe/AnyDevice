@@ -110,7 +110,7 @@ func main() {
 	// 6. Desktop Window vs Headless Mode
 	if !*noUI {
 		fmt.Println("🖥️  正在打开桌面原生独立应用窗口...")
-		ui.OpenNativeWindow("AnyDevice - 跨端双向设备映射中心", localURL, 480, 840)
+		ui.OpenNativeWindow("AnyDevice - 跨端双向设备映射中心", localURL, 1020, 680)
 	} else {
 		fmt.Printf("\n💡 无窗口模式运行中。按 Ctrl+C 退出程序...\n\n")
 		sigChan := make(chan os.Signal, 1)
