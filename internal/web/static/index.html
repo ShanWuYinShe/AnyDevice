@@ -403,6 +403,12 @@
             color: #ffffff;
             box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
         }
+        .map-btn.active-purple {
+            background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+            border-color: #a78bfa;
+            color: #ffffff;
+            box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+        }
         .map-btn.btn-purple {
             background: linear-gradient(135deg, #8b5cf6, #6d28d9);
             border-color: #a78bfa;
@@ -615,53 +621,6 @@
             transform: translateX(20px);
         }
 
-        /* Remote Touchpad View Overlay */
-        .touchpad-surface {
-            width: 100%;
-            height: 240px;
-            background: rgba(0, 0, 0, 0.4);
-            border: 2px dashed rgba(255, 255, 255, 0.15);
-            border-radius: var(--radius-md);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            user-select: none;
-            touch-action: none;
-            cursor: crosshair;
-            gap: 6px;
-        }
-        .touchpad-surface.active {
-            border-color: var(--purple);
-            background: rgba(139, 92, 246, 0.08);
-        }
-
-        .touchpad-hint {
-            font-size: 0.82rem;
-            color: var(--text-muted);
-            pointer-events: none;
-        }
-
-        .touchpad-buttons {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-            width: 100%;
-        }
-        .touch-action-btn {
-            padding: 14px;
-            border-radius: var(--radius-sm);
-            border: 1px solid var(--border);
-            background: rgba(255, 255, 255, 0.06);
-            color: var(--text-main);
-            font-size: 0.88rem;
-            font-weight: 600;
-            cursor: pointer;
-        }
-        .touch-action-btn:active {
-            background: rgba(255, 255, 255, 0.15);
-        }
-
         /* QR Code Container */
         .qr-wrapper {
             display: flex;
@@ -800,33 +759,33 @@
 
             <div class="switch-row">
                 <div class="switch-label">
-                    <span class="switch-title">🎵 共享本机系统声音</span>
-                    <span class="switch-desc">允许对端在他们电脑上收听播放本机的声音</span>
+                    <span class="switch-title">🎵 共享本机系统声音输出</span>
+                    <span class="switch-desc">允许对端在他们电脑上收听播放本机的系统声音 (扬声器输出)</span>
                 </div>
                 <label class="toggle-switch">
-                    <input type="checkbox" id="selfAudioCheck" checked>
+                    <input type="checkbox" id="selfSystemAudioCheck" checked>
                     <span class="slider"></span>
                 </label>
             </div>
 
             <div class="switch-row">
                 <div class="switch-label">
-                    <span class="switch-title">🖱️ 共享本机鼠标操作</span>
-                    <span class="switch-desc">允许对端在他们电脑上实时同步执行本机的光标</span>
+                    <span class="switch-title">🎙️ 共享本机麦克风音频输入</span>
+                    <span class="switch-desc">允许对端在他们电脑上收听本机的麦克风录音</span>
+                </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="selfMicAudioCheck" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="switch-row">
+                <div class="switch-label">
+                    <span class="switch-title">🖱️ 共享本机物理鼠标操作</span>
+                    <span class="switch-desc">允许对端在他们电脑上实时同步执行本机的鼠标光标与按键</span>
                 </div>
                 <label class="toggle-switch">
                     <input type="checkbox" id="selfMouseCheck" checked>
-                    <span class="slider"></span>
-                </label>
-            </div>
-
-            <div class="switch-row">
-                <div class="switch-label">
-                    <span class="switch-title">🛡️ 允许外部远程控制</span>
-                    <span class="switch-desc">允许经授权的对端通过触控或鼠标操作控制本机</span>
-                </div>
-                <label class="toggle-switch">
-                    <input type="checkbox" id="selfControlCheck" checked>
                     <span class="slider"></span>
                 </label>
             </div>
@@ -881,29 +840,6 @@
         </div>
     </div>
 
-    <!-- Modal 4: 🕹️ 远程遥控触控板 -->
-    <div class="modal-overlay" id="remoteControlModal">
-        <div class="modal-card">
-            <div class="modal-header">
-                <h2>🕹️ 远程遥控触控板</h2>
-                <button class="close-modal-btn" data-modal="remoteControlModal">✕</button>
-            </div>
-            <p style="font-size: 0.82rem; color: var(--text-muted);" id="remoteControlTargetName">
-                正在控制目标设备
-            </p>
-
-            <div class="touchpad-surface" id="touchpadSurface">
-                <div style="font-size: 2rem;">👆</div>
-                <div class="touchpad-hint">在此区域滑动移动光标，轻触点击左键</div>
-            </div>
-
-            <div class="touchpad-buttons">
-                <button class="touch-action-btn" id="touchLeftClickBtn">🖱️ 模拟左键</button>
-                <button class="touch-action-btn" id="touchRightClickBtn">🖱️ 模拟右键</button>
-            </div>
-        </div>
-    </div>
-
     <!-- Toast Notification -->
     <div class="toast" id="toast"></div>
 
@@ -911,14 +847,14 @@
         // State
         let localSelf = null;
         let activePeers = [];
-        let activeRemoteControlPeerId = null;
         let ws = null;
         
-        // Web Audio Player State
+        // Web Audio Player State (Separated System Output vs Mic Input)
         let audioCtx = null;
         let gainNode = null;
         let nextAudioTime = 0;
-        let isAudioPlaying = false;
+        let isSystemAudioPlaying = false;
+        let isMicAudioPlaying = false;
 
         // UI References
         const headerHostName = document.getElementById('headerHostName');
@@ -985,7 +921,22 @@
 
             ws.onmessage = (event) => {
                 if (event.data instanceof ArrayBuffer) {
-                    if (isAudioPlaying) {
+                    if (event.data.byteLength > 4) {
+                        const tagBytes = new Uint8Array(event.data, 0, 4);
+                        const tag = String.fromCharCode(...tagBytes);
+                        if (tag === 'AUDS') {
+                            if (isSystemAudioPlaying) {
+                                playPCM(event.data.slice(4));
+                            }
+                            return;
+                        } else if (tag === 'AUDM') {
+                            if (isMicAudioPlaying) {
+                                playPCM(event.data.slice(4));
+                            }
+                            return;
+                        }
+                    }
+                    if (isSystemAudioPlaying || isMicAudioPlaying) {
                         playPCM(event.data);
                     }
                 } else if (typeof event.data === 'string') {
@@ -1085,8 +1036,9 @@
 
                 renderPeers(peers);
 
-                // Update audio playing flag if any peer has audio mapping enabled
-                isAudioPlaying = peers.some(p => p.mapping && p.mapping.play_audio_local);
+                // Update audio playing flags
+                isSystemAudioPlaying = peers.some(p => p.mapping && (p.mapping.play_system_audio_local || p.mapping.play_audio_local));
+                isMicAudioPlaying = peers.some(p => p.mapping && p.mapping.play_mic_audio_local);
             } catch (e) {
                 console.error('fetchPeers failed:', e);
             }
@@ -1115,7 +1067,11 @@
             peerGrid.innerHTML = '';
             peers.forEach(p => {
                 const card = document.createElement('div');
-                card.className = `peer-card ${p.mapping && (p.mapping.play_audio_local || p.mapping.execute_mouse_local) ? 'active-mapping' : ''}`;
+                const mapping = p.mapping || {};
+                const provides = p.provides || {};
+
+                const hasActiveMapping = mapping.play_system_audio_local || mapping.play_mic_audio_local || mapping.play_audio_local || mapping.execute_mouse_local;
+                card.className = `peer-card ${hasActiveMapping ? 'active-mapping' : ''}`;
                 
                 const isOnline = p.online;
                 const statusDotClass = isOnline ? 'online' : 'offline';
@@ -1126,8 +1082,13 @@
                 else if (p.os === 'macOS') devIcon = '🍏';
                 else if (p.os === 'Windows') devIcon = '🪟';
 
-                const provides = p.provides || {};
-                const mapping = p.mapping || {};
+                const hasSystemAudio = provides.system_audio || provides.audio;
+                const hasMicAudio = provides.mic_audio;
+                const hasMouse = provides.mouse;
+
+                const sysAudioMapped = mapping.play_system_audio_local || mapping.play_audio_local;
+                const micAudioMapped = mapping.play_mic_audio_local;
+                const mouseMapped = mapping.execute_mouse_local;
 
                 card.innerHTML = `
                     <div class="peer-header">
@@ -1148,67 +1109,66 @@
                     </div>
 
                     <div class="devices-section">
-                        <div class="devices-section-title">该对端提供的设备与功能 (点击在本地映射使用)</div>
+                        <div class="devices-section-title">该对端提供的设备与服务 (点击自主选择映射为本地设备)</div>
 
-                        <!-- 1. Audio Output Service -->
+                        <!-- 1. System Audio Output Device -->
                         <div class="service-row">
                             <div class="service-info">
                                 <div class="service-label">
                                     <span>🎵</span>
-                                    <span>系统声音输出</span>
+                                    <span>系统声音输出 (扬声器原声)</span>
                                 </div>
                                 <span class="service-state-text">
-                                    ${provides.audio ? '48kHz 立体声流可用' : '对端未提供声音'}
+                                    ${hasSystemAudio ? (provides.audio_device || '立体声系统声音流') : '对端未开启系统声音'}
                                 </span>
                             </div>
-                            <button class="map-btn ${mapping.play_audio_local ? 'active-emerald' : ''}" 
+                            <button class="map-btn ${sysAudioMapped ? 'active-emerald' : ''}" 
                                     data-peer-id="${p.id}" 
-                                    data-action="toggle-audio" 
-                                    ${!provides.audio ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
-                                ${mapping.play_audio_local ? '🔊 正在本地播放对端声音 (点击静音)' : '🔈 在本地播放该对端声音'}
+                                    data-action="toggle-system-audio" 
+                                    ${!hasSystemAudio ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+                                ${sysAudioMapped ? '🔊 正在本地播放对端系统声音 (点击关闭)' : '🔈 映射并在本地播放系统声音'}
                             </button>
                         </div>
 
-                        <!-- 2. Mouse Cursor Service -->
+                        <!-- 2. Microphone Input Device -->
+                        <div class="service-row">
+                            <div class="service-info">
+                                <div class="service-label">
+                                    <span>🎙️</span>
+                                    <span>麦克风音频输入 (拾音)</span>
+                                </div>
+                                <span class="service-state-text">
+                                    ${hasMicAudio ? (provides.mic_device || '麦克风高清拾音') : '对端未开启麦克风'}
+                                </span>
+                            </div>
+                            <button class="map-btn ${micAudioMapped ? 'active-purple' : ''}" 
+                                    data-peer-id="${p.id}" 
+                                    data-action="toggle-mic-audio" 
+                                    ${!hasMicAudio ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+                                ${micAudioMapped ? '🎙️ 正在本地收听对端麦克风 (点击关闭)' : '🎙️ 映射并在本地收听麦克风'}
+                            </button>
+                        </div>
+
+                        <!-- 3. Physical Mouse Synchronization -->
                         <div class="service-row">
                             <div class="service-info">
                                 <div class="service-label">
                                     <span>🖱️</span>
-                                    <span>鼠标光标操作</span>
+                                    <span>物理鼠标设备 (同步操作)</span>
                                 </div>
                                 <span class="service-state-text">
-                                    ${provides.mouse ? '光标与按键流可用' : '对端未提供鼠标'}
+                                    ${hasMouse ? '物理鼠标实时同步' : '对端未提供鼠标'}
                                 </span>
                             </div>
-                            <button class="map-btn ${mapping.execute_mouse_local ? 'active-blue' : ''}" 
+                            <button class="map-btn ${mouseMapped ? 'active-blue' : ''}" 
                                     data-peer-id="${p.id}" 
                                     data-action="toggle-mouse"
-                                    ${!provides.mouse ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
-                                ${mapping.execute_mouse_local ? '🖱️ 正在本地执行对端鼠标 (点击停止)' : '🖱️ 在本地执行对端鼠标操作'}
+                                    ${!hasMouse ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+                                ${mouseMapped ? '🖱️ 正在同步对端鼠标 (点击停止)' : '🖱️ 映射为本地鼠标 (同步对端鼠标)'}
                             </button>
-                            <div class="cursor-telemetry" id="cursorTelemetry-${p.id}" style="${mapping.execute_mouse_local ? 'display:flex;' : 'display:none;'}">
-                                ● 正在本地执行对端鼠标光标
+                            <div class="cursor-telemetry" id="cursorTelemetry-${p.id}" style="${mouseMapped ? 'display:flex;' : 'display:none;'}">
+                                ● 正在本地执行对端物理鼠标
                             </div>
-                        </div>
-
-                        <!-- 3. Remote Control Service -->
-                        <div class="service-row">
-                            <div class="service-info">
-                                <div class="service-label">
-                                    <span>🎮</span>
-                                    <span>远程受控接口</span>
-                                </div>
-                                <span class="service-state-text">
-                                    ${provides.control ? '支持外部远程遥控' : '对端禁止远程控制'}
-                                </span>
-                            </div>
-                            <button class="map-btn btn-purple" 
-                                    data-peer-id="${p.id}" 
-                                    data-peer-name="${escapeHTML(p.name)}"
-                                    data-action="remote-control"
-                                    ${!provides.control ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
-                                🕹️ 远程遥控该设备 (打开触控板)
-                            </button>
                         </div>
                     </div>
                 `;
@@ -1219,18 +1179,20 @@
                         const action = btn.getAttribute('data-action');
                         const peerId = btn.getAttribute('data-peer-id');
 
-                        if (action === 'toggle-audio') {
+                        if (action === 'toggle-system-audio') {
                             ensureAudioContext();
-                            const nextState = !mapping.play_audio_local;
-                            await updateMapping(peerId, { play_audio: nextState });
-                            showToast(nextState ? '已开启在本地播放该对端声音 🔊' : '已停止播放对端声音 🔇');
+                            const nextState = !sysAudioMapped;
+                            await updateMapping(peerId, { play_system_audio: nextState });
+                            showToast(nextState ? '已开启播放对端系统声音 🔊' : '已停止播放系统声音 🔇');
+                        } else if (action === 'toggle-mic-audio') {
+                            ensureAudioContext();
+                            const nextState = !micAudioMapped;
+                            await updateMapping(peerId, { play_mic_audio: nextState });
+                            showToast(nextState ? '已开启收听对端麦克风 🎙️' : '已停止收听麦克风 🔇');
                         } else if (action === 'toggle-mouse') {
-                            const nextState = !mapping.execute_mouse_local;
+                            const nextState = !mouseMapped;
                             await updateMapping(peerId, { execute_mouse: nextState });
-                            showToast(nextState ? '已开启在本地执行对端鼠标 🖱️' : '已停止执行对端鼠标 ⏹️');
-                        } else if (action === 'remote-control') {
-                            const peerName = btn.getAttribute('data-peer-name');
-                            openRemoteControl(peerId, peerName);
+                            showToast(nextState ? '已开启同步对端物理鼠标 🖱️' : '已停止同步对端鼠标 ⏹️');
                         }
                     });
                 });
@@ -1376,9 +1338,9 @@
         // Self Settings Management
         const openSelfSettingsBtn = document.getElementById('openSelfSettingsBtn');
         const selfNodeNameInput = document.getElementById('selfNodeNameInput');
-        const selfAudioCheck = document.getElementById('selfAudioCheck');
+        const selfSystemAudioCheck = document.getElementById('selfSystemAudioCheck');
+        const selfMicAudioCheck = document.getElementById('selfMicAudioCheck');
         const selfMouseCheck = document.getElementById('selfMouseCheck');
-        const selfControlCheck = document.getElementById('selfControlCheck');
         const saveSelfSettingsBtn = document.getElementById('saveSelfSettingsBtn');
 
         if (openSelfSettingsBtn) {
@@ -1386,9 +1348,9 @@
                 if (localSelf) {
                     selfNodeNameInput.value = localSelf.name || '';
                     if (localSelf.provides) {
-                        selfAudioCheck.checked = localSelf.provides.audio;
-                        selfMouseCheck.checked = localSelf.provides.mouse;
-                        selfControlCheck.checked = localSelf.provides.control;
+                        selfSystemAudioCheck.checked = !!(localSelf.provides.system_audio || localSelf.provides.audio);
+                        selfMicAudioCheck.checked = !!localSelf.provides.mic_audio;
+                        selfMouseCheck.checked = !!localSelf.provides.mouse;
                     }
                 }
                 openModal('selfSettingsModal');
@@ -1399,9 +1361,9 @@
             saveSelfSettingsBtn.addEventListener('click', async () => {
                 const payload = {
                     name: selfNodeNameInput.value.trim(),
-                    audio: selfAudioCheck.checked,
-                    mouse: selfMouseCheck.checked,
-                    control: selfControlCheck.checked
+                    system_audio: selfSystemAudioCheck.checked,
+                    mic_audio: selfMicAudioCheck.checked,
+                    mouse: selfMouseCheck.checked
                 };
                 await fetch('/api/self', {
                     method: 'POST',
@@ -1439,98 +1401,6 @@
                 }
             });
         }
-
-        // Remote Control Touchpad Logic
-        function openRemoteControl(peerId, peerName) {
-            activeRemoteControlPeerId = peerId;
-            const targetNameEl = document.getElementById('remoteControlTargetName');
-            if (targetNameEl) targetNameEl.innerText = `正在遥控目标: ${peerName || peerId}`;
-            
-            // Mark remote control as active for this peer
-            updateMapping(peerId, { remote_control: true });
-            openModal('remoteControlModal');
-        }
-
-        async function sendRemoteInput(type, details) {
-            if (!activeRemoteControlPeerId) return;
-            const payload = Object.assign({
-                peer_id: activeRemoteControlPeerId,
-                type: type
-            }, details);
-            try {
-                await fetch('/api/peers/control', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-            } catch (e) {}
-        }
-
-        const touchpad = document.getElementById('touchpadSurface');
-        let isTouching = false;
-        let lastTouchX = 0;
-        let lastTouchY = 0;
-
-        if (touchpad) {
-            touchpad.addEventListener('mousedown', (e) => {
-                isTouching = true;
-                lastTouchX = e.clientX;
-                lastTouchY = e.clientY;
-                touchpad.classList.add('active');
-            });
-
-            window.addEventListener('mousemove', (e) => {
-                if (!isTouching) return;
-                const dx = e.clientX - lastTouchX;
-                const dy = e.clientY - lastTouchY;
-                lastTouchX = e.clientX;
-                lastTouchY = e.clientY;
-                if (dx !== 0 || dy !== 0) {
-                    sendRemoteInput('move', { dx: dx * 2, dy: dy * 2 });
-                }
-            });
-
-            window.addEventListener('mouseup', () => {
-                if (isTouching) {
-                    isTouching = false;
-                    touchpad.classList.remove('active');
-                }
-            });
-
-            // Touch support for mobile devices
-            touchpad.addEventListener('touchstart', (e) => {
-                if (e.touches.length === 1) {
-                    isTouching = true;
-                    lastTouchX = e.touches[0].clientX;
-                    lastTouchY = e.touches[0].clientY;
-                    touchpad.classList.add('active');
-                }
-            }, { passive: false });
-
-            touchpad.addEventListener('touchmove', (e) => {
-                if (!isTouching || e.touches.length !== 1) return;
-                e.preventDefault();
-                const dx = e.touches[0].clientX - lastTouchX;
-                const dy = e.touches[0].clientY - lastTouchY;
-                lastTouchX = e.touches[0].clientX;
-                lastTouchY = e.touches[0].clientY;
-                if (dx !== 0 || dy !== 0) {
-                    sendRemoteInput('move', { dx: dx * 2, dy: dy * 2 });
-                }
-            }, { passive: false });
-
-            touchpad.addEventListener('touchend', () => {
-                isTouching = false;
-                touchpad.classList.remove('active');
-            });
-        }
-
-        document.getElementById('touchLeftClickBtn').addEventListener('click', () => {
-            sendRemoteInput('click', { btn: 'left' });
-        });
-        document.getElementById('touchRightClickBtn').addEventListener('click', () => {
-            sendRemoteInput('click', { btn: 'right' });
-        });
 
         // Initialization
         fetchSelf();

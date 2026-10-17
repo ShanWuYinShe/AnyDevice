@@ -132,7 +132,7 @@ func TestOutboundBatch(t *testing.T) {
 
 func TestBatchAPIs(t *testing.T) {
 	hub := NewHub(func(a, m int) {})
-	s := NewServer(8080, "127.0.0.1", hub, nil, nil)
+	s := NewServer(8080, "127.0.0.1", hub, nil, nil, nil)
 	handler := s.SetupRoutes()
 
 	// 1. POST /api/inbound/batch
@@ -162,7 +162,7 @@ func TestBatchAPIs(t *testing.T) {
 
 func TestPeerManagerAndAPIs(t *testing.T) {
 	hub := NewHub(func(a, m int) {})
-	s := NewServer(8080, "127.0.0.1", hub, nil, nil)
+	s := NewServer(8080, "127.0.0.1", hub, nil, nil, nil)
 	handler := s.SetupRoutes()
 
 	// 1. GET /api/self
@@ -176,9 +176,10 @@ func TestPeerManagerAndAPIs(t *testing.T) {
 	// 2. POST /api/self
 	f := false
 	selfBody, _ := json.Marshal(map[string]interface{}{
-		"audio":   f,
-		"mouse":   true,
-		"control": f,
+		"system_audio": f,
+		"mic_audio":    true,
+		"mouse":        true,
+		"control":      f,
 	})
 	req = httptest.NewRequest(http.MethodPost, "/api/self", bytes.NewReader(selfBody))
 	rec = httptest.NewRecorder()
@@ -219,12 +220,13 @@ func TestPeerManagerAndAPIs(t *testing.T) {
 		t.Fatalf("expected Remote-Office-PC, got %s", p.Name)
 	}
 
-	// 5. POST /api/peers/map
+	// 5. POST /api/peers/map (test separate audio mapping)
 	tr := true
 	mapBody, _ := json.Marshal(map[string]interface{}{
-		"peer_id":       p.ID,
-		"play_audio":    tr,
-		"execute_mouse": tr,
+		"peer_id":           p.ID,
+		"play_system_audio": tr,
+		"play_mic_audio":    f,
+		"execute_mouse":     tr,
 	})
 	req = httptest.NewRequest(http.MethodPost, "/api/peers/map", bytes.NewReader(mapBody))
 	rec = httptest.NewRecorder()

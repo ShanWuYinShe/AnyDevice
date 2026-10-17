@@ -27,44 +27,53 @@ var upgrader = websocket.Upgrader{
 }
 
 type Server struct {
-	port        int
-	currentIP   string
-	hub         *Hub
-	audioEngine *audio.Engine
-	mouseEngine *mouse.Engine
-	discovery   *discovery.Service
-	peerMgr     *PeerManager
-	outboundMgr *OutboundManager
-	roleMode    string // "provider", "receiver", "bidirectional"
-	mu          sync.RWMutex
+	port              int
+	currentIP         string
+	hub               *Hub
+	systemAudioEngine *audio.Engine
+	micAudioEngine    *audio.Engine
+	mouseEngine       *mouse.Engine
+	discovery         *discovery.Service
+	peerMgr           *PeerManager
+	outboundMgr       *OutboundManager
+	roleMode          string // "provider", "receiver", "bidirectional"
+	mu                sync.RWMutex
 }
 
-func NewServer(port int, initialIP string, hub *Hub, audioEngine *audio.Engine, mouseEngine *mouse.Engine) *Server {
-	audioDevName := "默认音频输出"
-	if audioEngine != nil {
-		audioDevName = audioEngine.DeviceName()
+func NewServer(port int, initialIP string, hub *Hub, systemAudioEngine *audio.Engine, micAudioEngine *audio.Engine, mouseEngine *mouse.Engine) *Server {
+	sysDev := "系统扬声器输出"
+	if systemAudioEngine != nil {
+		sysDev = systemAudioEngine.DeviceName()
+	}
+	micDev := "麦克风输入"
+	if micAudioEngine != nil {
+		micDev = micAudioEngine.DeviceName()
 	}
 
 	disc := discovery.NewService(port, initialIP, discovery.DeviceCapabilities{
-		Audio:       true,
+		SystemAudio: systemAudioEngine != nil,
+		MicAudio:    micAudioEngine != nil,
 		Mouse:       true,
 		Control:     true,
-		AudioDevice: audioDevName,
+		AudioDevice: sysDev,
+		MicDevice:   micDev,
+		Audio:       systemAudioEngine != nil,
 	})
 	disc.Start()
 
 	peerMgr := NewPeerManager(disc, hub)
 
 	return &Server{
-		port:        port,
-		currentIP:   initialIP,
-		hub:         hub,
-		audioEngine: audioEngine,
-		mouseEngine: mouseEngine,
-		discovery:   disc,
-		peerMgr:     peerMgr,
-		outboundMgr: NewOutboundManager(hub),
-		roleMode:    "bidirectional",
+		port:              port,
+		currentIP:         initialIP,
+		hub:               hub,
+		systemAudioEngine: systemAudioEngine,
+		micAudioEngine:    micAudioEngine,
+		mouseEngine:       mouseEngine,
+		discovery:         disc,
+		peerMgr:           peerMgr,
+		outboundMgr:       NewOutboundManager(hub),
+		roleMode:          "bidirectional",
 	}
 }
 
@@ -238,10 +247,12 @@ func (s *Server) SetupRoutes() http.Handler {
 	mux.HandleFunc("/api/peers/map", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		var body struct {
-			PeerID        string `json:"peer_id"`
-			PlayAudio     *bool  `json:"play_audio"`
-			ExecuteMouse  *bool  `json:"execute_mouse"`
-			RemoteControl *bool  `json:"remote_control"`
+			PeerID          string `json:"peer_id"`
+			PlaySystemAudio *bool  `json:"play_system_audio"`
+			PlayMicAudio    *bool  `json:"play_mic_audio"`
+			PlayAudio       *bool  `json:"play_audio"` // fallback
+			ExecuteMouse    *bool  `json:"execute_mouse"`
+			RemoteControl   *bool  `json:"remote_control"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -251,7 +262,11 @@ func (s *Server) SetupRoutes() http.Handler {
 			http.Error(w, "缺少 peer_id", http.StatusBadRequest)
 			return
 		}
-		err := s.peerMgr.SetMapping(body.PeerID, body.PlayAudio, body.ExecuteMouse, body.RemoteControl)
+		playSys := body.PlaySystemAudio
+		if playSys == nil && body.PlayAudio != nil {
+			playSys = body.PlayAudio
+		}
+		err := s.peerMgr.SetMapping(body.PeerID, playSys, body.PlayMicAudio, body.ExecuteMouse)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -292,54 +307,72 @@ func (s *Server) SetupRoutes() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPost {
 			var body struct {
-				Name    *string `json:"name"`
-				Audio   *bool   `json:"audio"`
-				Mouse   *bool   `json:"mouse"`
-				Control *bool   `json:"control"`
+				Name        *string `json:"name"`
+				SystemAudio *bool   `json:"system_audio"`
+				MicAudio    *bool   `json:"mic_audio"`
+				Audio       *bool   `json:"audio"` // fallback
+				Mouse       *bool   `json:"mouse"`
+				Control     *bool   `json:"control"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 			cur := s.discovery.GetProvides()
-			audioVal := cur.Audio
-			mouseVal := cur.Mouse
-			ctrlVal := cur.Control
-			if body.Audio != nil {
-				audioVal = *body.Audio
+			sysAudioVal := cur.SystemAudio
+			if body.SystemAudio != nil {
+				sysAudioVal = *body.SystemAudio
+			} else if body.Audio != nil {
+				sysAudioVal = *body.Audio
 			}
+			micAudioVal := cur.MicAudio
+			if body.MicAudio != nil {
+				micAudioVal = *body.MicAudio
+			}
+			mouseVal := cur.Mouse
 			if body.Mouse != nil {
 				mouseVal = *body.Mouse
 			}
+			ctrlVal := cur.Control
 			if body.Control != nil {
 				ctrlVal = *body.Control
 			}
 			if body.Name != nil {
 				s.discovery.SetName(*body.Name)
 			}
-			audioDev := "默认音频输出"
-			if s.audioEngine != nil {
-				audioDev = s.audioEngine.DeviceName()
+			sysDev := "系统扬声器输出"
+			if s.systemAudioEngine != nil {
+				sysDev = s.systemAudioEngine.DeviceName()
 			}
-			s.discovery.UpdateProvides(audioVal, mouseVal, ctrlVal, audioDev)
+			micDev := "麦克风输入"
+			if s.micAudioEngine != nil {
+				micDev = s.micAudioEngine.DeviceName()
+			}
+			s.discovery.UpdateProvides(sysAudioVal, micAudioVal, mouseVal, ctrlVal, sysDev, micDev)
 			json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 			return
 		}
 
-		audioDev := "默认音频输出"
-		if s.audioEngine != nil {
-			audioDev = s.audioEngine.DeviceName()
+		sysDev := "未开启"
+		if s.systemAudioEngine != nil {
+			sysDev = s.systemAudioEngine.DeviceName()
+		}
+		micDev := "未开启"
+		if s.micAudioEngine != nil {
+			micDev = s.micAudioEngine.DeviceName()
 		}
 		resp := map[string]interface{}{
-			"id":           s.discovery.ID(),
-			"name":         s.discovery.Name(),
-			"os":           runtime.GOOS,
-			"current_ip":   s.GetCurrentIP(),
-			"port":         s.port,
-			"primary_url":  s.GetCurrentURL(),
-			"provides":     s.discovery.GetProvides(),
-			"interfaces":   util.GetAllIPs(),
-			"audio_device": audioDev,
+			"id":                  s.discovery.ID(),
+			"name":                s.discovery.Name(),
+			"os":                  runtime.GOOS,
+			"current_ip":          s.GetCurrentIP(),
+			"port":                s.port,
+			"primary_url":         s.GetCurrentURL(),
+			"provides":            s.discovery.GetProvides(),
+			"interfaces":          util.GetAllIPs(),
+			"system_audio_device": sysDev,
+			"mic_device":          micDev,
+			"audio_device":        sysDev,
 		}
 		json.NewEncoder(w).Encode(resp)
 	})
@@ -347,22 +380,28 @@ func (s *Server) SetupRoutes() http.Handler {
 	// Status API
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		devName := "默认音频输出"
-		if s.audioEngine != nil {
-			devName = s.audioEngine.DeviceName()
+		sysDev := "默认音频输出"
+		if s.systemAudioEngine != nil {
+			sysDev = s.systemAudioEngine.DeviceName()
+		}
+		micDev := "麦克风输入"
+		if s.micAudioEngine != nil {
+			micDev = s.micAudioEngine.DeviceName()
 		}
 		status := map[string]interface{}{
-			"clients":        s.hub.ClientCount(),
-			"inbound_count":  s.hub.ClientCount(),
-			"outbound_count": len(s.outboundMgr.ListPeers()),
-			"peers_count":    len(s.peerMgr.ListPeers()),
-			"role_mode":      s.GetRoleMode(),
-			"bytes_sent":     s.hub.TotalBytesSent(),
-			"sample_rate":    audio.SampleRate,
-			"channels":       audio.Channels,
-			"device_name":    devName,
-			"current_ip":     s.GetCurrentIP(),
-			"primary_url":    s.GetCurrentURL(),
+			"clients":             s.hub.ClientCount(),
+			"inbound_count":       s.hub.ClientCount(),
+			"outbound_count":      len(s.outboundMgr.ListPeers()),
+			"peers_count":         len(s.peerMgr.ListPeers()),
+			"role_mode":           s.GetRoleMode(),
+			"bytes_sent":          s.hub.TotalBytesSent(),
+			"sample_rate":         audio.SampleRate,
+			"channels":            audio.Channels,
+			"device_name":         sysDev,
+			"system_audio_device": sysDev,
+			"mic_device":          micDev,
+			"current_ip":          s.GetCurrentIP(),
+			"primary_url":         s.GetCurrentURL(),
 			"mouse_active":   true,
 		}
 		json.NewEncoder(w).Encode(status)

@@ -18,6 +18,18 @@ const (
 	FrameSize  = Channels * (BitDepth / 8) // 4 bytes per stereo frame
 )
 
+type AudioKind string
+
+const (
+	KindSystem AudioKind = "system"
+	KindMic    AudioKind = "mic"
+)
+
+var (
+	TagSystemAudio = []byte("AUDS")
+	TagMicAudio    = []byte("AUDM")
+)
+
 type CaptureMode string
 
 const (
@@ -28,6 +40,7 @@ const (
 )
 
 type Engine struct {
+	kind        AudioKind
 	mode        CaptureMode
 	deviceIndex int
 	onChunk     func([]byte)
@@ -41,8 +54,12 @@ type Engine struct {
 	devName   string
 }
 
-func NewEngine(mode CaptureMode, deviceIndex int, onChunk func([]byte)) *Engine {
+func NewEngine(kind AudioKind, mode CaptureMode, deviceIndex int, onChunk func([]byte)) *Engine {
+	if kind == "" {
+		kind = KindSystem
+	}
 	return &Engine{
+		kind:        kind,
 		mode:        mode,
 		deviceIndex: deviceIndex,
 		onChunk:     onChunk,
@@ -56,6 +73,11 @@ func (e *Engine) DeviceName() string {
 	return e.devName
 }
 
+// Kind returns whether this engine captures system output or mic input.
+func (e *Engine) Kind() AudioKind {
+	return e.kind
+}
+
 // Start begins capturing or generating audio.
 func (e *Engine) Start() error {
 	e.mu.Lock()
@@ -66,7 +88,7 @@ func (e *Engine) Start() error {
 	}
 
 	if e.mode == ModeTestTone {
-		e.devName = "Synthetic Test Tone (Dual Harmonic 440Hz)"
+		e.devName = "系统扬声器 (测试音输出)"
 		e.startTestTone()
 		e.isRunning = true
 		return nil
@@ -75,29 +97,30 @@ func (e *Engine) Start() error {
 	// Try hardware capture via malgo
 	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
-		fmt.Printf("[Audio] Malgo context init failed: %v. Falling back to test tone.\n", err)
-		e.devName = "Synthetic Test Tone (Audio Driver Fallback)"
-		e.startTestTone()
-		e.isRunning = true
-		return nil
+		fmt.Printf("[Audio] Malgo context init failed for %s: %v\n", e.kind, err)
+		if e.kind == KindSystem {
+			e.devName = "系统扬声器 (驱动回退测试音)"
+			e.startTestTone()
+			e.isRunning = true
+			return nil
+		}
+		return fmt.Errorf("malgo init failed: %w", err)
 	}
 	e.ctx = ctx
 
-	// Determine actual mode
-	targetMode := e.mode
-	if targetMode == ModeAuto {
-		if runtime.GOOS == "windows" {
-			targetMode = ModeLoopback
-		} else {
-			targetMode = ModeCapture
-		}
-	}
-
 	var devType malgo.DeviceType
-	if targetMode == ModeLoopback {
-		devType = malgo.Loopback
-	} else {
+	if e.kind == KindMic {
 		devType = malgo.Capture
+		e.devName = "麦克风输入"
+	} else {
+		// System audio loopback
+		if runtime.GOOS == "windows" {
+			devType = malgo.Loopback
+			e.devName = "系统扬声器输出 (WASAPI Loopback)"
+		} else {
+			// On macOS / Linux: check for virtual loopback (BlackHole, Soundflower...)
+			devType = malgo.Capture
+		}
 	}
 
 	deviceConfig := malgo.DefaultDeviceConfig(devType)
@@ -106,36 +129,69 @@ func (e *Engine) Start() error {
 	deviceConfig.SampleRate = SampleRate
 	deviceConfig.PeriodSizeInMilliseconds = 20 // 20ms chunks
 
-	// If a specific device index is provided, resolve device ID
-	if e.deviceIndex >= 0 {
-		var listType malgo.DeviceType
-		if devType == malgo.Loopback {
-			listType = malgo.Playback
-		} else {
-			listType = malgo.Capture
-		}
-
-		devices, err := e.ctx.Devices(listType)
-		if err == nil && e.deviceIndex < len(devices) {
-			targetDev := devices[e.deviceIndex]
-			e.devName = targetDev.Name()
-			if devType == malgo.Loopback {
-				deviceConfig.Playback.DeviceID = targetDev.ID.Pointer()
+	if e.kind == KindMic {
+		devices, err := e.ctx.Devices(malgo.Capture)
+		if err == nil {
+			if e.deviceIndex >= 0 && e.deviceIndex < len(devices) {
+				e.devName = devices[e.deviceIndex].Name()
+				deviceConfig.Capture.DeviceID = devices[e.deviceIndex].ID.Pointer()
 			} else {
-				deviceConfig.Capture.DeviceID = targetDev.ID.Pointer()
+				for _, d := range devices {
+					if d.IsDefault > 0 {
+						e.devName = d.Name()
+						deviceConfig.Capture.DeviceID = d.ID.Pointer()
+						break
+					}
+				}
+				if e.devName == "麦克风输入" && len(devices) > 0 {
+					e.devName = devices[0].Name()
+					deviceConfig.Capture.DeviceID = devices[0].ID.Pointer()
+				}
 			}
 		}
 	} else {
-		// Auto detect virtual device if available
-		e.autoSelectVirtualDevice(&deviceConfig, devType)
+		// System audio
+		if runtime.GOOS == "windows" {
+			devices, err := e.ctx.Devices(malgo.Playback)
+			if err == nil {
+				if e.deviceIndex >= 0 && e.deviceIndex < len(devices) {
+					e.devName = fmt.Sprintf("系统输出 [%s]", devices[e.deviceIndex].Name())
+					deviceConfig.Playback.DeviceID = devices[e.deviceIndex].ID.Pointer()
+				} else {
+					for _, d := range devices {
+						if d.IsDefault > 0 {
+							e.devName = fmt.Sprintf("系统输出 [%s]", d.Name())
+							deviceConfig.Playback.DeviceID = d.ID.Pointer()
+							break
+						}
+					}
+				}
+			}
+		} else {
+			// macOS / Linux: Try finding virtual loopback device
+			e.autoSelectVirtualDevice(&deviceConfig, devType)
+			if e.devName == "" {
+				// No virtual audio driver installed on macOS -> run test tone for system audio
+				// Do NOT capture user microphone!
+				e.devName = "系统扬声器 (测试音 / 安装BlackHole可捕获原声)"
+				e.startTestTone()
+				e.isRunning = true
+				return nil
+			}
+		}
+	}
+
+	tag := TagSystemAudio
+	if e.kind == KindMic {
+		tag = TagMicAudio
 	}
 
 	callbacks := malgo.DeviceCallbacks{
 		Data: func(pOutputSample, pInputSamples []byte, framecount uint32) {
 			if len(pInputSamples) > 0 && e.onChunk != nil {
-				// Copy slice to ensure thread safety
-				buf := make([]byte, len(pInputSamples))
-				copy(buf, pInputSamples)
+				buf := make([]byte, 4+len(pInputSamples))
+				copy(buf[:4], tag)
+				copy(buf[4:], pInputSamples)
 				e.onChunk(buf)
 			}
 		},
@@ -143,38 +199,27 @@ func (e *Engine) Start() error {
 
 	device, err := malgo.InitDevice(e.ctx.Context, deviceConfig, callbacks)
 	if err != nil {
-		fmt.Printf("[Audio] Warning: Failed to init audio device (%v). Falling back to test-tone.\n", err)
-		if e.ctx != nil {
-			e.ctx.Uninit()
-			e.ctx.Free()
-			e.ctx = nil
+		fmt.Printf("[Audio] Warning: Failed to init audio device for %s (%v).\n", e.kind, err)
+		if e.kind == KindSystem {
+			e.devName = "系统扬声器 (测试音)"
+			e.startTestTone()
+			e.isRunning = true
+			return nil
 		}
-		e.devName = "Synthetic Test Tone (No Audio Hardware Detected)"
-		e.startTestTone()
-		e.isRunning = true
-		return nil
+		return err
 	}
-
 	e.device = device
-	if e.devName == "" {
-		if devType == malgo.Loopback {
-			e.devName = "System Default Output (Loopback)"
-		} else {
-			e.devName = "System Default Input"
-		}
-	}
 
 	if err := e.device.Start(); err != nil {
 		e.device.Uninit()
-		e.ctx.Uninit()
-		e.ctx.Free()
-		e.ctx = nil
 		e.device = nil
-		fmt.Printf("[Audio] Device start failed: %v. Falling back to test-tone.\n", err)
-		e.devName = "Synthetic Test Tone (Device Start Error)"
-		e.startTestTone()
-		e.isRunning = true
-		return nil
+		if e.kind == KindSystem {
+			e.devName = "系统扬声器 (测试音)"
+			e.startTestTone()
+			e.isRunning = true
+			return nil
+		}
+		return err
 	}
 
 	e.isRunning = true
@@ -197,8 +242,8 @@ func (e *Engine) autoSelectVirtualDevice(config *malgo.DeviceConfig, devType mal
 	for _, d := range devices {
 		name := d.Name()
 		if isVirtualDeviceName(name) {
-			fmt.Printf("[Audio] Auto-detected virtual audio device: %s\n", name)
-			e.devName = name
+			fmt.Printf("[Audio] Auto-detected virtual audio loopback: %s\n", name)
+			e.devName = fmt.Sprintf("系统输出 [%s]", name)
 			if devType == malgo.Loopback {
 				config.Playback.DeviceID = d.ID.Pointer()
 			} else {
@@ -224,7 +269,7 @@ func (e *Engine) Stop() {
 	}
 
 	if e.device != nil {
-		e.device.Stop()
+		_ = e.device.Stop()
 		e.device.Uninit()
 		e.device = nil
 	}
@@ -258,7 +303,6 @@ func (e *Engine) startTestTone() {
 			case <-ticker.C:
 				for i := 0; i < framesPerChunk; i++ {
 					t := float64(sampleIndex) / float64(SampleRate)
-					// Gentle harmonic tone: 440Hz + 880Hz, modulated with slow pulsing
 					amp := 0.15 * (0.8 + 0.2*math.Sin(2*math.Pi*0.5*t))
 					sample1 := math.Sin(2 * math.Pi * 440 * t)
 					sample2 := 0.5 * math.Sin(2*math.Pi*880*t)
@@ -276,8 +320,9 @@ func (e *Engine) startTestTone() {
 				}
 
 				if e.onChunk != nil {
-					chunkCopy := make([]byte, len(buf))
-					copy(chunkCopy, buf)
+					chunkCopy := make([]byte, 4+len(buf))
+					copy(chunkCopy[:4], TagSystemAudio)
+					copy(chunkCopy[4:], buf)
 					e.onChunk(chunkCopy)
 				}
 			}

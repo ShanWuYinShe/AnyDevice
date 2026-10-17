@@ -72,13 +72,18 @@ func main() {
 	mouseEngine.Start()
 	defer mouseEngine.Stop()
 
-	// 3. Initialize Audio Capture Engine
-	audioEngine := audio.NewEngine(audio.CaptureMode(*mode), *deviceIdx, hub.BroadcastAudio)
-	if err := audioEngine.Start(); err != nil {
-		fmt.Printf("[Fatal] Failed to start audio engine: %v\n", err)
-		os.Exit(1)
+	// 3. Initialize Audio Engines (Independent System Output & Microphone Input)
+	systemAudioEngine := audio.NewEngine(audio.KindSystem, audio.CaptureMode(*mode), *deviceIdx, hub.BroadcastAudio)
+	if err := systemAudioEngine.Start(); err != nil {
+		fmt.Printf("[Audio] 系统声音捕获初始化警告: %v\n", err)
 	}
-	defer audioEngine.Stop()
+	defer systemAudioEngine.Stop()
+
+	micAudioEngine := audio.NewEngine(audio.KindMic, audio.CaptureMode(*mode), -1, hub.BroadcastAudio)
+	if err := micAudioEngine.Start(); err != nil {
+		fmt.Printf("[Audio] 麦克风输入捕获初始化警告: %v\n", err)
+	}
+	defer micAudioEngine.Stop()
 
 	// 4. Network & URL Information (Using OS routing resolution to skip virtual adapters)
 	primaryIP := util.GetPrimaryIP(*customIP)
@@ -87,19 +92,20 @@ func main() {
 
 	fmt.Printf("\n🚀 AnyDevice 跨端双向设备映射服务已就绪！\n")
 	fmt.Printf("├─ 操作系统: %s (%s)\n", runtime.GOOS, runtime.GOARCH)
-	fmt.Printf("├─ 音频设备: %s\n", audioEngine.DeviceName())
-	fmt.Printf("├─ 鼠标映射: 双向支持 (正向光标监视 + 反向触控板遥控)\n")
+	fmt.Printf("├─ 系统声音: %s\n", systemAudioEngine.DeviceName())
+	fmt.Printf("├─ 麦克风: %s\n", micAudioEngine.DeviceName())
+	fmt.Printf("├─ 鼠标映射: 全桌面物理光标与按键无缝同步\n")
 	fmt.Printf("├─ 本地窗口: %s\n", localURL)
 	fmt.Printf("└─ 局域网地址: %s\n", primaryURL)
 	util.PrintNetworkInfo(primaryIP, *port)
 
 	if !*noQR {
-		fmt.Printf("\n📱 手机/平板/电脑 扫码打开控制台 (在 UI 上自由勾选映射音频/鼠标):\n\n")
+		fmt.Printf("\n📱 手机/平板/电脑 扫码打开控制台 (在 UI 上自由映射对端设备):\n\n")
 		util.PrintQRCode(primaryURL)
 	}
 
 	// 5. Start HTTP & WebSocket Server in background
-	srv := server.NewServer(*port, primaryIP, hub, audioEngine, mouseEngine)
+	srv := server.NewServer(*port, primaryIP, hub, systemAudioEngine, micAudioEngine, mouseEngine)
 	go func() {
 		if err := srv.Start(); err != nil {
 			fmt.Printf("[Fatal] HTTP server error: %v\n", err)
@@ -119,7 +125,8 @@ func main() {
 	}
 
 	fmt.Println("\n正在停止 AnyDevice 服务...")
-	audioEngine.Stop()
+	systemAudioEngine.Stop()
+	micAudioEngine.Stop()
 	mouseEngine.Stop()
 	fmt.Println("服务已安全退出。")
 }

@@ -17,12 +17,16 @@ import (
 
 // PeerMappingState stores what the local user chooses to map from a specific remote peer.
 type PeerMappingState struct {
-	PlayAudioLocal   bool   `json:"play_audio_local"`
-	ExecuteMouseLocal bool  `json:"execute_mouse_local"`
-	RemoteControlActive bool `json:"remote_control_active"`
-	ConnectionStatus string `json:"connection_status"` // "connected", "connecting", "disconnected", "error"
-	LatencyMs        int64  `json:"latency_ms"`
-	LastError        string `json:"last_error,omitempty"`
+	PlaySystemAudioLocal bool   `json:"play_system_audio_local"`
+	PlayMicAudioLocal    bool   `json:"play_mic_audio_local"`
+	ExecuteMouseLocal    bool   `json:"execute_mouse_local"`
+	ConnectionStatus     string `json:"connection_status"` // "connected", "connecting", "disconnected", "error"
+	LatencyMs            int64  `json:"latency_ms"`
+	LastError            string `json:"last_error,omitempty"`
+
+	// Backward compatibility fields
+	PlayAudioLocal       bool   `json:"play_audio_local"`
+	RemoteControlActive  bool   `json:"remote_control_active,omitempty"`
 }
 
 // UnifiedPeer is the clean, discoverer-centric peer model exposed to the UI.
@@ -129,7 +133,7 @@ func (pm *PeerManager) RenamePeer(peerID, newName string) error {
 }
 
 // SetMapping updates the discoverer's local mapping decisions for a peer.
-func (pm *PeerManager) SetMapping(peerID string, playAudio, executeMouse, remoteControl *bool) error {
+func (pm *PeerManager) SetMapping(peerID string, playSystemAudio, playMicAudio, executeMouse *bool) error {
 	pm.mu.Lock()
 	mapping, exists := pm.mappings[peerID]
 	if !exists {
@@ -139,17 +143,18 @@ func (pm *PeerManager) SetMapping(peerID string, playAudio, executeMouse, remote
 		pm.mappings[peerID] = mapping
 	}
 
-	if playAudio != nil {
-		mapping.PlayAudioLocal = *playAudio
+	if playSystemAudio != nil {
+		mapping.PlaySystemAudioLocal = *playSystemAudio
+		mapping.PlayAudioLocal = *playSystemAudio
+	}
+	if playMicAudio != nil {
+		mapping.PlayMicAudioLocal = *playMicAudio
 	}
 	if executeMouse != nil {
 		mapping.ExecuteMouseLocal = *executeMouse
 	}
-	if remoteControl != nil {
-		mapping.RemoteControlActive = *remoteControl
-	}
 
-	needsConn := mapping.PlayAudioLocal || mapping.ExecuteMouseLocal || mapping.RemoteControlActive
+	needsConn := mapping.PlaySystemAudioLocal || mapping.PlayMicAudioLocal || mapping.ExecuteMouseLocal
 	pm.mu.Unlock()
 
 	// Find peer target
@@ -258,7 +263,7 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 		pm.mu.Lock()
 		delete(pm.conns, peerID)
 		if m, ok := pm.mappings[peerID]; ok {
-			if m.PlayAudioLocal || m.ExecuteMouseLocal || m.RemoteControlActive {
+			if m.PlaySystemAudioLocal || m.PlayMicAudioLocal || m.ExecuteMouseLocal {
 				m.ConnectionStatus = "disconnected"
 			}
 		}
@@ -287,19 +292,35 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 		curMapping := *pm.mappings[peerID]
 		pm.mu.RUnlock()
 
-		if msgType == websocket.BinaryMessage && curMapping.PlayAudioLocal {
-			// Remote audio chunk -> Broadcast to local Web Audio so local speakers play it
-			pm.hub.BroadcastAudio(data)
+		if msgType == websocket.BinaryMessage {
+			if len(data) >= 4 {
+				tag := string(data[:4])
+				if tag == "AUDS" {
+					if curMapping.PlaySystemAudioLocal {
+						pm.hub.BroadcastAudio(data)
+					}
+				} else if tag == "AUDM" {
+					if curMapping.PlayMicAudioLocal {
+						pm.hub.BroadcastAudio(data)
+					}
+				} else {
+					// Fallback for legacy untagged stream
+					if curMapping.PlaySystemAudioLocal || curMapping.PlayMicAudioLocal {
+						pm.hub.BroadcastAudio(data)
+					}
+				}
+			}
 		} else if msgType == websocket.TextMessage && curMapping.ExecuteMouseLocal {
 			var evt mouse.MouseEvent
 			if err := json.Unmarshal(data, &evt); err == nil {
 				// Execute remote mouse movements & clicks directly on local OS!
-				if evt.Action == "move" {
-					mouse.SimulateAbsolute(evt.X, evt.Y)
-				} else if evt.Action == "down" || evt.Action == "up" {
+				mouse.SimulateAbsolute(evt.X, evt.Y)
+				if evt.Action == "down" || evt.Action == "up" {
 					btn := "left"
 					if evt.RightDown {
 						btn = "right"
+					} else if evt.MiddleDown {
+						btn = "middle"
 					}
 					mouse.SimulateButton(btn, evt.Action == "down")
 				}

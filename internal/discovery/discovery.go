@@ -25,10 +25,13 @@ const (
 
 // DeviceCapabilities describes what virtual/physical devices this endpoint provides to others.
 type DeviceCapabilities struct {
-	Audio       bool   `json:"audio"`
+	SystemAudio bool   `json:"system_audio"`
+	MicAudio    bool   `json:"mic_audio"`
 	Mouse       bool   `json:"mouse"`
 	Control     bool   `json:"control"`
 	AudioDevice string `json:"audio_device,omitempty"`
+	MicDevice   string `json:"mic_device,omitempty"`
+	Audio       bool   `json:"audio"` // Backward compatibility
 }
 
 // Beacon is the broadcast announcement packet.
@@ -128,14 +131,17 @@ func (s *Service) SetCurrentIP(ip string) {
 	s.currentIP = ip
 }
 
-func (s *Service) UpdateProvides(audio, mouse, control bool, audioDevice string) {
+func (s *Service) UpdateProvides(systemAudio, micAudio, mouse, control bool, sysDev, micDev string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.provides = DeviceCapabilities{
-		Audio:       audio,
+		SystemAudio: systemAudio,
+		MicAudio:    micAudio,
 		Mouse:       mouse,
 		Control:     control,
-		AudioDevice: audioDevice,
+		AudioDevice: sysDev,
+		MicDevice:   micDev,
+		Audio:       systemAudio,
 	}
 }
 
@@ -371,7 +377,13 @@ func (s *Service) AddManualPeer(target string, name string) *DiscoveredPeer {
 		IP:       ip,
 		Port:     port,
 		Target:   target,
-		Provides: DeviceCapabilities{Audio: true, Mouse: true, Control: true},
+		Provides: DeviceCapabilities{
+			SystemAudio: true,
+			MicAudio:    true,
+			Mouse:       true,
+			Control:     true,
+			Audio:       true,
+		},
 		LastSeen: time.Now(),
 		IsManual: true,
 		Online:   true,
@@ -422,7 +434,13 @@ func (s *Service) RegisterInboundClient(id, remoteAddr, userAgent string) *Disco
 			IP:       ip,
 			Port:     s.port,
 			Target:   remoteAddr,
-			Provides: DeviceCapabilities{Audio: false, Mouse: false, Control: true},
+			Provides: DeviceCapabilities{
+				SystemAudio: false,
+				MicAudio:    false,
+				Mouse:       false,
+				Control:     true,
+				Audio:       false,
+			},
 			LastSeen: time.Now(),
 			IsManual: false,
 			Online:   true,
