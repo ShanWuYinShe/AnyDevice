@@ -178,15 +178,15 @@ export function connectWebSocket() {
       if (event.data.byteLength > 4) {
         const tag = String.fromCharCode(...new Uint8Array(event.data, 0, 4));
         if (tag === 'AUDS') {
-          if (playState().system) playPCM(event.data.slice(4));
+          if (playState().system) playPCM(event.data.slice(4), 'sys');
           return;
         } else if (tag === 'AUDM') {
-          if (playState().mic) playPCM(event.data.slice(4));
+          if (playState().mic) playPCM(event.data.slice(4), 'mic');
           return;
         }
       }
       if (playState().system || playState().mic) {
-        playPCM(event.data);
+        playPCM(event.data, playState().system ? 'sys' : 'mic');
       }
       return;
     }

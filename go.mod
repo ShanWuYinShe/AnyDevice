@@ -2,6 +2,8 @@ module any_device
 
 go 1.27.2
 
+replace github.com/gen2brain/malgo => ./third_party/malgo
+
 require (
 	github.com/gen2brain/malgo v0.11.26
 	github.com/gorilla/websocket v1.5.3

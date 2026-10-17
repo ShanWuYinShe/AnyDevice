@@ -1,9 +1,13 @@
 // Web Audio 播放器：接收服务端 PCM（16bit 交错立体声 48kHz）并调度播放。
 // 调度策略（保守）：仅当播放位置与到达速率严重偏离（断流/积压）时重置对齐；
 // 不做 playbackRate 微调——微调会与目标系统的音频时钟交互产生不确定性。
+//
+// 重要：系统声（AUDS）与麦克风（AUDM）各自维护独立播放时间轴——
+// 共用一条时间轴会让两个流在播放时刻度上互相推挤（交替插入/重叠），
+// 同时映射两个音频源时产生杂音。
 let audioCtx = null;
 let gainNode = null;
-let nextAudioTime = 0;
+const nextAudioTimeByStream = { sys: 0, mic: 0 };
 
 // 诊断快照：供 UI 显示播放链路状态（收到速率由 state 模块统计）
 export function audioContextState() {
@@ -24,8 +28,10 @@ export function ensureAudioContext() {
   }
 }
 
-export function playPCM(arrayBuffer) {
+// playPCM 播放一个 PCM chunk。stream: 'sys' | 'mic'（独立时间轴）
+export function playPCM(arrayBuffer, stream) {
   if (!audioCtx) return;
+  const key = stream === 'mic' ? 'mic' : 'sys';
   const int16 = new Int16Array(arrayBuffer);
   const frameCount = int16.length / 2;
   if (frameCount <= 0) return;
@@ -39,14 +45,15 @@ export function playPCM(arrayBuffer) {
   }
 
   const now = audioCtx.currentTime;
+  let next = nextAudioTimeByStream[key];
   // 保守调度：仅当严重落后（断流积压）或异常领先时重置对齐
-  if (nextAudioTime < now - 0.25 || nextAudioTime > now + 0.35) {
-    nextAudioTime = now + 0.05;
+  if (next < now - 0.25 || next > now + 0.35) {
+    next = now + 0.05;
   }
 
   const source = audioCtx.createBufferSource();
   source.buffer = audioBuffer;
   source.connect(gainNode);
-  source.start(nextAudioTime);
-  nextAudioTime += audioBuffer.duration;
+  source.start(next);
+  nextAudioTimeByStream[key] = next + audioBuffer.duration;
 }
