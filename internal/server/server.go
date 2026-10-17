@@ -134,7 +134,7 @@ func (s *Server) SetupRoutes() http.Handler {
 
 		client := NewClient(s.hub, conn, r.RemoteAddr, r.UserAgent())
 		s.hub.register <- client
-		if s.discovery != nil {
+		if s.discovery != nil && !util.IsLocalIP(r.RemoteAddr) {
 			s.discovery.RegisterInboundClient(client.id, r.RemoteAddr, r.UserAgent())
 		}
 
@@ -219,7 +219,11 @@ func (s *Server) SetupRoutes() http.Handler {
 			http.Error(w, "目标地址不能为空", http.StatusBadRequest)
 			return
 		}
-		peer := s.peerMgr.AddManualPeer(body.Target, body.Name)
+		peer, err := s.peerMgr.AddManualPeer(body.Target, body.Name)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
 			"peer":    peer,

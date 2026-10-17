@@ -132,6 +132,37 @@ func (s *Service) SetCurrentIP(ip string) {
 	s.currentIP = ip
 }
 
+func (s *Service) Port() int {
+	return s.port
+}
+
+func (s *Service) GetCurrentIP() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.currentIP
+}
+
+func (s *Service) isSelfUnlocked(id, ip string, port int) bool {
+	if id != "" && id == s.id {
+		return true
+	}
+	if port == s.port {
+		if ip == s.currentIP || util.IsLocalIP(ip) {
+			return true
+		}
+	}
+	if util.IsLocalIP(ip) {
+		return true
+	}
+	return false
+}
+
+func (s *Service) IsSelf(id, ip string, port int) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.isSelfUnlocked(id, ip, port)
+}
+
 func (s *Service) UpdateProvides(systemAudio, micAudio, mouse, keyboard, control bool, sysDev, micDev string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -277,21 +308,18 @@ func (s *Service) listenLoop(ctx context.Context) {
 		}
 
 		// Skip self announcement
-		s.mu.RLock()
-		isSelf := b.ID == s.id || (b.IP == s.currentIP && b.Port == s.port) || (util.IsLocalIP(b.IP) && b.Port == s.port)
-		s.mu.RUnlock()
-		if isSelf {
+		if s.IsSelf(b.ID, b.IP, b.Port) {
 			continue
 		}
 
 		// Ensure peer IP is populated
 		peerIP := b.IP
-		if peerIP == "" || peerIP == "127.0.0.1" || peerIP == "0.0.0.0" {
+		if peerIP == "" || util.IsLocalIP(peerIP) {
 			if udpAddr, ok := remoteAddr.(*net.UDPAddr); ok {
 				peerIP = udpAddr.IP.String()
 			}
 		}
-		if util.IsLocalIP(peerIP) && b.Port == s.port {
+		if s.IsSelf(b.ID, peerIP, b.Port) {
 			continue
 		}
 		peerTarget := fmt.Sprintf("%s:%d", peerIP, b.Port)
@@ -366,6 +394,10 @@ func (s *Service) AddManualPeer(target string, name string) *DiscoveredPeer {
 	port := s.port
 	fmt.Sscanf(parts[1], "%d", &port)
 
+	if s.isSelfUnlocked("", ip, port) || util.IsLocalIP(ip) || util.IsLocalIP(target) {
+		return nil
+	}
+
 	id := "manual-" + hex.EncodeToString([]byte(target))
 	peerName := name
 	if peerName == "" {
@@ -400,12 +432,13 @@ func (s *Service) RegisterInboundClient(id, remoteAddr, userAgent string) *Disco
 	defer s.mu.Unlock()
 
 	ip := remoteAddr
-	if idx := strings.LastIndex(remoteAddr, ":"); idx != -1 {
-		ip = remoteAddr[:idx]
+	if host, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		ip = host
 	}
+	ip = strings.Trim(ip, "[]")
 
 	// Never register local UI or loopback connections as an external peer!
-	if util.IsLocalIP(ip) {
+	if util.IsLocalIP(ip) || s.isSelfUnlocked(id, ip, s.port) {
 		return nil
 	}
 
@@ -479,7 +512,7 @@ func (s *Service) GetPeers() []DiscoveredPeer {
 	result := make([]DiscoveredPeer, 0, len(s.peers))
 	for _, p := range s.peers {
 		// Strictly filter out self and local loopback/interface IPs
-		if p.ID == s.id || util.IsLocalIP(p.IP) {
+		if s.isSelfUnlocked(p.ID, p.IP, p.Port) || util.IsLocalIP(p.IP) || util.IsLocalIP(p.Target) {
 			continue
 		}
 		result = append(result, *p)

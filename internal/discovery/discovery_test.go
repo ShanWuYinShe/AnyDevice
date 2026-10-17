@@ -36,6 +36,28 @@ func TestDiscoveryService(t *testing.T) {
 		t.Fatalf("expected local loopback client to NOT be registered, got %+v", localClient)
 	}
 
+	// Test Inbound registration of IPv6 localhost [::1] (must be ignored!)
+	ipv6Client := s1.RegisterInboundClient("client-ipv6", "[::1]:54322", "Mozilla/5.0")
+	if ipv6Client != nil {
+		t.Fatalf("expected [::1] client to NOT be registered, got %+v", ipv6Client)
+	}
+
+	// Test Inbound registration of self IP (must be ignored!)
+	selfIPClient := s1.RegisterInboundClient("client-self", s1.GetCurrentIP()+":54322", "Mozilla/5.0")
+	if selfIPClient != nil {
+		t.Fatalf("expected self IP client to NOT be registered, got %+v", selfIPClient)
+	}
+
+	// Test Manual addition of self IP / localhost (must return nil!)
+	selfManual := s1.AddManualPeer("127.0.0.1:8080", "Self")
+	if selfManual != nil {
+		t.Fatalf("expected AddManualPeer for self 127.0.0.1 to return nil, got %+v", selfManual)
+	}
+	selfManual2 := s1.AddManualPeer(s1.GetCurrentIP()+":8080", "Self")
+	if selfManual2 != nil {
+		t.Fatalf("expected AddManualPeer for self IP to return nil, got %+v", selfManual2)
+	}
+
 	// Test Inbound registration of external device
 	c := s1.RegisterInboundClient("client-99", "192.168.1.200:54321", "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)")
 	if c == nil || c.OS != "iOS" {

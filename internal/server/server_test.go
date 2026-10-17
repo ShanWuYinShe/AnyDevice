@@ -191,7 +191,19 @@ func TestPeerManagerAndAPIs(t *testing.T) {
 		t.Fatalf("expected 200 OK from POST /api/self, got %d", rec.Code)
 	}
 
-	// 3. POST /api/peers/add
+	// 3. POST /api/peers/add (try adding self - must fail!)
+	selfAddBody, _ := json.Marshal(map[string]interface{}{
+		"target": "127.0.0.1:8080",
+		"name":   "My-Self",
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/peers/add", bytes.NewReader(selfAddBody))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request when adding self, got %d", rec.Code)
+	}
+
+	// 3b. POST /api/peers/add (external peer)
 	addBody, _ := json.Marshal(map[string]interface{}{
 		"target": "192.168.1.200:8080",
 		"name":   "Remote-Office-PC",

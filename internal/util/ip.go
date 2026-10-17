@@ -161,9 +161,13 @@ func PrintAllInterfaces() {
 	fmt.Println("==================================================================")
 }
 
-// IsLocalIP returns true if the given IP string matches loopback, localhost, or any local NIC IPv4.
+// IsLocalIP returns true if the given IP string matches loopback, localhost, or any local NIC IPv4/IPv6.
 func IsLocalIP(ipStr string) bool {
 	ipStr = strings.TrimSpace(ipStr)
+	if host, _, err := net.SplitHostPort(ipStr); err == nil {
+		ipStr = host
+	}
+	ipStr = strings.Trim(ipStr, "[]")
 	if ipStr == "" || ipStr == "localhost" || ipStr == "127.0.0.1" || ipStr == "::1" || strings.HasPrefix(ipStr, "127.") {
 		return true
 	}

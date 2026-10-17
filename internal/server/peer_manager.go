@@ -12,6 +12,7 @@ import (
 	"any_device/internal/discovery"
 	"any_device/internal/keyboard"
 	"any_device/internal/mouse"
+	"any_device/internal/util"
 
 	"github.com/gorilla/websocket"
 )
@@ -78,6 +79,10 @@ func (pm *PeerManager) ListPeers() []UnifiedPeer {
 
 	result := make([]UnifiedPeer, 0, len(discPeers))
 	for _, dp := range discPeers {
+		if pm.discovery.IsSelf(dp.ID, dp.IP, dp.Port) || util.IsLocalIP(dp.IP) || util.IsLocalIP(dp.Target) {
+			continue
+		}
+
 		mapping, exists := pm.mappings[dp.ID]
 		if !exists {
 			mapping = &PeerMappingState{
@@ -103,8 +108,11 @@ func (pm *PeerManager) ListPeers() []UnifiedPeer {
 }
 
 // AddManualPeer adds a peer by IP:port and returns it.
-func (pm *PeerManager) AddManualPeer(target, name string) UnifiedPeer {
+func (pm *PeerManager) AddManualPeer(target, name string) (UnifiedPeer, error) {
 	dp := pm.discovery.AddManualPeer(target, name)
+	if dp == nil {
+		return UnifiedPeer{}, fmt.Errorf("无法添加该地址 (不能添加本机作为对端设备)")
+	}
 	return UnifiedPeer{
 		ID:       dp.ID,
 		Name:     dp.Name,
@@ -119,7 +127,7 @@ func (pm *PeerManager) AddManualPeer(target, name string) UnifiedPeer {
 		},
 		LastSeen: dp.LastSeen.Format("15:04:05"),
 		IsManual: true,
-	}
+	}, nil
 }
 
 // RenamePeer assigns a custom name or alias to a peer.

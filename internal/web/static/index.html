@@ -1051,23 +1051,59 @@
             });
         }
 
+        function isSelfPeer(p) {
+            if (!p) return true;
+            if (localSelf && p.id && p.id === localSelf.id) return true;
+
+            const rawIP = (p.ip || '').trim();
+            const cleanIP = rawIP.replace(/[\[\]]/g, '').split(':')[0].trim();
+            if (!cleanIP || cleanIP === '127.0.0.1' || cleanIP === 'localhost' || cleanIP === '::1' || cleanIP === '0.0.0.0' || cleanIP.startsWith('127.')) {
+                return true;
+            }
+            if (localSelf) {
+                const selfCleanIP = (localSelf.current_ip || '').replace(/[\[\]]/g, '').split(':')[0].trim();
+                if (selfCleanIP && cleanIP === selfCleanIP) {
+                    return true;
+                }
+                if (localSelf.interfaces && localSelf.interfaces.some(i => i.ip && i.ip.trim() === cleanIP)) {
+                    return true;
+                }
+                if (localSelf.name && p.name && p.name.trim() === localSelf.name.trim()) {
+                    return true;
+                }
+            }
+            if (p.target) {
+                const cleanTarget = p.target.replace(/[\[\]]/g, '').trim();
+                const targetHost = cleanTarget.split(':')[0].trim();
+                if (!targetHost || targetHost === '127.0.0.1' || targetHost === 'localhost' || targetHost === '::1' || targetHost.startsWith('127.')) {
+                    return true;
+                }
+                if (localSelf) {
+                    const selfCleanIP = (localSelf.current_ip || '').replace(/[\[\]]/g, '').split(':')[0].trim();
+                    if (selfCleanIP && targetHost === selfCleanIP) {
+                        return true;
+                    }
+                    if (localSelf.interfaces && localSelf.interfaces.some(i => i.ip && i.ip.trim() === targetHost)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
         // Fetch Discovered Peers (/api/peers)
         async function fetchPeers() {
             try {
+                if (!localSelf) {
+                    await fetchSelf();
+                }
                 const res = await fetch('/api/peers');
                 if (!res.ok) return;
                 const data = await res.json();
                 activePeers = data.peers || [];
 
                 // Filter out self strictly
-                const peers = activePeers.filter(p => {
-                    if (!p) return false;
-                    if (localSelf && p.id === localSelf.id) return false;
-                    if (p.ip === '127.0.0.1' || p.ip === 'localhost' || p.ip === '::1' || p.ip.startsWith('127.')) return false;
-                    if (localSelf && p.ip === localSelf.current_ip) return false;
-                    if (localSelf && localSelf.interfaces && localSelf.interfaces.some(i => i.ip === p.ip)) return false;
-                    return true;
-                });
+                const peers = activePeers.filter(p => !isSelfPeer(p));
 
                 if (discoveryCountLabel) {
                     discoveryCountLabel.innerText = `发现 ${peers.length} 台对端设备`;
@@ -1473,11 +1509,14 @@
         }
 
         // Initialization
-        fetchSelf();
-        fetchPeers();
-        connectLocalWebSocket();
-        setInterval(fetchPeers, 1800);
-        setInterval(fetchSelf, 5000);
+        async function init() {
+            await fetchSelf();
+            await fetchPeers();
+            connectLocalWebSocket();
+            setInterval(fetchPeers, 1800);
+            setInterval(fetchSelf, 5000);
+        }
+        init();
     </script>
 </body>
 </html>
