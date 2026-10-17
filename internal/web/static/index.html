@@ -2,31 +2,43 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AnyDevice - 跨端双向设备映射中心</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>AnyDevice - 跨端设备映射中枢</title>
     <style>
         :root {
-            --bg-base: #0a0f1d;
-            --bg-sidebar: #0e1526;
-            --bg-card: rgba(22, 31, 50, 0.7);
-            --bg-card-hover: rgba(30, 42, 68, 0.85);
+            --bg-base: #0b0f19;
+            --bg-surface: #111827;
+            --bg-card: #182235;
+            --bg-card-hover: #1f2c44;
             --border: rgba(255, 255, 255, 0.08);
-            --border-hover: rgba(255, 255, 255, 0.16);
-            --primary: #10b981;
-            --primary-glow: rgba(16, 185, 129, 0.3);
-            --secondary: #3b82f6;
-            --secondary-glow: rgba(59, 130, 246, 0.3);
-            --accent: #8b5cf6;
+            --border-highlight: rgba(99, 102, 241, 0.3);
+            
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --emerald: #10b981;
+            --emerald-bg: rgba(16, 185, 129, 0.12);
+            --blue: #3b82f6;
+            --blue-bg: rgba(59, 130, 246, 0.12);
+            --purple: #8b5cf6;
+            --purple-bg: rgba(139, 92, 246, 0.12);
+            --amber: #f59e0b;
+            --amber-bg: rgba(245, 158, 11, 0.12);
+            --red: #ef4444;
+            
             --text-main: #f8fafc;
             --text-muted: #94a3b8;
-            --danger: #ef4444;
+            --text-sub: #64748b;
+            
+            --radius-lg: 14px;
+            --radius-md: 10px;
+            --radius-sm: 6px;
         }
 
         * {
             box-sizing: border-box;
             margin: 0;
             padding: 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             -webkit-tap-highlight-color: transparent;
         }
 
@@ -34,1386 +46,890 @@
             background-color: var(--bg-base);
             color: var(--text-main);
             min-height: 100vh;
-            width: 100vw;
-            display: flex;
-            overflow: hidden;
-            user-select: none;
-        }
-
-        /* Desktop Sleek Scrollbars */
-        ::-webkit-scrollbar {
-            width: 6px;
-            height: 6px;
-        }
-        ::-webkit-scrollbar-track {
-            background: transparent;
-        }
-        ::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.12);
-            border-radius: 4px;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-            background: rgba(255, 255, 255, 0.25);
-        }
-
-        /* Desktop Layout Structure */
-        .app-layout {
-            display: flex;
-            width: 100%;
-            height: 100vh;
-            overflow: hidden;
-        }
-
-        /* Left Sidebar (Desktop) */
-        .sidebar {
-            width: 240px;
-            background: var(--bg-sidebar);
-            border-right: 1px solid var(--border);
             display: flex;
             flex-direction: column;
-            justify-content: space-between;
-            padding: 20px 14px;
-            flex-shrink: 0;
-            z-index: 10;
+            overflow-x: hidden;
         }
 
-        .brand-box {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 0 8px 18px 8px;
+        /* Top Navigation Header */
+        header {
+            height: 60px;
+            background: rgba(17, 24, 39, 0.85);
+            backdrop-filter: blur(16px);
             border-bottom: 1px solid var(--border);
-            margin-bottom: 18px;
-        }
-
-        .brand-icon {
-            width: 36px;
-            height: 36px;
-            border-radius: 10px;
-            background: linear-gradient(135deg, #10b981, #3b82f6);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 4px 12px var(--primary-glow);
-        }
-
-        .brand-icon svg {
-            width: 20px;
-            height: 20px;
-            fill: #fff;
-        }
-
-        .brand-title {
-            font-size: 1.05rem;
-            font-weight: 800;
-            letter-spacing: -0.02em;
-            color: #fff;
-        }
-
-        .brand-sub {
-            font-size: 0.7rem;
-            color: var(--text-muted);
-        }
-
-        .nav-list {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            flex: 1;
-        }
-
-        .nav-item {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            padding: 10px 14px;
-            border-radius: 10px;
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: var(--text-muted);
-            cursor: pointer;
-            transition: all 0.2s ease;
-            border: 1px solid transparent;
-        }
-
-        .nav-item svg {
-            width: 18px;
-            height: 18px;
-            fill: currentColor;
-        }
-
-        .nav-item:hover {
-            color: var(--text-main);
-            background: rgba(255, 255, 255, 0.04);
-        }
-
-        .nav-item.active {
-            color: var(--text-main);
-            background: rgba(16, 185, 129, 0.12);
-            border-color: rgba(16, 185, 129, 0.25);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-        }
-
-        .nav-item.active svg {
-            fill: var(--primary);
-        }
-
-        .sidebar-footer {
-            border-top: 1px solid var(--border);
-            padding-top: 14px;
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .server-status-pill {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 10px;
-            background: rgba(0, 0, 0, 0.3);
-            border-radius: 8px;
-            font-size: 0.72rem;
-            color: var(--text-muted);
-        }
-
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #10b981;
-            box-shadow: 0 0 8px #10b981;
-        }
-
-        /* Main Stage Content */
-        .main-stage {
-            flex: 1;
-            height: 100vh;
-            overflow-y: auto;
-            padding: 24px 30px;
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-            background-image: 
-                radial-gradient(circle at 80% 10%, rgba(16, 185, 129, 0.05), transparent 45%),
-                radial-gradient(circle at 20% 90%, rgba(59, 130, 246, 0.05), transparent 40%);
-        }
-
-        .top-bar {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding-bottom: 16px;
-            border-bottom: 1px solid var(--border);
+            padding: 0 20px;
+            position: sticky;
+            top: 0;
+            z-index: 50;
         }
 
-        .page-title {
-            font-size: 1.25rem;
-            font-weight: 800;
-            letter-spacing: -0.01em;
-        }
-
-        .page-desc {
-            font-size: 0.78rem;
-            color: var(--text-muted);
-            margin-top: 2px;
-        }
-
-        /* Quick Stat Metrics Cards */
-        .metrics-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 14px;
-        }
-
-        .metric-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 16px 18px;
+        .header-left {
             display: flex;
             align-items: center;
-            gap: 14px;
-            transition: all 0.2s ease;
-        }
-
-        .metric-card:hover {
-            border-color: var(--border-hover);
-            background: var(--bg-card-hover);
-        }
-
-        .metric-icon-box {
-            width: 44px;
-            height: 44px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            flex-shrink: 0;
-        }
-
-        .metric-icon-box svg {
-            width: 22px;
-            height: 22px;
-            fill: #fff;
-        }
-
-        .metric-label {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            font-weight: 500;
-        }
-
-        .metric-value {
-            font-size: 1.15rem;
-            font-weight: 700;
-            color: #fff;
-            margin-top: 2px;
-            font-family: monospace;
-        }
-
-        /* Tabs Content Areas */
-        .tab-panel {
-            display: none;
-            flex-direction: column;
-            gap: 20px;
-            animation: fadeIn 0.25s ease;
-        }
-
-        .tab-panel.active {
-            display: flex;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(4px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        /* Two-Column Dashboard Grid */
-        .dashboard-grid {
-            display: grid;
-            grid-template-columns: 1.1fr 0.9fr;
-            gap: 20px;
-        }
-
-        .content-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 18px;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
             gap: 16px;
         }
 
-        .card-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .card-title-group {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .card-title-group svg {
-            width: 20px;
-            height: 20px;
-            fill: var(--primary);
-        }
-
-        .card-title {
-            font-size: 0.95rem;
-            font-weight: 700;
-        }
-
-        /* Pairing Card Specifics */
-        .qr-pairing-box {
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            background: rgba(0, 0, 0, 0.35);
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 16px;
-        }
-
-        .qr-pairing-box img {
-            border-radius: 10px;
-            background: #fff;
-            padding: 6px;
-            width: 130px;
-            height: 130px;
-            flex-shrink: 0;
-        }
-
-        .pairing-instructions {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            font-size: 0.82rem;
-            color: var(--text-muted);
-            line-height: 1.5;
-        }
-
-        .pairing-url-box {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid var(--border);
-            padding: 8px 12px;
-            border-radius: 8px;
-            font-family: monospace;
-            color: var(--text-main);
-            font-weight: 700;
-            font-size: 0.85rem;
-        }
-
-        .copy-btn {
-            padding: 4px 8px;
-            border-radius: 6px;
-            background: var(--primary);
-            color: #fff;
-            border: none;
-            font-size: 0.72rem;
-            font-weight: 700;
-            cursor: pointer;
-            transition: opacity 0.2s;
-            margin-left: auto;
-        }
-
-        .copy-btn:hover {
-            opacity: 0.9;
-        }
-
-        /* Network Select Dropdown */
-        .nic-selector-area {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-        }
-
-        .nic-select-box {
-            width: 100%;
-            background: #0f172a;
-            border: 1px solid var(--border);
-            color: var(--text-main);
-            border-radius: 10px;
-            padding: 10px 14px;
-            font-size: 0.82rem;
-            outline: none;
-            cursor: pointer;
-            transition: border-color 0.2s;
-        }
-
-        .nic-select-box:hover, .nic-select-box:focus {
-            border-color: var(--primary);
-        }
-
-        /* Audio Visualizer Stage */
-        .visualizer-stage {
-            width: 100%;
-            height: 120px;
-            background: rgba(0, 0, 0, 0.45);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 14px;
-            overflow: hidden;
-            position: relative;
-        }
-
-        canvas {
-            width: 100%;
-            height: 100%;
-            display: block;
-        }
-
-        /* Mouse Screen Mini-Radar */
-        .mouse-radar-box {
-            width: 100%;
-            aspect-ratio: 16 / 9;
-            background: #040814;
-            border: 1px solid rgba(59, 130, 246, 0.3);
-            border-radius: 12px;
-            position: relative;
-            overflow: hidden;
-            box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.8);
-        }
-
-        .radar-cursor {
-            width: 12px;
-            height: 12px;
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-2px, -2px);
-            pointer-events: none;
-            z-index: 10;
-        }
-
-        .radar-cursor svg {
-            width: 100%;
-            height: 100%;
-            fill: #38bdf8;
-            filter: drop-shadow(0 0 8px #38bdf8);
-        }
-
-        /* Slider Controls */
-        .control-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 6px;
-            font-size: 0.82rem;
-            color: var(--text-muted);
-        }
-
-        input[type="range"] {
-            width: 100%;
-            -webkit-appearance: none;
-            height: 6px;
-            border-radius: 3px;
-            background: rgba(255, 255, 255, 0.1);
-            outline: none;
-        }
-
-        input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            width: 18px;
-            height: 18px;
-            border-radius: 50%;
-            background: var(--primary);
-            cursor: pointer;
-            box-shadow: 0 0 10px var(--primary-glow);
-        }
-
-        /* Multi-Mapping Topology Matrix Banner */
-        .topology-banner {
-            background: linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(59, 130, 246, 0.08));
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            border-radius: 16px;
-            padding: 16px 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-            margin-bottom: 8px;
-        }
-
-        .topology-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 10px;
-        }
-
-        .topology-title {
-            font-size: 0.95rem;
-            font-weight: 800;
-            color: #fff;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .topology-sub {
-            font-size: 0.74rem;
-            color: var(--text-muted);
-            margin-top: 2px;
-        }
-
-        .topology-flow {
-            display: grid;
-            grid-template-columns: 1fr auto 1fr;
-            align-items: center;
-            gap: 14px;
-            background: rgba(0, 0, 0, 0.35);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 12px 18px;
-        }
-
-        .flow-node {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .flow-node-inbound .flow-icon {
-            background: rgba(16, 185, 129, 0.2);
-            color: #10b981;
-        }
-
-        .flow-node-outbound .flow-icon {
-            background: rgba(59, 130, 246, 0.2);
-            color: #3b82f6;
-        }
-
-        .flow-icon {
-            width: 36px;
-            height: 36px;
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.2rem;
-            flex-shrink: 0;
-        }
-
-        .flow-label {
-            font-size: 0.8rem;
-            font-weight: 700;
-            color: #fff;
-        }
-
-        .flow-val {
-            font-size: 0.72rem;
-            color: var(--text-muted);
-            font-family: monospace;
-            margin-top: 2px;
-        }
-
-        .flow-arrows {
+        .logo {
             display: flex;
             align-items: center;
             gap: 8px;
             font-size: 1.1rem;
-            color: var(--primary);
-            text-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+            font-weight: 700;
+            background: linear-gradient(135deg, #60a5fa, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            cursor: pointer;
         }
 
-        .arrow-pulse {
-            animation: pulseGlow 2s infinite ease-in-out;
-        }
-
-        @keyframes pulseGlow {
-            0%, 100% { opacity: 0.6; transform: scale(0.98); }
-            50% { opacity: 1; transform: scale(1.05); }
-        }
-
-        .batch-bar {
-            display: flex;
+        .host-badge {
+            display: inline-flex;
             align-items: center;
             gap: 8px;
-            flex-wrap: wrap;
-            padding-top: 4px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
         }
 
-        .batch-btn {
+        .host-badge .dot {
+            width: 7px;
+            height: 7px;
+            background: var(--emerald);
+            border-radius: 50%;
+            box-shadow: 0 0 8px var(--emerald);
+        }
+
+        .nic-select {
             background: rgba(255, 255, 255, 0.05);
             border: 1px solid var(--border);
             color: var(--text-main);
             padding: 5px 10px;
-            border-radius: 8px;
-            font-size: 0.72rem;
-            font-weight: 600;
+            border-radius: var(--radius-sm);
+            font-size: 0.8rem;
+            outline: none;
             cursor: pointer;
+        }
+        .nic-select option {
+            background: #182235;
+            color: #f8fafc;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .nav-btn {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            padding: 6px 14px;
+            border-radius: var(--radius-sm);
+            font-size: 0.82rem;
+            font-weight: 500;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
             transition: all 0.2s;
         }
-
-        .batch-btn:hover {
-            border-color: rgba(255, 255, 255, 0.25);
-            background: rgba(255, 255, 255, 0.1);
+        .nav-btn:hover {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+        .nav-btn.primary {
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            border-color: transparent;
+            color: white;
+        }
+        .nav-btn.primary:hover {
+            opacity: 0.92;
         }
 
-        .batch-danger {
-            border-color: rgba(239, 68, 68, 0.3);
-            color: #f87171;
-            background: rgba(239, 68, 68, 0.08);
-            margin-left: auto;
+        /* Main Workspace Container */
+        main {
+            flex: 1;
+            max-width: 1200px;
+            width: 100%;
+            margin: 0 auto;
+            padding: 24px 20px;
         }
 
-        .batch-danger:hover {
-            border-color: #ef4444;
-            background: rgba(239, 68, 68, 0.2);
-        }
-
-        /* Peer List & Items */
-        .peer-list {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .peer-item {
+        /* Hero / Discovery Status Banner */
+        .discovery-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            background: rgba(0, 0, 0, 0.35);
-            border: 1px solid var(--border);
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .discovery-title {
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
+        }
+
+        .discovery-title h1 {
+            font-size: 1.35rem;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        .discovery-status-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.8rem;
+            color: #38bdf8;
+            background: rgba(56, 189, 248, 0.1);
+            padding: 3px 10px;
             border-radius: 12px;
-            padding: 10px 14px;
-            transition: all 0.2s ease;
+            border: 1px solid rgba(56, 189, 248, 0.2);
         }
 
-        .peer-item:hover {
-            border-color: var(--border-hover);
-            background: rgba(0, 0, 0, 0.45);
+        .discovery-status-tag .pulse-dot {
+            width: 6px;
+            height: 6px;
+            background: #38bdf8;
+            border-radius: 50%;
+            animation: pulse-ring 2s infinite;
         }
 
-        .peer-info {
+        @keyframes pulse-ring {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(56, 189, 248, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+        }
+
+        .discovery-hint {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-bottom: 24px;
+        }
+
+        /* Peer Cards Grid */
+        .peer-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+            gap: 20px;
+        }
+
+        /* Individual Peer Card */
+        .peer-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+            position: relative;
+        }
+        .peer-card:hover {
+            border-color: rgba(255, 255, 255, 0.16);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+        }
+        .peer-card.active-mapping {
+            border-color: var(--border-highlight);
+            box-shadow: 0 0 20px rgba(99, 102, 241, 0.15);
+        }
+
+        /* Peer Header */
+        .peer-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .peer-main-info {
             display: flex;
             align-items: center;
             gap: 12px;
         }
 
-        .peer-icon {
-            font-size: 1.35rem;
-            width: 38px;
-            height: 38px;
+        .peer-avatar {
+            width: 44px;
+            height: 44px;
             background: rgba(255, 255, 255, 0.05);
-            border-radius: 10px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
             display: flex;
             align-items: center;
             justify-content: center;
-            flex-shrink: 0;
+            font-size: 1.5rem;
+        }
+
+        .peer-names {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
         }
 
         .peer-name {
-            font-size: 0.83rem;
-            font-weight: 700;
-            color: #fff;
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-main);
+        }
+
+        .peer-addr {
+            font-size: 0.78rem;
+            color: var(--text-muted);
+        }
+
+        .peer-status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.72rem;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-weight: 500;
+        }
+        .peer-status-pill.online {
+            background: var(--emerald-bg);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.25);
+        }
+        .peer-status-pill.offline {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-sub);
+            border: 1px solid var(--border);
+        }
+
+        /* Device Services Section */
+        .devices-section {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .devices-section-title {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-sub);
+            margin-bottom: 2px;
+        }
+
+        /* Service Item Block */
+        .service-row {
+            background: rgba(0, 0, 0, 0.25);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .service-info {
             display: flex;
             align-items: center;
-            gap: 6px;
+            justify-content: space-between;
         }
 
-        .peer-meta {
-            font-size: 0.7rem;
-            color: var(--text-muted);
-            font-family: monospace;
-            margin-top: 2px;
-        }
-
-        .peer-controls {
+        .service-label {
             display: flex;
             align-items: center;
             gap: 8px;
-            flex-wrap: wrap;
+            font-size: 0.88rem;
+            font-weight: 500;
         }
 
-        .toggle-btn {
+        .service-state-text {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        /* Action Buttons */
+        .map-btn {
+            width: 100%;
+            padding: 9px 14px;
+            border-radius: var(--radius-sm);
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-main);
+            transition: all 0.2s;
             display: flex;
             align-items: center;
-            gap: 5px;
+            justify-content: center;
+            gap: 8px;
+        }
+        .map-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .map-btn.active-emerald {
+            background: linear-gradient(135deg, #10b981, #059669);
+            border-color: #34d399;
+            color: #ffffff;
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+        }
+        .map-btn.active-blue {
+            background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+            border-color: #60a5fa;
+            color: #ffffff;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+        }
+        .map-btn.btn-purple {
+            background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+            border-color: #a78bfa;
+            color: #ffffff;
+        }
+        .map-btn.btn-purple:hover {
+            opacity: 0.92;
+        }
+
+        /* Live cursor telemetry display */
+        .cursor-telemetry {
+            font-size: 0.75rem;
+            color: #93c5fd;
+            background: rgba(59, 130, 246, 0.1);
             padding: 4px 8px;
-            border-radius: 6px;
-            border: 1px solid var(--border);
-            background: rgba(255, 255, 255, 0.04);
-            color: var(--text-muted);
-            font-size: 0.71rem;
-            cursor: pointer;
-            transition: all 0.2s;
+            border-radius: var(--radius-sm);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
         }
 
-        .toggle-btn.active {
-            border-color: rgba(16, 185, 129, 0.4);
-            background: rgba(16, 185, 129, 0.16);
-            color: #10b981;
-            font-weight: 600;
-        }
-
-        .toggle-btn.active-blue {
-            border-color: rgba(59, 130, 246, 0.4);
-            background: rgba(59, 130, 246, 0.16);
-            color: #60a5fa;
-            font-weight: 600;
-        }
-
-        .toggle-btn.active-purple {
-            border-color: rgba(139, 92, 246, 0.4);
-            background: rgba(139, 92, 246, 0.16);
-            color: #c084fc;
-            font-weight: 600;
-        }
-
-        .disconnect-btn {
-            padding: 4px 8px;
-            border-radius: 6px;
-            border: 1px solid rgba(239, 68, 68, 0.3);
-            background: rgba(239, 68, 68, 0.1);
-            color: #f87171;
-            font-size: 0.71rem;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .disconnect-btn:hover {
-            background: rgba(239, 68, 68, 0.25);
-            border-color: #ef4444;
-        }
-
-        .peer-empty {
-            padding: 20px;
+        /* Empty State */
+        .empty-state {
+            grid-column: 1 / -1;
+            padding: 60px 20px;
             text-align: center;
-            color: var(--text-muted);
-            font-size: 0.76rem;
+            background: var(--bg-card);
             border: 1px dashed var(--border);
-            border-radius: 12px;
-            background: rgba(0, 0, 0, 0.15);
+            border-radius: var(--radius-lg);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .empty-icon {
+            font-size: 3rem;
+            animation: bounce 2s infinite;
+        }
+
+        @keyframes bounce {
+            0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+            40% { transform: translateY(-10px); }
+            60% { transform: translateY(-5px); }
+        }
+
+        .empty-state h3 {
+            font-size: 1.15rem;
+            font-weight: 600;
+        }
+
+        .empty-state p {
+            font-size: 0.88rem;
+            color: var(--text-muted);
+            max-width: 480px;
             line-height: 1.5;
         }
 
-        .connect-bar {
+        .empty-actions {
             display: flex;
-            gap: 8px;
-            margin-bottom: 10px;
+            gap: 12px;
+            margin-top: 8px;
+        }
+
+        /* Modals & Overlays */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(8px);
+            display: none;
             align-items: center;
+            justify-content: center;
+            z-index: 100;
+            padding: 20px;
+        }
+        .modal-overlay.open {
+            display: flex;
         }
 
-        .connect-input {
-            flex: 1;
-            background: #0f172a;
+        .modal-card {
+            background: var(--bg-card);
             border: 1px solid var(--border);
-            color: #fff;
-            padding: 8px 12px;
-            border-radius: 8px;
-            font-size: 0.8rem;
-            outline: none;
-            transition: border-color 0.2s;
+            border-radius: var(--radius-lg);
+            width: 100%;
+            max-width: 480px;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
         }
 
-        .connect-input:focus {
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .modal-header h2 {
+            font-size: 1.15rem;
+            font-weight: 700;
+        }
+
+        .close-modal-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.25rem;
+            cursor: pointer;
+            padding: 4px;
+        }
+        .close-modal-btn:hover {
+            color: var(--text-main);
+        }
+
+        /* Input Controls inside Modal */
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .form-group label {
+            font-size: 0.82rem;
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+
+        .form-input {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 10px 14px;
+            font-size: 0.9rem;
+            color: var(--text-main);
+            outline: none;
+        }
+        .form-input:focus {
             border-color: var(--primary);
         }
 
-        /* Touchpad Area for Mobile */
-        .mobile-only {
-            display: none;
+        .switch-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 14px;
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
         }
 
-        @media (max-width: 768px) {
-            body {
-                overflow-y: auto;
-            }
-            .sidebar {
-                display: none;
-            }
-            .main-stage {
-                padding: 16px;
-                height: auto;
-                overflow: visible;
-            }
-            .metrics-grid {
-                grid-template-columns: 1fr;
-            }
-            .dashboard-grid {
-                grid-template-columns: 1fr;
-            }
-            .mobile-only {
-                display: block;
-            }
-            .touchpad-box {
-                width: 100%;
-                height: 220px;
-                background: linear-gradient(180deg, #0f172a, #090d16);
-                border: 2px dashed rgba(139, 92, 246, 0.35);
-                border-radius: 16px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                user-select: none;
-                touch-action: none;
-                margin-top: 10px;
-            }
-            .touchpad-box.active {
-                border-color: var(--accent);
-                border-style: solid;
-            }
+        .switch-label {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .switch-title {
+            font-size: 0.88rem;
+            font-weight: 500;
+        }
+
+        .switch-desc {
+            font-size: 0.75rem;
+            color: var(--text-sub);
+        }
+
+        /* Native-like Toggle Switch */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #334155;
+            transition: .3s;
+            border-radius: 24px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+        input:checked + .slider {
+            background-color: var(--primary);
+        }
+        input:checked + .slider:before {
+            transform: translateX(20px);
+        }
+
+        /* Remote Touchpad View Overlay */
+        .touchpad-surface {
+            width: 100%;
+            height: 240px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 2px dashed rgba(255, 255, 255, 0.15);
+            border-radius: var(--radius-md);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            touch-action: none;
+            cursor: crosshair;
+            gap: 6px;
+        }
+        .touchpad-surface.active {
+            border-color: var(--purple);
+            background: rgba(139, 92, 246, 0.08);
+        }
+
+        .touchpad-hint {
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            pointer-events: none;
+        }
+
+        .touchpad-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            width: 100%;
+        }
+        .touch-action-btn {
+            padding: 14px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text-main);
+            font-size: 0.88rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .touch-action-btn:active {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        /* QR Code Container */
+        .qr-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+            padding: 12px 0;
+        }
+        .qr-wrapper img {
+            width: 200px;
+            height: 200px;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border);
+            background: white;
+            padding: 8px;
+        }
+        .qr-url-box {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 8px 12px;
+            font-size: 0.85rem;
+            color: #60a5fa;
+            word-break: break-all;
+            text-align: center;
+            width: 100%;
+        }
+
+        /* Toast notifications */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: #1e293b;
+            color: #f8fafc;
+            border: 1px solid var(--border);
+            padding: 10px 18px;
+            border-radius: var(--radius-sm);
+            font-size: 0.85rem;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+            z-index: 200;
+            display: none;
+        }
+        .toast.show {
+            display: block;
+            animation: fadeIn 0.2s;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @media (max-width: 640px) {
+            header { padding: 0 12px; }
+            .header-left { gap: 8px; }
+            .host-badge { display: none; }
+            main { padding: 16px 12px; }
+            .peer-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
 <body>
-    <div class="app-layout">
-        <!-- Desktop Sidebar -->
-        <aside class="sidebar">
-            <div>
-                <div class="brand-box">
-                    <div class="brand-icon">
-                        <svg viewBox="0 0 24 24"><path d="M4 6h16v12H4zM2 4v16h20V4zm10 13a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>
-                    </div>
-                    <div>
-                        <div class="brand-title">AnyDevice</div>
-                        <div class="brand-sub">桌面控制中心 v1.2</div>
-                    </div>
-                </div>
 
-                <nav class="nav-list">
-                    <div class="nav-item active" data-tab="overview">
-                        <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
-                        <span>控制中心概览</span>
-                    </div>
-                    <div class="nav-item" data-tab="peers">
-                        <svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
-                        <span>设备互联与协同</span>
-                    </div>
-                    <div class="nav-item" data-tab="audio">
-                        <svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
-                        <span>音频映射中心</span>
-                    </div>
-                    <div class="nav-item" data-tab="mouse">
-                        <svg viewBox="0 0 24 24"><path d="M13 2v8h7V7a5 5 0 0 0-5-5h-2zm-2 0H9a5 5 0 0 0-5 5v3h7V2zm9 10h-7v10h2a5 5 0 0 0 5-5v-5zm-9 10V12H4v5a5 5 0 0 0 5 5h2z"/></svg>
-                        <span>鼠标与跨端交互</span>
-                    </div>
-                    <div class="nav-item" data-tab="network">
-                        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
-                        <span>通信网卡配置</span>
-                    </div>
-                </nav>
+    <!-- Header Navigation -->
+    <header>
+        <div class="header-left">
+            <div class="logo">
+                <span>🔄 AnyDevice</span>
             </div>
+            <div class="host-badge">
+                <span class="dot"></span>
+                <span id="headerHostName">本机设备</span>
+            </div>
+            <select class="nic-select" id="nicSelect" title="切换通信网卡">
+                <option value="">载入网卡中...</option>
+            </select>
+        </div>
+        <div class="header-right">
+            <button class="nav-btn" id="openQRBtn">📱 手机扫码接入</button>
+            <button class="nav-btn" id="openAddPeerBtn">➕ 手动添加对端</button>
+            <button class="nav-btn primary" id="openSelfSettingsBtn">⚙️ 本机共享功能</button>
+        </div>
+    </header>
 
-            <div class="sidebar-footer">
-                <div class="server-status-pill">
-                    <span class="status-dot"></span>
-                    <span id="serverRunningText">服务正常运行中</span>
-                </div>
-                <div style="font-size: 0.7rem; color: var(--text-muted); text-align: center;">
-                    AnyDevice 跨端互通引擎
+    <!-- Main Workspace -->
+    <main>
+        <div class="discovery-header">
+            <div class="discovery-title">
+                <h1>发现的对端设备</h1>
+                <div class="discovery-status-tag">
+                    <span class="pulse-dot"></span>
+                    <span id="discoveryCountLabel">局域网自动搜索中...</span>
                 </div>
             </div>
-        </aside>
+            <button class="nav-btn" id="manualScanBtn">🔄 刷新设备列表</button>
+        </div>
 
-        <!-- Main Content Area -->
-        <main class="main-stage">
-            <!-- Top Header Bar -->
-            <div class="top-bar">
-                <div>
-                    <h1 class="page-title" id="pageTitle">设备协同控制中心</h1>
-                    <div class="page-desc" id="pageDesc">本机作为协同中心，正在实时调度多端虚拟外设与信号流</div>
-                </div>
-                <div style="display: flex; gap: 10px;">
-                    <button class="copy-btn" id="startAudioBtn" style="padding: 8px 14px; font-size: 0.8rem; background: linear-gradient(135deg, #10b981, #059669);">
-                        🎧 开启本地监听
-                    </button>
-                </div>
-            </div>
+        <p class="discovery-hint">
+            每个端点设备会提供各自的声音输出或鼠标光标。您可以在下方决定是否将对端的功能映射为本地播放或操作。
+        </p>
 
-            <!-- Top Stat Metrics Cards (4 Metrics) -->
-            <section class="metrics-grid">
-                <div class="metric-card">
-                    <div class="metric-icon-box" style="background: rgba(16, 185, 129, 0.15);">
-                        <svg viewBox="0 0 24 24" style="fill: var(--primary);"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
-                    </div>
-                    <div>
-                        <div class="metric-label">系统音频流</div>
-                        <div class="metric-value" id="metricAudioStatus" style="color: var(--primary);">48kHz 立体声</div>
-                    </div>
-                </div>
-
-                <div class="metric-card">
-                    <div class="metric-icon-box" style="background: rgba(59, 130, 246, 0.15);">
-                        <svg viewBox="0 0 24 24" style="fill: var(--secondary);"><path d="M13 2v8h7V7a5 5 0 0 0-5-5h-2zm-2 0H9a5 5 0 0 0-5 5v3h7V2zm9 10h-7v10h2a5 5 0 0 0 5-5v-5zm-9 10V12H4v5a5 5 0 0 0 5 5h2z"/></svg>
-                    </div>
-                    <div>
-                        <div class="metric-label">鼠标映射引擎</div>
-                        <div class="metric-value" id="metricMouseStatus" style="color: var(--secondary);">60 FPS 捕获</div>
-                    </div>
-                </div>
-
-                <div class="metric-card">
-                    <div class="metric-icon-box" style="background: rgba(139, 92, 246, 0.15);">
-                        <svg viewBox="0 0 24 24" style="fill: var(--accent);"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
-                    </div>
-                    <div>
-                        <div class="metric-label">谁连接了我 (连入)</div>
-                        <div class="metric-value" id="metricInboundCount" style="color: #c084fc;">0 台在线</div>
-                    </div>
-                </div>
-
-                <div class="metric-card">
-                    <div class="metric-icon-box" style="background: rgba(245, 158, 11, 0.15);">
-                        <svg viewBox="0 0 24 24" style="fill: #f59e0b;"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
-                    </div>
-                    <div>
-                        <div class="metric-label">我连接了谁 (连出)</div>
-                        <div class="metric-value" id="metricOutboundCount" style="color: #fbbf24;">0 台主机</div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- TAB 1: OVERVIEW DASHBOARD -->
-            <div class="tab-panel active" id="tab-overview">
-                <!-- 1. Multi-Mapping Topology Matrix Banner -->
-                <div class="topology-banner">
-                    <div class="topology-header">
-                        <div>
-                            <div class="topology-title">
-                                <span>🌐 全网状多端并发映射拓扑中枢 (Mesh Topology)</span>
-                            </div>
-                            <div class="topology-sub">
-                                支持同时存在多个「被映射端」与多个「映射端」：本机既可将自身设备并发广播给多台对端，也可同时接入多台外部电脑的虚拟设备，无需做单选切换。
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Visual Topology Flow -->
-                    <div class="topology-flow">
-                        <div class="flow-node flow-node-inbound">
-                            <span class="flow-icon">📤</span>
-                            <div>
-                                <div class="flow-label">被映射端 (本机对外广播)</div>
-                                <div class="flow-val" id="flowInboundCount">0 台设备正在使用本机</div>
-                            </div>
-                        </div>
-                        <div class="flow-arrows">
-                            <span class="arrow-pulse">⇄</span>
-                            <span style="font-size:0.7rem; color:var(--text-muted); font-weight:700;">全链路并发互通</span>
-                            <span class="arrow-pulse">⇄</span>
-                        </div>
-                        <div class="flow-node flow-node-outbound">
-                            <span class="flow-icon">📥</span>
-                            <div>
-                                <div class="flow-label">映射端 (本机接收远端)</div>
-                                <div class="flow-val" id="flowOutboundCount">0 台外部主机正在被本机使用</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Batch Controls -->
-                    <div class="batch-bar">
-                        <span style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">⚡ 批量通道调度：</span>
-                        <button class="batch-btn" id="batchInboundAudioBtn">🔊 一键切换全部对外声音</button>
-                        <button class="batch-btn" id="batchInboundMouseBtn">🖱️ 一键切换全部对外鼠标</button>
-                        <button class="batch-btn" id="batchOutboundAudioBtn">🎧 一键切换全部接入声音</button>
-                        <button class="batch-btn" id="batchControlBtn">🛡️ 一键禁用对端反向控制</button>
-                        <button class="batch-btn batch-danger" id="batchDisconnectBtn">🔌 一键断开全部连接</button>
-                    </div>
-                </div>
-
-                <!-- 2. Interactive Inbound & Outbound Device Panels -->
-                <div class="dashboard-grid">
-                    <!-- Left: 谁连接上了我 (Inbound Peers) -->
-                    <div class="content-card" id="inboundCardArea">
-                        <div class="card-header">
-                            <div class="card-title-group">
-                                <svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
-                                <span class="card-title">📤 被映射端 · 本机设备对外映射 (多设备并发中)</span>
-                            </div>
-                            <span id="inboundBadge" style="font-size: 0.72rem; color: var(--primary); font-weight: 700; background: rgba(16, 185, 129, 0.15); padding: 2px 8px; border-radius: 6px;">0 台在线</span>
-                        </div>
-                        <div style="font-size:0.74rem; color:var(--text-muted); margin-bottom:8px;">
-                            本机声音与物理鼠标正并发投递给以下所有设备（支持多台设备同时接入，每台设备通道独立配置）：
-                        </div>
-                        <div class="peer-list" id="inboundPeerList">
-                            <div class="peer-empty">
-                                📡 暂无外部设备连入本机<br>
-                                <span style="font-size: 0.7rem; opacity: 0.7;">手机/平板/其他电脑可扫下方二维码或输入本机 IP 地址即刻加入映射</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Right: 自己又连接上了谁 (Outbound Peers) -->
-                    <div class="content-card" id="outboundCardArea">
-                        <div class="card-header">
-                            <div class="card-title-group">
-                                <svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
-                                <span class="card-title">📥 映射端 · 接收并使用远端设备 (多主机并发中)</span>
-                            </div>
-                            <span id="outboundBadge" style="font-size: 0.72rem; color: #f59e0b; font-weight: 700; background: rgba(245, 158, 11, 0.15); padding: 2px 8px; border-radius: 6px;">0 台主机</span>
-                        </div>
-                        <div style="font-size:0.74rem; color:var(--text-muted); margin-bottom:8px;">
-                            本机已接入以下所有外部主机（可在此并发连接任意多台电脑，独立混音播放与光标监视）：
-                        </div>
-
-                        <!-- Connect bar -->
-                        <div class="connect-bar">
-                            <input type="text" id="outboundTargetInput" class="connect-input" placeholder="输入远端电脑 IP:端口 (例如 192.168.1.105:8080)">
-                            <button class="copy-btn" id="connectOutboundBtn" style="padding: 8px 14px; font-size: 0.78rem; white-space: nowrap;">
-                                ➕ 并发接入此主机
-                            </button>
-                        </div>
-
-                        <div class="peer-list" id="outboundPeerList">
-                            <div class="peer-empty">
-                                🌐 当前未连接到任何远端主机<br>
-                                <span style="font-size: 0.7rem; opacity: 0.7;">在上方输入其他电脑的 IP 即可接入，支持同时添加多台远端电脑</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 3. Pairing QR & Visualizer Grid -->
-                <div class="dashboard-grid">
-                    <!-- Column 1: QR & Pairing Card -->
-                    <div class="content-card">
-                        <div class="card-header">
-                            <div class="card-title-group">
-                                <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
-                                <span class="card-title">跨端连接与扫码配对</span>
-                            </div>
-                        </div>
-
-                        <!-- Network Adapter Selector -->
-                        <div class="nic-selector-area">
-                            <div style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600; display: flex; justify-content: space-between;">
-                                <span>🌐 选择广播/监听网卡:</span>
-                                <span id="nicSwitchTip" style="color: var(--primary); font-weight: 700; display: none;">✓ 已无感切换</span>
-                            </div>
-                            <select id="nicSelect" class="nic-select-box">
-                                <option value="">正在检测网卡列表...</option>
-                            </select>
-                        </div>
-
-                        <!-- QR Code & Link Display -->
-                        <div class="qr-pairing-box">
-                            <img id="qrImg" src="/api/qrcode" alt="QR Code">
-                            <div class="pairing-instructions">
-                                <div style="color: #fff; font-weight: 700;">手机/平板免装 App 扫码即连</div>
-                                <div>手机连入同一 Wi-Fi 后扫码，手机将立刻变身电脑的无线音箱或触控板。</div>
-                                <div class="pairing-url-box">
-                                    <span id="lanUrlDisplay">加载中...</span>
-                                    <button class="copy-btn" id="copyUrlBtn">复制网址</button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Column 2: Live Monitor Radar -->
-                    <div class="content-card">
-                        <div class="card-header">
-                            <div class="card-title-group">
-                                <svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
-                                <span class="card-title">声源实时动态波形</span>
-                            </div>
-                        </div>
-                        <div class="visualizer-stage">
-                            <canvas id="visualizer"></canvas>
-                        </div>
-
-                        <div class="card-header" style="margin-top: 10px;">
-                            <div class="card-title-group">
-                                <svg viewBox="0 0 24 24"><path d="M13 2v8h7V7a5 5 0 0 0-5-5h-2zm-2 0H9a5 5 0 0 0-5 5v3h7V2zm9 10h-7v10h2a5 5 0 0 0 5-5v-5zm-9 10V12H4v5a5 5 0 0 0 5 5h2z"/></svg>
-                                <span class="card-title">光标雷达与坐标监视</span>
-                            </div>
-                            <span id="screenRes" style="font-size: 0.72rem; color: var(--secondary); font-family: monospace;">1920 × 1080</span>
-                        </div>
-                        <div class="mouse-radar-box" id="mouseRadarBox">
-                            <div class="radar-cursor" id="radarCursor">
-                                <svg viewBox="0 0 24 24"><path d="M3 2l10 17 3-6 6-3L3 2z"/></svg>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Mobile Only Section: Touchpad for phone browser visitors -->
-                <div class="content-card mobile-only">
-                    <div class="card-header">
-                        <span class="card-title">🎮 无线触控板 (手机控制电脑鼠标)</span>
-                    </div>
-                    <div class="touchpad-box" id="touchpad">
-                        <div style="text-align: center; font-size: 0.75rem; color: var(--text-muted);">
-                            👆 单指滑动移光标 · 🎯 轻点左键 · ✌️ 双指右键
-                        </div>
-                    </div>
+        <!-- Peer Cards Grid -->
+        <div class="peer-grid" id="peerGrid">
+            <!-- Dynamic Content -->
+            <div class="empty-state">
+                <div class="empty-icon">📡</div>
+                <h3>正在自动搜索局域网中的 AnyDevice 对端...</h3>
+                <p>
+                    请在同一局域网下的其他电脑打开 AnyDevice，或者点击右上角「📱 手机扫码接入」。设备发现后将即刻呈现在这里。
+                </p>
+                <div class="empty-actions">
+                    <button class="nav-btn primary" id="emptyAddBtn">➕ 手动输入 IP 连接</button>
+                    <button class="nav-btn" id="emptyQRBtn">📱 扫码连接</button>
                 </div>
             </div>
+        </div>
+    </main>
 
-            <!-- TAB: PEERS & MAPPING MANAGEMENT -->
-            <div class="tab-panel" id="tab-peers">
-                <div class="content-card">
-                    <div class="card-header">
-                        <div class="card-title-group">
-                            <svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
-                            <span class="card-title">协同设备拓扑与通道权限控制</span>
-                        </div>
-                    </div>
-                    <div style="font-size: 0.78rem; color: var(--text-muted); line-height: 1.5;">
-                        在下方列表可直观查看当前所有连入本机的访客设备，以及本机连出的远端主机。点击对应按钮可单独为每台设备开启/关闭音频流传输、鼠标轨迹共享或反向操作授权。
-                    </div>
-                </div>
+    <!-- Modal 1: ⚙️ 本机共享功能设置 (My Provided Devices) -->
+    <div class="modal-overlay" id="selfSettingsModal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2>⚙️ 本机功能共享设置</h2>
+                <button class="close-modal-btn" data-modal="selfSettingsModal">✕</button>
+            </div>
+            <p style="font-size: 0.82rem; color: var(--text-muted); line-height: 1.4;">
+                配置本机向局域网其他设备开放提供的功能与虚拟设备。对端发现本机后，可选择是否映射使用。
+            </p>
 
-                <div class="dashboard-grid">
-                    <!-- Left: Inbound -->
-                    <div class="content-card">
-                        <div class="card-header">
-                            <span class="card-title">📤 被映射端 · 本机设备对外映射列表 (Inbound)</span>
-                            <span id="tabInboundBadge" style="font-size: 0.72rem; color: var(--primary); font-weight: 700;">0 台在线</span>
-                        </div>
-                        <div class="peer-list" id="tabInboundPeerList"></div>
-                    </div>
-
-                    <!-- Right: Outbound -->
-                    <div class="content-card">
-                        <div class="card-header">
-                            <span class="card-title">📥 映射端 · 本机接收远端主机列表 (Outbound)</span>
-                            <span id="tabOutboundBadge" style="font-size: 0.72rem; color: #f59e0b; font-weight: 700;">0 台主机</span>
-                        </div>
-                        <div class="connect-bar">
-                            <input type="text" id="tabOutboundTargetInput" class="connect-input" placeholder="输入远端电脑 IP:端口 (例如 192.168.1.105:8080)">
-                            <button class="copy-btn" id="tabConnectOutboundBtn" style="padding: 8px 14px; font-size: 0.78rem; white-space: nowrap;">
-                                ➕ 建立连接
-                            </button>
-                        </div>
-                        <div class="peer-list" id="tabOutboundPeerList"></div>
-                    </div>
-                </div>
+            <div class="form-group">
+                <label>本机设备名称 (局域网显示名称)</label>
+                <input type="text" class="form-input" id="selfNodeNameInput" placeholder="例如: 我的 MacBook Pro">
             </div>
 
-            <!-- TAB 2: AUDIO MANAGEMENT -->
-            <div class="tab-panel" id="tab-audio">
-                <div class="content-card">
-                    <div class="card-header">
-                        <span class="card-title">系统音频通道配置</span>
-                    </div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                        <div>
-                            <div class="control-row">
-                                <span>播放音量增益</span>
-                                <span class="metric-value" id="volVal" style="font-size: 0.9rem;">100%</span>
-                            </div>
-                            <input type="range" id="volSlider" min="0" max="150" value="100">
-                        </div>
-                        <div>
-                            <div class="control-row">
-                                <span>抗抖动缓冲延迟 (ms)</span>
-                                <span class="metric-value" id="bufferVal" style="font-size: 0.9rem;">40 ms</span>
-                            </div>
-                            <input type="range" id="bufferSlider" min="15" max="250" value="40" step="5">
-                        </div>
-                    </div>
-                    <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 6px;">
-                        💡 提示：看视频、打游戏建议保持 30~50ms 低延迟；若在较弱 Wi-Fi 下出现偶发爆音，可调大至 80~120ms。
-                    </div>
+            <div class="switch-row">
+                <div class="switch-label">
+                    <span class="switch-title">🎵 共享本机系统声音</span>
+                    <span class="switch-desc">允许对端在他们电脑上收听播放本机的声音</span>
                 </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="selfAudioCheck" checked>
+                    <span class="slider"></span>
+                </label>
             </div>
 
-            <!-- TAB 3: MOUSE SETTINGS -->
-            <div class="tab-panel" id="tab-mouse">
-                <div class="content-card">
-                    <div class="card-header">
-                        <span class="card-title">鼠标跨端映射与反向操控</span>
-                    </div>
-                    <div style="display: flex; flex-direction: column; gap: 14px;">
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <div>
-                                <div style="font-weight: 700; font-size: 0.9rem;">正向光标监视</div>
-                                <div style="font-size: 0.75rem; color: var(--text-muted);">将台式机当前鼠标光标与按键状态实时推送到连接的移动设备</div>
-                            </div>
-                            <span style="color: var(--primary); font-weight: 700; font-size: 0.85rem;">已启用 (60 FPS)</span>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border); padding-top: 14px;">
-                            <div>
-                                <div style="font-weight: 700; font-size: 0.9rem;">反向触控注入</div>
-                                <div style="font-size: 0.75rem; color: var(--text-muted);">允许手机/平板在触控板上滑动时，通过 Windows 原生接口驱动台式机物理光标</div>
-                            </div>
-                            <span style="color: var(--secondary); font-weight: 700; font-size: 0.85rem;">就绪 (user32.dll)</span>
-                        </div>
-                    </div>
+            <div class="switch-row">
+                <div class="switch-label">
+                    <span class="switch-title">🖱️ 共享本机鼠标操作</span>
+                    <span class="switch-desc">允许对端在他们电脑上实时同步执行本机的光标</span>
                 </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="selfMouseCheck" checked>
+                    <span class="slider"></span>
+                </label>
             </div>
 
-            <!-- TAB 4: NETWORK ADAPTERS -->
-            <div class="tab-panel" id="tab-network">
-                <div class="content-card">
-                    <div class="card-header">
-                        <span class="card-title">本机所有网络适配器</span>
-                    </div>
-                    <div id="fullNetworkList" style="display: flex; flex-direction: column; gap: 8px;">
-                        <!-- Injected via JS -->
-                    </div>
+            <div class="switch-row">
+                <div class="switch-label">
+                    <span class="switch-title">🛡️ 允许外部远程控制</span>
+                    <span class="switch-desc">允许经授权的对端通过触控或鼠标操作控制本机</span>
                 </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="selfControlCheck" checked>
+                    <span class="slider"></span>
+                </label>
             </div>
-        </main>
+
+            <button class="nav-btn primary" id="saveSelfSettingsBtn" style="padding: 10px; justify-content: center;">
+                保存设置
+            </button>
+        </div>
     </div>
+
+    <!-- Modal 2: 📱 手机/平板扫码连接 -->
+    <div class="modal-overlay" id="qrModal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2>📱 手机 / 平板扫码接入</h2>
+                <button class="close-modal-btn" data-modal="qrModal">✕</button>
+            </div>
+            <p style="font-size: 0.82rem; color: var(--text-muted); line-height: 1.4;">
+                用手机相机或微信扫码打开下方链接，手机即可作为对端自动加入列表。
+            </p>
+            <div class="qr-wrapper">
+                <img id="qrCodeImg" src="/api/qrcode" alt="QR Code">
+                <div class="qr-url-box" id="qrUrlText">http://...</div>
+            </div>
+            <button class="nav-btn primary" id="copyUrlBtn" style="padding: 10px; justify-content: center;">
+                📋 复制访问地址
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal 3: ➕ 手动添加对端 IP -->
+    <div class="modal-overlay" id="addPeerModal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2>➕ 手动添加对端设备</h2>
+                <button class="close-modal-btn" data-modal="addPeerModal">✕</button>
+            </div>
+            <p style="font-size: 0.82rem; color: var(--text-muted); line-height: 1.4;">
+                如果局域网禁用了广播自动发现，可以直接输入其他电脑的 IP:端口进行连接。
+            </p>
+            <div class="form-group">
+                <label>对端 IP 地址与端口</label>
+                <input type="text" class="form-input" id="manualPeerTargetInput" placeholder="例如 192.168.1.100:8080">
+            </div>
+            <div class="form-group">
+                <label>设备备注名称 (可选)</label>
+                <input type="text" class="form-input" id="manualPeerNameInput" placeholder="例如: 办公室台式机">
+            </div>
+            <button class="nav-btn primary" id="confirmAddPeerBtn" style="padding: 10px; justify-content: center;">
+                确认添加并搜索设备
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal 4: 🕹️ 远程遥控触控板 -->
+    <div class="modal-overlay" id="remoteControlModal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h2>🕹️ 远程遥控触控板</h2>
+                <button class="close-modal-btn" data-modal="remoteControlModal">✕</button>
+            </div>
+            <p style="font-size: 0.82rem; color: var(--text-muted);" id="remoteControlTargetName">
+                正在控制目标设备
+            </p>
+
+            <div class="touchpad-surface" id="touchpadSurface">
+                <div style="font-size: 2rem;">👆</div>
+                <div class="touchpad-hint">在此区域滑动移动光标，轻触点击左键</div>
+            </div>
+
+            <div class="touchpad-buttons">
+                <button class="touch-action-btn" id="touchLeftClickBtn">🖱️ 模拟左键</button>
+                <button class="touch-action-btn" id="touchRightClickBtn">🖱️ 模拟右键</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div class="toast" id="toast"></div>
 
     <script>
         // State
-        let isListening = false;
+        let localSelf = null;
+        let activePeers = [];
+        let activeRemoteControlPeerId = null;
         let ws = null;
+        
+        // Web Audio Player State
         let audioCtx = null;
         let gainNode = null;
-        let analyser = null;
         let nextAudioTime = 0;
-        let targetBufferMs = 40;
+        let isAudioPlaying = false;
 
-        // Elements
-        const navItems = document.querySelectorAll('.nav-item');
-        const tabPanels = document.querySelectorAll('.tab-panel');
-        const pageTitle = document.getElementById('pageTitle');
+        // UI References
+        const headerHostName = document.getElementById('headerHostName');
         const nicSelect = document.getElementById('nicSelect');
-        const nicSwitchTip = document.getElementById('nicSwitchTip');
-        const lanUrlDisplay = document.getElementById('lanUrlDisplay');
-        const qrImg = document.getElementById('qrImg');
-        const copyUrlBtn = document.getElementById('copyUrlBtn');
-        const startAudioBtn = document.getElementById('startAudioBtn');
+        const discoveryCountLabel = document.getElementById('discoveryCountLabel');
+        const peerGrid = document.getElementById('peerGrid');
+        const qrUrlText = document.getElementById('qrUrlText');
+        const toast = document.getElementById('toast');
 
-        // Metrics & Radar
-        const metricClientCount = document.getElementById('metricClientCount');
-        const screenRes = document.getElementById('screenRes');
-        const mouseRadarBox = document.getElementById('mouseRadarBox');
-        const radarCursor = document.getElementById('radarCursor');
-        const canvas = document.getElementById('visualizer');
-        const canvasCtx = canvas.getContext('2d');
-
-        // Sliders
-        const volSlider = document.getElementById('volSlider');
-        const volVal = document.getElementById('volVal');
-        const bufferSlider = document.getElementById('bufferSlider');
-        const bufferVal = document.getElementById('bufferVal');
-
-        function resizeCanvas() {
-            if (canvas && canvas.parentElement) {
-                canvas.width = canvas.parentElement.clientWidth * window.devicePixelRatio;
-                canvas.height = canvas.parentElement.clientHeight * window.devicePixelRatio;
-            }
-        }
-        window.addEventListener('resize', resizeCanvas);
-        resizeCanvas();
-
-        // Desktop Navigation Tab Switching
-        const tabTitles = {
-            overview: '设备协同控制中心',
-            peers: '协同设备与拓扑权限',
-            audio: '音频映射与声卡控制',
-            mouse: '鼠标跨端交互与遥控',
-            network: '通信网卡与路由设置'
-        };
-
-        navItems.forEach(item => {
-            item.addEventListener('click', () => {
-                const tabKey = item.getAttribute('data-tab');
-                navItems.forEach(n => n.classList.remove('active'));
-                tabPanels.forEach(p => p.classList.remove('active'));
-
-                item.classList.add('active');
-                const targetPanel = document.getElementById(`tab-${tabKey}`);
-                if (targetPanel) targetPanel.classList.add('active');
-                if (pageTitle && tabTitles[tabKey]) pageTitle.innerText = tabTitles[tabKey];
-            });
-        });
-
-        // Copy URL
-        copyUrlBtn.addEventListener('click', () => {
-            const url = lanUrlDisplay.innerText;
-            if (navigator.clipboard) {
-                navigator.clipboard.writeText(url).then(() => {
-                    copyUrlBtn.innerText = '已复制！';
-                    setTimeout(() => copyUrlBtn.innerText = '复制网址', 2000);
-                });
-            }
-        });
-
-        // Load Network Interfaces
-        async function loadNetworkInterfaces() {
-            try {
-                const res = await fetch('/api/interfaces');
-                if (!res.ok) return;
-                const data = await res.json();
-                nicSelect.innerHTML = '';
-                const fullList = document.getElementById('fullNetworkList');
-                if (fullList) fullList.innerHTML = '';
-
-                data.interfaces.forEach(iface => {
-                    const opt = document.createElement('option');
-                    opt.value = iface.ip;
-                    const typeLabel = iface.is_virtual ? '⚠️ 虚拟' : '🌐 物理';
-                    opt.innerText = `${typeLabel} · ${iface.name} (${iface.ip})`;
-                    if (iface.ip === data.current_ip) {
-                        opt.selected = true;
-                    }
-                    nicSelect.appendChild(opt);
-
-                    if (fullList) {
-                        const row = document.createElement('div');
-                        row.style.cssText = 'display: flex; justify-content: space-between; padding: 10px 14px; background: rgba(0,0,0,0.3); border-radius: 8px; font-size: 0.8rem;';
-                        row.innerHTML = `<span>${typeLabel} <b>${iface.name}</b></span><span style="font-family: monospace;">${iface.ip}</span>`;
-                        fullList.appendChild(row);
-                    }
-                });
-
-                if (lanUrlDisplay && data.current_url) {
-                    lanUrlDisplay.innerText = data.current_url;
-                }
-            } catch (err) {
-                console.error('Failed to load interfaces:', err);
-            }
+        function showToast(msg) {
+            toast.innerText = msg;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 2500);
         }
 
-        nicSelect.addEventListener('change', async (e) => {
-            const targetIp = e.target.value;
-            if (!targetIp) return;
-
-            try {
-                const res = await fetch(`/api/interfaces/select?ip=${encodeURIComponent(targetIp)}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (lanUrlDisplay) lanUrlDisplay.innerText = data.current_url;
-                    if (qrImg) qrImg.src = `/api/qrcode?t=${Date.now()}`;
-                    if (nicSwitchTip) {
-                        nicSwitchTip.style.display = 'inline';
-                        setTimeout(() => nicSwitchTip.style.display = 'none', 3000);
-                    }
-                }
-            } catch (err) {
-                console.error('Failed to switch network card:', err);
-            }
-        });
-
-        // WebSocket Connection for Live Audio & Mouse Radar
-        function connectWS() {
-            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${proto}//${location.host}/ws`;
-
-            ws = new WebSocket(wsUrl);
-            ws.binaryType = 'arraybuffer';
-
-            ws.onopen = () => {
-                ws.send(JSON.stringify({ action: 'set_mapping', audio: true, mouse: true }));
-                drawVisualizer();
-            };
-
-            ws.onmessage = (event) => {
-                if (event.data instanceof ArrayBuffer) {
-                    if (isListening && audioCtx) {
-                        playAudioChunk(event.data);
-                    }
-                } else if (typeof event.data === 'string') {
-                    try {
-                        const msg = JSON.parse(event.data);
-                        if (msg.type === 'mouse') {
-                            updateMouseRadar(msg);
-                        }
-                    } catch (e) {}
-                }
-            };
-        }
-
-        function updateMouseRadar(evt) {
-            if (mouseRadarBox && radarCursor) {
-                const boxW = mouseRadarBox.clientWidth;
-                const boxH = mouseRadarBox.clientHeight;
-                radarCursor.style.transform = `translate(${evt.x * boxW}px, ${evt.y * boxH}px)`;
-            }
-            if (screenRes) {
-                let text = `${evt.screen_w} × ${evt.screen_h}`;
-                if (evt.source_peer) {
-                    text += ` (源: ${evt.source_peer})`;
-                }
-                screenRes.innerText = text;
-            }
-        }
-
-        // Audio controls
-        startAudioBtn.addEventListener('click', () => {
+        // Web Audio Engine Initialization
+        function ensureAudioContext() {
             if (!audioCtx) {
                 const AudioContext = window.AudioContext || window.webkitAudioContext;
                 audioCtx = new AudioContext({ sampleRate: 48000 });
                 gainNode = audioCtx.createGain();
-                analyser = audioCtx.createAnalyser();
-                analyser.fftSize = 256;
-                gainNode.connect(analyser);
-                analyser.connect(audioCtx.destination);
+                gainNode.gain.value = 1.0;
+                gainNode.connect(audioCtx.destination);
             }
-            if (audioCtx.state === 'suspended') audioCtx.resume();
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
 
-            isListening = !isListening;
-            startAudioBtn.innerText = isListening ? '🔇 静音本地声音' : '🎧 开启本地监听';
-            startAudioBtn.style.background = isListening ? 'linear-gradient(135deg, #ef4444, #dc2626)' : 'linear-gradient(135deg, #10b981, #059669)';
-        });
-
-        function playAudioChunk(arrayBuffer) {
+        function playPCM(arrayBuffer) {
+            if (!audioCtx) return;
             const int16 = new Int16Array(arrayBuffer);
             const frameCount = int16.length / 2;
             if (frameCount <= 0) return;
@@ -1428,9 +944,8 @@
             }
 
             const now = audioCtx.currentTime;
-            const targetSec = targetBufferMs / 1000.0;
-            if (nextAudioTime < now || nextAudioTime > now + targetSec + 0.15) {
-                nextAudioTime = now + targetSec;
+            if (nextAudioTime < now || nextAudioTime > now + 0.3) {
+                nextAudioTime = now + 0.05;
             }
 
             const source = audioCtx.createBufferSource();
@@ -1440,439 +955,269 @@
             nextAudioTime += audioBuffer.duration;
         }
 
-        function drawVisualizer() {
-            requestAnimationFrame(drawVisualizer);
-            if (!analyser) return;
+        // Connect Local WebSocket Stream for Live Audio & Mouse Telemetry
+        function connectLocalWebSocket() {
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${proto}//${location.host}/ws`;
 
-            const bufferLength = analyser.frequencyBinCount;
-            const dataArray = new Uint8Array(bufferLength);
-            analyser.getByteTimeDomainData(dataArray);
+            ws = new WebSocket(wsUrl);
+            ws.binaryType = 'arraybuffer';
 
-            canvasCtx.fillStyle = 'rgba(10, 15, 29, 0.45)';
-            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+            ws.onmessage = (event) => {
+                if (event.data instanceof ArrayBuffer) {
+                    if (isAudioPlaying) {
+                        playPCM(event.data);
+                    }
+                } else if (typeof event.data === 'string') {
+                    try {
+                        const msg = JSON.parse(event.data);
+                        if (msg.type === 'mouse' && msg.peer_id) {
+                            updateCursorTelemetry(msg.peer_id, msg);
+                        }
+                    } catch (e) {}
+                }
+            };
 
-            canvasCtx.lineWidth = 2 * window.devicePixelRatio;
-            canvasCtx.strokeStyle = '#10b981';
-            canvasCtx.shadowBlur = 8;
-            canvasCtx.shadowColor = '#10b981';
-            canvasCtx.beginPath();
+            ws.onclose = () => {
+                setTimeout(connectLocalWebSocket, 2000);
+            };
+        }
 
-            const sliceWidth = canvas.width / bufferLength;
-            let x = 0;
-
-            for (let i = 0; i < bufferLength; i++) {
-                const v = dataArray[i] / 128.0;
-                const y = (v * canvas.height) / 2;
-                if (i === 0) canvasCtx.moveTo(x, y);
-                else canvasCtx.lineTo(x, y);
-                x += sliceWidth;
+        function updateCursorTelemetry(peerId, evt) {
+            const el = document.getElementById(`cursorTelemetry-${peerId}`);
+            if (el) {
+                const posX = Math.round(evt.x * (evt.screen_w || 1920));
+                const posY = Math.round(evt.y * (evt.screen_h || 1080));
+                el.innerText = `● 正在本地执行: (${posX}, ${posY})`;
+                el.style.display = 'flex';
             }
-            canvasCtx.stroke();
-            canvasCtx.shadowBlur = 0;
         }
 
-        // Sliders
-        volSlider.addEventListener('input', (e) => {
-            const val = e.target.value;
-            volVal.innerText = val + '%';
-            if (gainNode) gainNode.gain.value = val / 100.0;
-        });
-
-        bufferSlider.addEventListener('input', (e) => {
-            targetBufferMs = parseInt(e.target.value);
-            bufferVal.innerText = targetBufferMs + ' ms';
-        });
-
-        // Touchpad Gesture Simulation for Remote Input
-        const touchpad = document.getElementById('touchpad');
-        if (touchpad) {
-            let lastTouchX = 0, lastTouchY = 0;
-            let touchStartTime = 0;
-            let hasMoved = false;
-
-            touchpad.addEventListener('touchstart', (e) => {
-                if (e.touches.length === 1) {
-                    lastTouchX = e.touches[0].clientX;
-                    lastTouchY = e.touches[0].clientY;
-                    touchStartTime = Date.now();
-                    hasMoved = false;
-                    touchpad.classList.add('active');
-                } else if (e.touches.length === 2) {
-                    lastTouchY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-                    touchStartTime = Date.now();
-                    hasMoved = false;
-                }
-            }, { passive: false });
-
-            touchpad.addEventListener('touchmove', (e) => {
-                e.preventDefault();
-                if (e.touches.length === 1) {
-                    const cx = e.touches[0].clientX;
-                    const cy = e.touches[0].clientY;
-                    const dx = Math.round((cx - lastTouchX) * 1.5);
-                    const dy = Math.round((cy - lastTouchY) * 1.5);
-                    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
-                        hasMoved = true;
-                        lastTouchX = cx;
-                        lastTouchY = cy;
-                        if (ws && ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify({
-                                action: 'remote_input',
-                                type: 'move',
-                                dx: dx,
-                                dy: dy
-                            }));
-                        }
-                    }
-                } else if (e.touches.length === 2) {
-                    const currentY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-                    const dy = Math.round((currentY - lastTouchY) * 2);
-                    if (Math.abs(dy) > 2) {
-                        hasMoved = true;
-                        lastTouchY = currentY;
-                        if (ws && ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify({
-                                action: 'remote_input',
-                                type: 'scroll',
-                                dy: dy
-                            }));
-                        }
-                    }
-                }
-            }, { passive: false });
-
-            touchpad.addEventListener('touchend', (e) => {
-                touchpad.classList.remove('active');
-                const duration = Date.now() - touchStartTime;
-                if (!hasMoved && duration < 350) {
-                    if (e.changedTouches.length === 1) {
-                        // Single tap = left click
-                        if (ws && ws.readyState === WebSocket.OPEN) {
-                            ws.send(JSON.stringify({
-                                action: 'remote_input',
-                                type: 'click',
-                                btn: 'left'
-                            }));
-                        }
-                    }
-                }
-            });
-        }
-
-        // Topology Matrix and Batch Operations (多端全并发映射)
-        let inboundAudioAll = true;
-        let inboundMouseAll = true;
-        let outboundAudioAll = true;
-        let allowControlAll = true;
-
-        const flowInboundCount = document.getElementById('flowInboundCount');
-        const flowOutboundCount = document.getElementById('flowOutboundCount');
-
-        const batchInboundAudioBtn = document.getElementById('batchInboundAudioBtn');
-        const batchInboundMouseBtn = document.getElementById('batchInboundMouseBtn');
-        const batchOutboundAudioBtn = document.getElementById('batchOutboundAudioBtn');
-        const batchControlBtn = document.getElementById('batchControlBtn');
-        const batchDisconnectBtn = document.getElementById('batchDisconnectBtn');
-
-        if (batchInboundAudioBtn) {
-            batchInboundAudioBtn.addEventListener('click', async () => {
-                inboundAudioAll = !inboundAudioAll;
-                batchInboundAudioBtn.innerText = inboundAudioAll ? '🔊 一键开启全部对外声音' : '🔇 一键静音全部对外声音';
-                await fetch('/api/inbound/batch', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ audio: inboundAudioAll })
-                });
-                fetchInboundClients();
-            });
-        }
-
-        if (batchInboundMouseBtn) {
-            batchInboundMouseBtn.addEventListener('click', async () => {
-                inboundMouseAll = !inboundMouseAll;
-                batchInboundMouseBtn.innerText = inboundMouseAll ? '🖱️ 一键开启全部对外鼠标' : '⏹️ 一键关闭全部对外鼠标';
-                await fetch('/api/inbound/batch', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mouse: inboundMouseAll })
-                });
-                fetchInboundClients();
-            });
-        }
-
-        if (batchOutboundAudioBtn) {
-            batchOutboundAudioBtn.addEventListener('click', async () => {
-                outboundAudioAll = !outboundAudioAll;
-                batchOutboundAudioBtn.innerText = outboundAudioAll ? '🎧 一键开启全部接入声音' : '🔇 一键静音全部接入声音';
-                await fetch('/api/outbound/batch', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ receive_audio: outboundAudioAll })
-                });
-                fetchOutboundPeers();
-            });
-        }
-
-        if (batchControlBtn) {
-            batchControlBtn.addEventListener('click', async () => {
-                allowControlAll = !allowControlAll;
-                batchControlBtn.innerText = allowControlAll ? '🛡️ 一键允许对端反向控制' : '⛔ 一键禁用对端反向控制';
-                await fetch('/api/inbound/batch', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ allow_control: allowControlAll })
-                });
-                fetchInboundClients();
-            });
-        }
-
-        if (batchDisconnectBtn) {
-            batchDisconnectBtn.addEventListener('click', async () => {
-                if (confirm('确认断开当前所有对内与对外连接？')) {
-                    await fetch('/api/inbound/batch', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ disconnect: true })
-                    });
-                    await fetch('/api/outbound/batch', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ disconnect: true })
-                    });
-                    fetchInboundClients();
-                    fetchOutboundPeers();
-                }
-            });
-        }
-
-        // Inbound Peers Management (谁连接上了我)
-        async function fetchInboundClients() {
+        // Fetch Local Machine Info (/api/self)
+        async function fetchSelf() {
             try {
-                const res = await fetch('/api/inbound');
+                const res = await fetch('/api/self');
+                if (!res.ok) return;
+                localSelf = await res.json();
+
+                if (headerHostName) {
+                    headerHostName.innerText = `${localSelf.name} (${localSelf.current_ip})`;
+                }
+                if (qrUrlText) {
+                    qrUrlText.innerText = localSelf.primary_url;
+                }
+
+                // Populate NIC Select dropdown
+                if (nicSelect && localSelf.interfaces) {
+                    nicSelect.innerHTML = '';
+                    localSelf.interfaces.forEach(iface => {
+                        const opt = document.createElement('option');
+                        opt.value = iface.ip;
+                        opt.text = `${iface.name} - ${iface.ip}`;
+                        if (iface.ip === localSelf.current_ip) opt.selected = true;
+                        nicSelect.appendChild(opt);
+                    });
+                }
+            } catch (e) {
+                console.error('fetchSelf failed:', e);
+            }
+        }
+
+        if (nicSelect) {
+            nicSelect.addEventListener('change', async (e) => {
+                const targetIP = e.target.value;
+                if (!targetIP) return;
+                try {
+                    const res = await fetch(`/api/interfaces/select?ip=${encodeURIComponent(targetIP)}`, { method: 'POST' });
+                    if (res.ok) {
+                        showToast(`已切换通信网卡 IP 至: ${targetIP}`);
+                        fetchSelf();
+                        const qrImg = document.getElementById('qrCodeImg');
+                        if (qrImg) qrImg.src = `/api/qrcode?t=${Date.now()}`;
+                    }
+                } catch (err) {
+                    showToast('切换网卡失败: ' + err);
+                }
+            });
+        }
+
+        // Fetch Discovered Peers (/api/peers)
+        async function fetchPeers() {
+            try {
+                const res = await fetch('/api/peers');
                 if (!res.ok) return;
                 const data = await res.json();
-                const clients = data.clients || [];
+                activePeers = data.peers || [];
 
-                const metricInboundCount = document.getElementById('metricInboundCount');
-                const inboundBadge = document.getElementById('inboundBadge');
-                const tabInboundBadge = document.getElementById('tabInboundBadge');
-                const flowInboundCount = document.getElementById('flowInboundCount');
+                // Filter out self if present
+                const peers = activePeers.filter(p => p.id !== (localSelf ? localSelf.id : ''));
 
-                const countText = `${clients.length} 台在线`;
-                if (metricInboundCount) metricInboundCount.innerText = countText;
-                if (inboundBadge) inboundBadge.innerText = countText;
-                if (tabInboundBadge) tabInboundBadge.innerText = countText;
-                if (flowInboundCount) flowInboundCount.innerText = `${clients.length} 台外部设备正在使用本机`;
+                if (discoveryCountLabel) {
+                    discoveryCountLabel.innerText = `发现 ${peers.length} 台对端设备`;
+                }
 
-                renderInboundList('inboundPeerList', clients);
-                renderInboundList('tabInboundPeerList', clients);
-            } catch (e) {}
-        }
+                renderPeers(peers);
 
-        function renderInboundList(containerId, clients) {
-            const container = document.getElementById(containerId);
-            if (!container) return;
-
-            if (clients.length === 0) {
-                container.innerHTML = `
-                    <div class="peer-empty">
-                        📡 暂无外部设备连入本机<br>
-                        <span style="font-size: 0.7rem; opacity: 0.7;">手机/平板可扫下方二维码，或局域网电脑直接访问本机 IP 地址即刻接入</span>
-                    </div>`;
-                return;
+                // Update audio playing flag if any peer has audio mapping enabled
+                isAudioPlaying = peers.some(p => p.mapping && p.mapping.play_audio_local);
+            } catch (e) {
+                console.error('fetchPeers failed:', e);
             }
-
-            container.innerHTML = '';
-            clients.forEach(c => {
-                const item = document.createElement('div');
-                item.className = 'peer-item';
-                const icon = c.device_type.includes('手机') || c.device_type.includes('平板') ? '📱' : '💻';
-
-                item.innerHTML = `
-                    <div class="peer-info">
-                        <div class="peer-icon">${icon}</div>
-                        <div>
-                            <div class="peer-name">
-                                ${escapeHTML(c.device_type)}
-                                <span style="font-size:0.75rem; color:var(--text-muted); font-weight:normal;">(${escapeHTML(c.remote_addr)})</span>
-                            </div>
-                            <div class="peer-meta">连入时刻: ${c.connected_at} · 已连入 ${c.duration_sec} 秒</div>
-                        </div>
-                    </div>
-                    <div class="peer-controls">
-                        <button class="toggle-btn ${c.audio_enabled ? 'active' : ''}" data-id="${c.id}" data-action="audio">
-                            ${c.audio_enabled ? '🔊 发送声音: 开' : '🔇 发送声音: 关'}
-                        </button>
-                        <button class="toggle-btn ${c.mouse_enabled ? 'active-blue' : ''}" data-id="${c.id}" data-action="mouse">
-                            ${c.mouse_enabled ? '🖱️ 发送鼠标: 开' : '⏹️ 发送鼠标: 关'}
-                        </button>
-                        <button class="toggle-btn ${c.allow_control ? 'active-purple' : ''}" data-id="${c.id}" data-action="control">
-                            ${c.allow_control ? '🛡️ 允许控本机: 允许' : '⛔ 允许控本机: 禁止'}
-                        </button>
-                        <button class="disconnect-btn" data-id="${c.id}">踢出</button>
-                    </div>
-                `;
-
-                item.querySelectorAll('.toggle-btn').forEach(btn => {
-                    btn.addEventListener('click', async () => {
-                        const action = btn.getAttribute('data-action');
-                        const id = btn.getAttribute('data-id');
-                        const payload = { id: id };
-                        if (action === 'audio') payload.audio = !c.audio_enabled;
-                        if (action === 'mouse') payload.mouse = !c.mouse_enabled;
-                        if (action === 'control') payload.allow_control = !c.allow_control;
-                        await fetch('/api/inbound/update', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload)
-                        });
-                        fetchInboundClients();
-                    });
-                });
-
-                item.querySelector('.disconnect-btn').addEventListener('click', async () => {
-                    await fetch(`/api/inbound/disconnect?id=${encodeURIComponent(c.id)}`, { method: 'POST' });
-                    fetchInboundClients();
-                });
-
-                container.appendChild(item);
-            });
         }
 
-        // Outbound Peers Management (自己又连接上了谁)
-        async function fetchOutboundPeers() {
-            try {
-                const res = await fetch('/api/outbound');
-                if (!res.ok) return;
-                const data = await res.json();
-                const peers = data.peers || [];
-
-                const metricOutboundCount = document.getElementById('metricOutboundCount');
-                const outboundBadge = document.getElementById('outboundBadge');
-                const tabOutboundBadge = document.getElementById('tabOutboundBadge');
-                const flowOutboundCount = document.getElementById('flowOutboundCount');
-
-                const countText = `${peers.length} 台主机`;
-                if (metricOutboundCount) metricOutboundCount.innerText = countText;
-                if (outboundBadge) outboundBadge.innerText = countText;
-                if (tabOutboundBadge) tabOutboundBadge.innerText = countText;
-                if (flowOutboundCount) flowOutboundCount.innerText = `${peers.length} 台外部主机已接入使用`;
-
-                renderOutboundList('outboundPeerList', peers);
-                renderOutboundList('tabOutboundPeerList', peers);
-            } catch (e) {}
-        }
-
-        function renderOutboundList(containerId, peers) {
-            const container = document.getElementById(containerId);
-            if (!container) return;
+        function renderPeers(peers) {
+            if (!peerGrid) return;
 
             if (peers.length === 0) {
-                container.innerHTML = `
-                    <div class="peer-empty">
-                        🌐 当前未连接到任何远端主机<br>
-                        <span style="font-size: 0.7rem; opacity: 0.7;">在上方输入其他电脑的 IP 即可接入，将其音频拉取至本机播放或接收光标</span>
-                    </div>`;
+                peerGrid.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">📡</div>
+                        <h3>正在自动搜索局域网中的 AnyDevice 对端...</h3>
+                        <p>
+                            请在同一局域网下的其他电脑打开 AnyDevice，或者点击右上角「📱 手机扫码接入」。设备发现后将即刻呈现在这里。
+                        </p>
+                        <div class="empty-actions">
+                            <button class="nav-btn primary" onclick="openModal('addPeerModal')">➕ 手动输入 IP 连接</button>
+                            <button class="nav-btn" onclick="openModal('qrModal')">📱 扫码连接</button>
+                        </div>
+                    </div>
+                `;
                 return;
             }
 
-            container.innerHTML = '';
+            peerGrid.innerHTML = '';
             peers.forEach(p => {
-                const item = document.createElement('div');
-                item.className = 'peer-item';
-                const statusDotColor = p.status === 'connected' ? '#10b981' : (p.status === 'connecting' ? '#f59e0b' : '#ef4444');
-                const statusText = p.status === 'connected' ? `● 已连通 (延迟 ${p.latency_ms}ms)` : (p.status === 'connecting' ? '○ 正在连接...' : `× ${p.last_error || '连接失败'}`);
+                const card = document.createElement('div');
+                card.className = `peer-card ${p.mapping && (p.mapping.play_audio_local || p.mapping.execute_mouse_local) ? 'active-mapping' : ''}`;
+                
+                const isOnline = p.online;
+                const statusDotClass = isOnline ? 'online' : 'offline';
+                const statusText = isOnline ? '● 在线' : '○ 离线';
+                
+                let devIcon = '💻';
+                if (p.os === 'iOS' || p.os === 'Android') devIcon = '📱';
+                else if (p.os === 'macOS') devIcon = '🍏';
+                else if (p.os === 'Windows') devIcon = '🪟';
 
-                item.innerHTML = `
-                    <div class="peer-info">
-                        <div class="peer-icon" style="background: rgba(59, 130, 246, 0.1);">💻</div>
-                        <div>
-                            <div class="peer-name">
-                                AnyDevice 远端主机
-                                <span style="font-size:0.75rem; color:var(--text-muted); font-weight:normal;">(${escapeHTML(p.target)})</span>
+                const provides = p.provides || {};
+                const mapping = p.mapping || {};
+
+                card.innerHTML = `
+                    <div class="peer-header">
+                        <div class="peer-main-info">
+                            <div class="peer-avatar">${devIcon}</div>
+                            <div class="peer-names">
+                                <div class="peer-name">${escapeHTML(p.name)}</div>
+                                <div class="peer-addr">${escapeHTML(p.target || p.ip)} · 最近更新 ${p.last_seen || ''}</div>
                             </div>
-                            <div class="peer-meta" style="color: ${statusDotColor};">${statusText} · 连接于 ${p.connected_at}</div>
                         </div>
+                        <div class="peer-status-pill ${statusDotClass}">${statusText}</div>
                     </div>
-                    <div class="peer-controls">
-                        <button class="toggle-btn ${p.receive_audio ? 'active' : ''}" data-id="${p.id}" data-action="audio">
-                            ${p.receive_audio ? '🎧 接收声音: 开' : '🔇 接收声音: 关'}
-                        </button>
-                        <button class="toggle-btn ${p.receive_mouse ? 'active-blue' : ''}" data-id="${p.id}" data-action="mouse">
-                            ${p.receive_mouse ? '🖥️ 接收光标: 开' : '⏹️ 接收光标: 关'}
-                        </button>
-                        <button class="toggle-btn ${p.send_mouse ? 'active-purple' : ''}" data-id="${p.id}" data-action="send_mouse">
-                            ${p.send_mouse ? '🎮 触控遥控它: 开' : '⏹️ 触控遥控它: 关'}
-                        </button>
-                        <button class="disconnect-btn" data-id="${p.id}">断开</button>
+
+                    <div class="devices-section">
+                        <div class="devices-section-title">该对端提供的设备与功能 (点击在本地映射使用)</div>
+
+                        <!-- 1. Audio Output Service -->
+                        <div class="service-row">
+                            <div class="service-info">
+                                <div class="service-label">
+                                    <span>🎵</span>
+                                    <span>系统声音输出</span>
+                                </div>
+                                <span class="service-state-text">
+                                    ${provides.audio ? '48kHz 立体声流可用' : '对端未提供声音'}
+                                </span>
+                            </div>
+                            <button class="map-btn ${mapping.play_audio_local ? 'active-emerald' : ''}" 
+                                    data-peer-id="${p.id}" 
+                                    data-action="toggle-audio" 
+                                    ${!provides.audio ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+                                ${mapping.play_audio_local ? '🔊 正在本地播放对端声音 (点击静音)' : '🔈 在本地播放该对端声音'}
+                            </button>
+                        </div>
+
+                        <!-- 2. Mouse Cursor Service -->
+                        <div class="service-row">
+                            <div class="service-info">
+                                <div class="service-label">
+                                    <span>🖱️</span>
+                                    <span>鼠标光标操作</span>
+                                </div>
+                                <span class="service-state-text">
+                                    ${provides.mouse ? '光标与按键流可用' : '对端未提供鼠标'}
+                                </span>
+                            </div>
+                            <button class="map-btn ${mapping.execute_mouse_local ? 'active-blue' : ''}" 
+                                    data-peer-id="${p.id}" 
+                                    data-action="toggle-mouse"
+                                    ${!provides.mouse ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+                                ${mapping.execute_mouse_local ? '🖱️ 正在本地执行对端鼠标 (点击停止)' : '🖱️ 在本地执行对端鼠标操作'}
+                            </button>
+                            <div class="cursor-telemetry" id="cursorTelemetry-${p.id}" style="${mapping.execute_mouse_local ? 'display:flex;' : 'display:none;'}">
+                                ● 正在本地执行对端鼠标光标
+                            </div>
+                        </div>
+
+                        <!-- 3. Remote Control Service -->
+                        <div class="service-row">
+                            <div class="service-info">
+                                <div class="service-label">
+                                    <span>🎮</span>
+                                    <span>远程受控接口</span>
+                                </div>
+                                <span class="service-state-text">
+                                    ${provides.control ? '支持外部远程遥控' : '对端禁止远程控制'}
+                                </span>
+                            </div>
+                            <button class="map-btn btn-purple" 
+                                    data-peer-id="${p.id}" 
+                                    data-peer-name="${escapeHTML(p.name)}"
+                                    data-action="remote-control"
+                                    ${!provides.control ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+                                🕹️ 远程遥控该设备 (打开触控板)
+                            </button>
+                        </div>
                     </div>
                 `;
 
-                item.querySelectorAll('.toggle-btn').forEach(btn => {
-                    btn.addEventListener('click', async () => {
+                // Bind click events
+                card.querySelectorAll('.map-btn').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
                         const action = btn.getAttribute('data-action');
-                        const id = btn.getAttribute('data-id');
-                        const payload = { id: id };
-                        if (action === 'audio') payload.receive_audio = !p.receive_audio;
-                        if (action === 'mouse') payload.receive_mouse = !p.receive_mouse;
-                        if (action === 'send_mouse') payload.send_mouse = !p.send_mouse;
-                        await fetch('/api/outbound/update', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(payload)
-                        });
-                        fetchOutboundPeers();
+                        const peerId = btn.getAttribute('data-peer-id');
+
+                        if (action === 'toggle-audio') {
+                            ensureAudioContext();
+                            const nextState = !mapping.play_audio_local;
+                            await updateMapping(peerId, { play_audio: nextState });
+                            showToast(nextState ? '已开启在本地播放该对端声音 🔊' : '已停止播放对端声音 🔇');
+                        } else if (action === 'toggle-mouse') {
+                            const nextState = !mapping.execute_mouse_local;
+                            await updateMapping(peerId, { execute_mouse: nextState });
+                            showToast(nextState ? '已开启在本地执行对端鼠标 🖱️' : '已停止执行对端鼠标 ⏹️');
+                        } else if (action === 'remote-control') {
+                            const peerName = btn.getAttribute('data-peer-name');
+                            openRemoteControl(peerId, peerName);
+                        }
                     });
                 });
 
-                item.querySelector('.disconnect-btn').addEventListener('click', async () => {
-                    await fetch(`/api/outbound/disconnect?id=${encodeURIComponent(p.id)}`, { method: 'POST' });
-                    fetchOutboundPeers();
-                });
-
-                container.appendChild(item);
+                peerGrid.appendChild(card);
             });
         }
 
-        // Connect Outbound Handler
-        function setupConnectHandler(inputId, btnId) {
-            const input = document.getElementById(inputId);
-            const btn = document.getElementById(btnId);
-            if (!input || !btn) return;
-
-            btn.addEventListener('click', async () => {
-                const target = input.value.trim();
-                if (!target) {
-                    alert('请输入远端主机的 IP:端口，例如 192.168.1.105:8080');
-                    return;
-                }
-                btn.disabled = true;
-                btn.innerText = '连接中...';
-                try {
-                    const res = await fetch('/api/outbound/connect', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            target: target,
-                            receive_audio: true,
-                            receive_mouse: true,
-                            send_mouse: false
-                        })
-                    });
-                    if (res.ok) {
-                        input.value = '';
-                        fetchOutboundPeers();
-                    } else {
-                        const err = await res.text();
-                        alert('连接远端失败: ' + err);
-                    }
-                } catch (e) {
-                    alert('网络连接错误: ' + e);
-                } finally {
-                    btn.disabled = false;
-                    btn.innerText = '➕ 连接远端';
-                }
-            });
+        async function updateMapping(peerID, payload) {
+            try {
+                payload.peer_id = peerID;
+                await fetch('/api/peers/map', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                fetchPeers();
+            } catch (err) {
+                showToast('映射设置失败: ' + err);
+            }
         }
 
         function escapeHTML(str) {
@@ -1880,33 +1225,232 @@
             return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
-        // Setup Connect Buttons
-        setupConnectHandler('outboundTargetInput', 'connectOutboundBtn');
-        setupConnectHandler('tabOutboundTargetInput', 'tabConnectOutboundBtn');
+        // Modal Management
+        function openModal(id) {
+            const m = document.getElementById(id);
+            if (m) m.classList.add('open');
+        }
 
-        // Periodic Status Fetch
-        async function fetchStatus() {
-            try {
-                const res = await fetch('/api/status');
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.sample_rate) {
-                        const audioMetric = document.getElementById('metricAudioStatus');
-                        if (audioMetric) audioMetric.innerText = `${(data.sample_rate / 1000).toFixed(0)}kHz ${data.channels === 2 ? '立体声' : '单声道'}`;
+        function closeModal(id) {
+            const m = document.getElementById(id);
+            if (m) m.classList.remove('open');
+        }
+
+        document.querySelectorAll('.close-modal-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const target = btn.getAttribute('data-modal');
+                if (target) closeModal(target);
+            });
+        });
+
+        window.addEventListener('click', (e) => {
+            if (e.target.classList.contains('modal-overlay')) {
+                e.target.classList.remove('open');
+            }
+        });
+
+        // Modal Buttons
+        document.getElementById('openQRBtn').addEventListener('click', () => {
+            const qrImg = document.getElementById('qrCodeImg');
+            if (qrImg) qrImg.src = `/api/qrcode?t=${Date.now()}`;
+            openModal('qrModal');
+        });
+
+        document.getElementById('openAddPeerBtn').addEventListener('click', () => openModal('addPeerModal'));
+        document.getElementById('manualScanBtn').addEventListener('click', () => {
+            fetchPeers();
+            showToast('已刷新对端列表');
+        });
+
+        const copyUrlBtn = document.getElementById('copyUrlBtn');
+        if (copyUrlBtn) {
+            copyUrlBtn.addEventListener('click', () => {
+                if (localSelf && localSelf.primary_url) {
+                    navigator.clipboard.writeText(localSelf.primary_url);
+                    showToast('已复制访问地址到剪贴板 📋');
+                }
+            });
+        }
+
+        // Confirm Add Peer
+        const confirmAddPeerBtn = document.getElementById('confirmAddPeerBtn');
+        const manualPeerTargetInput = document.getElementById('manualPeerTargetInput');
+        const manualPeerNameInput = document.getElementById('manualPeerNameInput');
+
+        if (confirmAddPeerBtn) {
+            confirmAddPeerBtn.addEventListener('click', async () => {
+                const target = manualPeerTargetInput.value.trim();
+                const name = manualPeerNameInput.value.trim();
+                if (!target) {
+                    alert('请输入对端的 IP:端口，例如 192.168.1.100:8080');
+                    return;
+                }
+                confirmAddPeerBtn.disabled = true;
+                confirmAddPeerBtn.innerText = '连接中...';
+                try {
+                    const res = await fetch('/api/peers/add', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ target, name })
+                    });
+                    if (res.ok) {
+                        manualPeerTargetInput.value = '';
+                        manualPeerNameInput.value = '';
+                        closeModal('addPeerModal');
+                        fetchPeers();
+                        showToast(`已添加对端 ${target}`);
+                    } else {
+                        const err = await res.text();
+                        alert('添加失败: ' + err);
+                    }
+                } catch (e) {
+                    alert('网络错误: ' + e);
+                } finally {
+                    confirmAddPeerBtn.disabled = false;
+                    confirmAddPeerBtn.innerText = '确认添加并搜索设备';
+                }
+            });
+        }
+
+        // Self Settings Management
+        const openSelfSettingsBtn = document.getElementById('openSelfSettingsBtn');
+        const selfNodeNameInput = document.getElementById('selfNodeNameInput');
+        const selfAudioCheck = document.getElementById('selfAudioCheck');
+        const selfMouseCheck = document.getElementById('selfMouseCheck');
+        const selfControlCheck = document.getElementById('selfControlCheck');
+        const saveSelfSettingsBtn = document.getElementById('saveSelfSettingsBtn');
+
+        if (openSelfSettingsBtn) {
+            openSelfSettingsBtn.addEventListener('click', () => {
+                if (localSelf) {
+                    selfNodeNameInput.value = localSelf.name || '';
+                    if (localSelf.provides) {
+                        selfAudioCheck.checked = localSelf.provides.audio;
+                        selfMouseCheck.checked = localSelf.provides.mouse;
+                        selfControlCheck.checked = localSelf.provides.control;
                     }
                 }
+                openModal('selfSettingsModal');
+            });
+        }
+
+        if (saveSelfSettingsBtn) {
+            saveSelfSettingsBtn.addEventListener('click', async () => {
+                const payload = {
+                    name: selfNodeNameInput.value.trim(),
+                    audio: selfAudioCheck.checked,
+                    mouse: selfMouseCheck.checked,
+                    control: selfControlCheck.checked
+                };
+                await fetch('/api/self', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                closeModal('selfSettingsModal');
+                fetchSelf();
+                showToast('本机共享设置已更新');
+            });
+        }
+
+        // Remote Control Touchpad Logic
+        function openRemoteControl(peerId, peerName) {
+            activeRemoteControlPeerId = peerId;
+            const targetNameEl = document.getElementById('remoteControlTargetName');
+            if (targetNameEl) targetNameEl.innerText = `正在遥控目标: ${peerName || peerId}`;
+            
+            // Mark remote control as active for this peer
+            updateMapping(peerId, { remote_control: true });
+            openModal('remoteControlModal');
+        }
+
+        async function sendRemoteInput(type, details) {
+            if (!activeRemoteControlPeerId) return;
+            const payload = Object.assign({
+                peer_id: activeRemoteControlPeerId,
+                type: type
+            }, details);
+            try {
+                await fetch('/api/peers/control', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
             } catch (e) {}
         }
 
-        // Init
-        loadNetworkInterfaces();
-        connectWS();
-        setInterval(fetchInboundClients, 2000);
-        setInterval(fetchOutboundPeers, 2000);
-        setInterval(fetchStatus, 3000);
-        fetchInboundClients();
-        fetchOutboundPeers();
-        fetchStatus();
+        const touchpad = document.getElementById('touchpadSurface');
+        let isTouching = false;
+        let lastTouchX = 0;
+        let lastTouchY = 0;
+
+        if (touchpad) {
+            touchpad.addEventListener('mousedown', (e) => {
+                isTouching = true;
+                lastTouchX = e.clientX;
+                lastTouchY = e.clientY;
+                touchpad.classList.add('active');
+            });
+
+            window.addEventListener('mousemove', (e) => {
+                if (!isTouching) return;
+                const dx = e.clientX - lastTouchX;
+                const dy = e.clientY - lastTouchY;
+                lastTouchX = e.clientX;
+                lastTouchY = e.clientY;
+                if (dx !== 0 || dy !== 0) {
+                    sendRemoteInput('move', { dx: dx * 2, dy: dy * 2 });
+                }
+            });
+
+            window.addEventListener('mouseup', () => {
+                if (isTouching) {
+                    isTouching = false;
+                    touchpad.classList.remove('active');
+                }
+            });
+
+            // Touch support for mobile devices
+            touchpad.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 1) {
+                    isTouching = true;
+                    lastTouchX = e.touches[0].clientX;
+                    lastTouchY = e.touches[0].clientY;
+                    touchpad.classList.add('active');
+                }
+            }, { passive: false });
+
+            touchpad.addEventListener('touchmove', (e) => {
+                if (!isTouching || e.touches.length !== 1) return;
+                e.preventDefault();
+                const dx = e.touches[0].clientX - lastTouchX;
+                const dy = e.touches[0].clientY - lastTouchY;
+                lastTouchX = e.touches[0].clientX;
+                lastTouchY = e.touches[0].clientY;
+                if (dx !== 0 || dy !== 0) {
+                    sendRemoteInput('move', { dx: dx * 2, dy: dy * 2 });
+                }
+            }, { passive: false });
+
+            touchpad.addEventListener('touchend', () => {
+                isTouching = false;
+                touchpad.classList.remove('active');
+            });
+        }
+
+        document.getElementById('touchLeftClickBtn').addEventListener('click', () => {
+            sendRemoteInput('click', { btn: 'left' });
+        });
+        document.getElementById('touchRightClickBtn').addEventListener('click', () => {
+            sendRemoteInput('click', { btn: 'right' });
+        });
+
+        // Initialization
+        fetchSelf();
+        fetchPeers();
+        connectLocalWebSocket();
+        setInterval(fetchPeers, 1800);
+        setInterval(fetchSelf, 5000);
     </script>
 </body>
 </html>

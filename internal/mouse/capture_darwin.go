@@ -40,6 +40,15 @@ static void sim_mouse_move(int dx, int dy) {
     }
 }
 
+static void sim_mouse_to(double x, double y) {
+    CGPoint pt = CGPointMake(x, y);
+    CGEventRef move = CGEventCreateMouseEvent(NULL, kCGEventMouseMoved, pt, kCGMouseButtonLeft);
+    if (move) {
+        CGEventPost(kCGHIDEventTap, move);
+        CFRelease(move);
+    }
+}
+
 static void sim_mouse_btn(int btn, int down) {
     CGEventRef cur = CGEventCreate(NULL);
     if (!cur) return;
@@ -85,6 +94,15 @@ func getCursor() (int, int, bool, bool, bool) {
 
 func SimulateMove(dx, dy int) {
 	C.sim_mouse_move(C.int(dx), C.int(dy))
+}
+
+// SimulateAbsolute moves the host cursor to normalized coordinates (0.0 ~ 1.0).
+func SimulateAbsolute(normX, normY float64) {
+	var w, h C.double
+	C.get_main_display_bounds(&w, &h)
+	targetX := normX * float64(w)
+	targetY := normY * float64(h)
+	C.sim_mouse_to(C.double(targetX), C.double(targetY))
 }
 
 func SimulateButton(btn string, down bool) {

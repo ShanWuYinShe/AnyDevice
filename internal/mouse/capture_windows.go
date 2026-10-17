@@ -13,6 +13,7 @@ var (
 	procGetSystemMetrics = user32.NewProc("GetSystemMetrics")
 	procGetAsyncKeyState = user32.NewProc("GetAsyncKeyState")
 	procMouseEvent       = user32.NewProc("mouse_event")
+	procSetCursorPos     = user32.NewProc("SetCursorPos")
 )
 
 const (
@@ -54,6 +55,14 @@ func getCursor() (int, int, bool, bool, bool) {
 // SimulateMove moves the host cursor relatively by dx and dy.
 func SimulateMove(dx, dy int) {
 	procMouseEvent.Call(MOUSEEVENTF_MOVE, uintptr(dx), uintptr(dy), 0, 0)
+}
+
+// SimulateAbsolute moves the host cursor to normalized coordinates (0.0 ~ 1.0).
+func SimulateAbsolute(normX, normY float64) {
+	w, h := getScreenSize()
+	targetX := int(normX * float64(w))
+	targetY := int(normY * float64(h))
+	procSetCursorPos.Call(uintptr(targetX), uintptr(targetY))
 }
 
 // SimulateButton triggers mouse button press or release.

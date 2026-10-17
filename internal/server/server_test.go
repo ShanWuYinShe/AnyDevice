@@ -159,3 +159,77 @@ func TestBatchAPIs(t *testing.T) {
 		t.Fatalf("expected 200 OK from /api/outbound/batch, got %d", rec2.Code)
 	}
 }
+
+func TestPeerManagerAndAPIs(t *testing.T) {
+	hub := NewHub(func(a, m int) {})
+	s := NewServer(8080, "127.0.0.1", hub, nil, nil)
+	handler := s.SetupRoutes()
+
+	// 1. GET /api/self
+	req := httptest.NewRequest(http.MethodGet, "/api/self", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from /api/self, got %d", rec.Code)
+	}
+
+	// 2. POST /api/self
+	f := false
+	selfBody, _ := json.Marshal(map[string]interface{}{
+		"audio":   f,
+		"mouse":   true,
+		"control": f,
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/self", bytes.NewReader(selfBody))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from POST /api/self, got %d", rec.Code)
+	}
+
+	// 3. POST /api/peers/add
+	addBody, _ := json.Marshal(map[string]interface{}{
+		"target": "192.168.1.200:8080",
+		"name":   "Remote-Office-PC",
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/peers/add", bytes.NewReader(addBody))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from POST /api/peers/add, got %d", rec.Code)
+	}
+
+	// 4. GET /api/peers
+	req = httptest.NewRequest(http.MethodGet, "/api/peers", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from GET /api/peers, got %d", rec.Code)
+	}
+	var peersResp struct {
+		Peers []UnifiedPeer `json:"peers"`
+		Total int           `json:"total"`
+	}
+	_ = json.NewDecoder(rec.Body).Decode(&peersResp)
+	if peersResp.Total != 1 {
+		t.Fatalf("expected 1 peer, got %d", peersResp.Total)
+	}
+	p := peersResp.Peers[0]
+	if p.Name != "Remote-Office-PC" {
+		t.Fatalf("expected Remote-Office-PC, got %s", p.Name)
+	}
+
+	// 5. POST /api/peers/map
+	tr := true
+	mapBody, _ := json.Marshal(map[string]interface{}{
+		"peer_id":       p.ID,
+		"play_audio":    tr,
+		"execute_mouse": tr,
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/peers/map", bytes.NewReader(mapBody))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from POST /api/peers/map, got %d", rec.Code)
+	}
+}
