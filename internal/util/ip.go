@@ -13,11 +13,11 @@ var virtualKeywords = []string{
 	"bluetooth", "npcap", "teredo", "cni", "flannel", "veth",
 }
 
-// IPInfo contains IP address and its interface name.
+// IPInfo contains IP address and its interface name with JSON tags.
 type IPInfo struct {
-	IP        string
-	IfaceName string
-	IsVirtual bool
+	IP        string `json:"ip"`
+	IfaceName string `json:"name"`
+	IsVirtual bool   `json:"is_virtual"`
 }
 
 // GetOutboundIP uses OS routing table resolution to find the true primary LAN IP
@@ -96,7 +96,6 @@ func GetAllIPs() []IPInfo {
 }
 
 // GetPrimaryIP selects the best LAN IP address for external device access.
-// It prioritizes OS routing detection, followed by non-virtual physical interfaces.
 func GetPrimaryIP(userSpecifiedIP string) string {
 	if userSpecifiedIP != "" {
 		return userSpecifiedIP
@@ -111,7 +110,6 @@ func GetPrimaryIP(userSpecifiedIP string) string {
 	all := GetAllIPs()
 	for _, info := range all {
 		if !info.IsVirtual {
-			// Prioritize common local subnet
 			if strings.HasPrefix(info.IP, "192.168.") || strings.HasPrefix(info.IP, "10.") || strings.HasPrefix(info.IP, "172.") {
 				return info.IP
 			}
@@ -131,12 +129,34 @@ func PrintNetworkInfo(primaryIP string, port int) {
 	all := GetAllIPs()
 	var others []string
 	for _, info := range all {
-		if info.IP != primaryIP && !info.IsVirtual {
-			others = append(others, fmt.Sprintf("%s (%s)", info.IP, info.IfaceName))
+		if info.IP != primaryIP {
+			tag := ""
+			if info.IsVirtual {
+				tag = " [虚拟]"
+			}
+			others = append(others, fmt.Sprintf("%s (%s%s)", info.IP, info.IfaceName, tag))
 		}
 	}
 
 	if len(others) > 0 {
-		fmt.Printf("├─ 其他可选物理网卡: %s\n", strings.Join(others, ", "))
+		fmt.Printf("├─ 其他可选网卡: %s\n", strings.Join(others, ", "))
 	}
+}
+
+// PrintAllInterfaces lists all interfaces with index numbers for user selection.
+func PrintAllInterfaces() {
+	all := GetAllIPs()
+	fmt.Println("==================================================================")
+	fmt.Println("本机检测到的可用网络接口列表：")
+	fmt.Println("------------------------------------------------------------------")
+	for i, info := range all {
+		typeTag := "[物理网卡/推荐]"
+		if info.IsVirtual {
+			typeTag = "[虚拟网卡/虚拟机]"
+		}
+		fmt.Printf("[%d] %-15s %-25s %s\n", i, info.IP, info.IfaceName, typeTag)
+	}
+	fmt.Println("------------------------------------------------------------------")
+	fmt.Println("可以通过 -ip 参数指定使用某一个 IP, 例如: any_device -ip 192.168.1.100")
+	fmt.Println("==================================================================")
 }

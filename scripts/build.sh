@@ -5,6 +5,7 @@ mkdir -p bin
 
 echo ">>> 正在编译 macOS (arm64)..."
 go build -ldflags "-s -w" -o bin/any_device_darwin_arm64 main.go
+codesign -s - -f bin/any_device_darwin_arm64 >/dev/null 2>&1 || true
 
 if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
     echo ">>> 正在交叉编译 Windows (x86_64)..."

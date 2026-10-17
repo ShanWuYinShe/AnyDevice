@@ -24,12 +24,18 @@ func main() {
 	customIP := flag.String("ip", "", "Manually specify primary LAN IP (useful when multiple virtual NICs exist)")
 	deviceIdx := flag.Int("device", -1, "Select specific audio device index (use -list to view)")
 	listDevices := flag.Bool("list", false, "List all available audio devices and exit")
+	listNics := flag.Bool("list-nics", false, "List all network interfaces and IP addresses and exit")
 	noQR := flag.Bool("no-qr", false, "Disable printing QR code to the terminal")
 	noUI := flag.Bool("no-ui", false, "Run in headless mode without launching native desktop window")
 	flag.Parse()
 
 	if *listDevices {
 		printDeviceList()
+		return
+	}
+
+	if *listNics {
+		util.PrintAllInterfaces()
 		return
 	}
 
@@ -93,7 +99,7 @@ func main() {
 	}
 
 	// 5. Start HTTP & WebSocket Server in background
-	srv := server.NewServer(*port, primaryURL, hub, audioEngine, mouseEngine)
+	srv := server.NewServer(*port, primaryIP, hub, audioEngine, mouseEngine)
 	go func() {
 		if err := srv.Start(); err != nil {
 			fmt.Printf("[Fatal] HTTP server error: %v\n", err)

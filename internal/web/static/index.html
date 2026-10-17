@@ -494,12 +494,24 @@
             </div>
         </div>
 
-        <!-- LAN Connect Card with QR Code -->
+        <!-- LAN Connect Card with QR Code & Network Card Selector -->
         <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border); border-radius: 14px; padding: 12px; margin-bottom: 14px;">
             <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
                 <span style="font-size: 0.75rem; font-weight: 600; color: var(--text-muted);">📱 扫码连接此设备</span>
                 <span id="qrToggleBtn" style="font-size: 0.72rem; color: var(--secondary); cursor: pointer; user-select: none;">[展开/收起]</span>
             </div>
+
+            <!-- Network Interface Dropdown Selector -->
+            <div style="margin-bottom: 10px;">
+                <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center;">
+                    <span>🌐 广播/连接网卡 (点此自由切换):</span>
+                    <span id="nicSwitchTip" style="color: var(--primary); font-size: 0.68rem; display: none; font-weight: 700;">✓ 已切换</span>
+                </div>
+                <select id="nicSelect" style="width: 100%; background: #0f172a; border: 1px solid rgba(255, 255, 255, 0.15); color: var(--text-main); border-radius: 8px; padding: 7px 10px; font-size: 0.75rem; outline: none; cursor: pointer;">
+                    <option value="">正在检测可用网卡列表...</option>
+                </select>
+            </div>
+
             <div id="qrBox" style="display: flex; align-items: center; gap: 12px; background: rgba(0, 0, 0, 0.35); padding: 10px; border-radius: 10px;">
                 <img id="qrImg" src="/api/qrcode" alt="QR" width="84" height="84" style="border-radius: 6px; background: white; padding: 3px; flex-shrink: 0;">
                 <div style="flex: 1; font-size: 0.72rem; color: var(--text-muted); display: flex; flex-direction: column; gap: 4px;">
@@ -1048,6 +1060,9 @@
         const qrToggleBtn = document.getElementById('qrToggleBtn');
         const qrBox = document.getElementById('qrBox');
         const lanUrlDisplay = document.getElementById('lanUrlDisplay');
+        const nicSelect = document.getElementById('nicSelect');
+        const nicSwitchTip = document.getElementById('nicSwitchTip');
+        const qrImg = document.getElementById('qrImg');
 
         if (qrToggleBtn && qrBox) {
             qrToggleBtn.addEventListener('click', () => {
@@ -1055,13 +1070,64 @@
             });
         }
 
+        async function loadNetworkInterfaces() {
+            if (!nicSelect) return;
+            try {
+                const res = await fetch('/api/interfaces');
+                if (!res.ok) return;
+                const data = await res.json();
+                nicSelect.innerHTML = '';
+
+                data.interfaces.forEach(iface => {
+                    const opt = document.createElement('option');
+                    opt.value = iface.ip;
+                    const typeLabel = iface.is_virtual ? '⚠️ 虚拟' : '🌐 物理';
+                    opt.innerText = `${typeLabel} · ${iface.name} (${iface.ip})`;
+                    if (iface.ip === data.current_ip) {
+                        opt.selected = true;
+                    }
+                    nicSelect.appendChild(opt);
+                });
+
+                if (lanUrlDisplay && data.current_url) {
+                    lanUrlDisplay.innerText = data.current_url;
+                }
+            } catch (err) {
+                console.log('Failed to load network interfaces:', err);
+            }
+        }
+
+        if (nicSelect) {
+            nicSelect.addEventListener('change', async (e) => {
+                const targetIp = e.target.value;
+                if (!targetIp) return;
+
+                try {
+                    const res = await fetch(`/api/interfaces/select?ip=${encodeURIComponent(targetIp)}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (lanUrlDisplay) lanUrlDisplay.innerText = data.current_url;
+                        if (qrImg) qrImg.src = `/api/qrcode?t=${Date.now()}`;
+                        if (nicSwitchTip) {
+                            nicSwitchTip.style.display = 'inline';
+                            setTimeout(() => { nicSwitchTip.style.display = 'none'; }, 3000);
+                        }
+                    }
+                } catch (err) {
+                    console.error('Failed to switch network card:', err);
+                }
+            });
+        }
+
+        loadNetworkInterfaces();
+
         async function fetchStatus() {
             try {
                 const res = await fetch('/api/status');
                 if (res.ok) {
                     const data = await res.json();
                     clientStatus.innerText = `在线设备: ${data.clients} 台`;
-                    if (data.primary_url && lanUrlDisplay) {
+                    if (data.primary_url && lanUrlDisplay && (!nicSelect || !nicSelect.value)) {
                         lanUrlDisplay.innerText = data.primary_url;
                     }
                 }
