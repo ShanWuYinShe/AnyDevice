@@ -111,8 +111,18 @@ let ws = null;
 let reconnectTimer = null;
 
 export function connectWebSocket() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(proto + '//' + location.host + '/ws');
+  // 浏览器访问：同源相对地址；Wails 桌面窗口（location.host 为空）：
+  // 用 /api/self 返回的局域网绝对地址直连服务端口
+  let wsBase;
+  if (location.host) {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    wsBase = proto + '//' + location.host;
+  } else if (selfState.data && selfState.data.primary_url) {
+    wsBase = selfState.data.primary_url.replace(/^http/, 'ws');
+  } else {
+    wsBase = 'ws://127.0.0.1:8080';
+  }
+  ws = new WebSocket(wsBase + '/ws');
   ws.binaryType = 'arraybuffer';
 
   ws.onopen = () => {

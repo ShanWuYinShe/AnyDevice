@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"runtime"
 	"syscall"
-	"time"
 
 	"any_device/internal/audio"
 	"any_device/internal/keyboard"
@@ -158,38 +157,12 @@ func main() {
 
 	// 6. Desktop Window vs Headless Mode
 	if !*noUI {
+		// 桌面窗口：默认（-tags wails）为 Wails 原生窗口（WebView2/WebKit，
+		// 无控制台黑窗、无浏览器启动器竞态，关窗即安全退出）；
+		// 未启用 wails tag 的构建回退为浏览器 --app 独立窗口。
+		ui.SetClientCounter(hub.ClientCount)
 		fmt.Println("🖥️  正在打开桌面原生独立应用窗口...")
-		windowClosed := ui.OpenNativeWindow("AnyDevice - 跨端双向设备映射中心", localURL, 1020, 680)
-
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-		shutdown := make(chan struct{})
-
-		// 窗口进程退出 ≠ 用户关窗：新版 Chrome/Edge 的启动器进程会把真实窗口
-		// 派生出去后立即退出，或复用已有实例后返回。此前 main 在命令返回后
-		// 直接退出服务，导致“第一次打开白屏、第二次才能用”。
-		// 现在服务不再依赖窗口进程存活；窗口进程退出后按页面连接去留决定
-		// 是否按“关窗即退”退出（详见注释）。
-		go func() {
-			if windowClosed != nil {
-				<-windowClosed
-				deadline := time.Now().Add(5 * time.Second)
-				for time.Now().Before(deadline) {
-					if hub.ClientCount() > 0 {
-						fmt.Println("💡 窗口进程已退出，但页面连接仍在线，服务保持运行（按 Ctrl+C 退出）")
-						return
-					}
-					time.Sleep(300 * time.Millisecond)
-				}
-				fmt.Println("\n窗口已关闭，正在停止服务...")
-				close(shutdown)
-			}
-		}()
-
-		select {
-		case <-sigChan:
-		case <-shutdown:
-		}
+		ui.RunDesktop(srv.SetupRoutes(), localURL, "AnyDevice - 跨端双向设备映射中心", 1020, 680)
 	} else {
 		fmt.Printf("\n💡 无窗口模式运行中。按 Ctrl+C 退出程序...\n\n")
 		sigChan := make(chan os.Signal, 1)

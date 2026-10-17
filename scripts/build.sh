@@ -10,16 +10,20 @@ bun run check
 bun run build
 cd ..
 
-mkdir -p bin
-
-echo ">>> 正在编译 macOS (arm64)..."
-go build -ldflags "-s -w" -o bin/any_device_darwin_arm64 main.go
+# Wails 原生窗口版（默认桌面形态；Windows 版无控制台黑窗）
+echo ">>> 正在编译 macOS Wails 桌面版 (arm64)..."
+go build -tags wails -ldflags "-s -w" -o bin/any_device_darwin_arm64 main.go
 codesign -s - -f bin/any_device_darwin_arm64 >/dev/null 2>&1 || true
 
+# Windows Wails 版（交叉编译：Wails 的 Windows 前端为纯 Go，音频包走 mingw cgo）
 if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
-    echo ">>> 正在交叉编译 Windows (x86_64)..."
+    echo ">>> 正在交叉编译 Windows Wails 桌面版 (x86_64, 无控制台窗口)..."
     CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc GOOS=windows GOARCH=amd64 \
-        go build -ldflags "-s -w" -o bin/any_device_windows_amd64.exe main.go
+        go build -tags wails -ldflags "-s -w -H=windowsgui" -o bin/any_device_windows_amd64.exe main.go
+    # Portable 回退版（浏览器 --app 独立窗口壳，控制台可见便于排查）
+    echo ">>> 正在交叉编译 Windows Portable 版 (浏览器窗口回退)..."
+    CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc GOOS=windows GOARCH=amd64 \
+        go build -ldflags "-s -w" -o bin/any_device_windows_portable.exe main.go
 fi
 
 echo ">>> 编译完成！产物位于 bin/ 目录："

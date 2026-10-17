@@ -148,7 +148,13 @@ var (
 
 // kbHookProc 低级键盘钩子回调：必须在数毫秒内返回，
 // 因此只做注入过滤 + 非阻塞投递，处理逻辑在消费 goroutine。
-func kbHookProc(code int32, wParam uintptr, lParam uintptr) uintptr {
+func kbHookProc(code int32, wParam uintptr, lParam uintptr) (rc uintptr) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("[键盘捕获] 钩子回调异常: %v\n", r)
+			rc = 0
+		}
+	}()
 	if code >= 0 {
 		kb := (*kbdllhookstruct)(unsafe.Pointer(lParam))
 		// 过滤本应用（或其它程序）注入的按键，防止捕获/注入无限回环
@@ -191,8 +197,20 @@ func kbHookProc(code int32, wParam uintptr, lParam uintptr) uintptr {
 }
 
 // runEventCapture 以 WH_KEYBOARD_LL 低级钩子事件驱动捕获键盘。
-// Windows 下钩子安装基本必然成功；返回 false 时调用方回退轮询。
+// 系统 API 解析失败（个别精简/受限系统缺 user32 导出）时打印明确错误
+// 并回退轮询模式；钩子全程 recover 防护，杜绝异常导致进程崩溃。
 func runEventCapture(ctx context.Context, emit func(KeyEvent)) bool {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("[键盘捕获] 事件钩子异常退出，已回退轮询模式: %v\n", r)
+		}
+	}()
+	for _, p := range []*syscall.LazyProc{procSetWindowsHooksExW, procUnhookWindowsHookEx, procCallNextHookEx, procGetMessageW, procPostThreadMessageW, procGetModuleHandleW, procGetCurrentThreadId} {
+		if err := p.Find(); err != nil {
+			fmt.Printf("[键盘捕获] 系统 API 不可用 (%v)，回退轮询模式\n", err)
+			return false
+		}
+	}
 	events := make(chan KeyEvent, 256)
 	kbEventCh = events
 	installed := make(chan bool, 1)

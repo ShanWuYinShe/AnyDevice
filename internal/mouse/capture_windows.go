@@ -4,6 +4,7 @@ package mouse
 
 import (
 	"context"
+	"fmt"
 	"runtime"
 	"syscall"
 	"time"
@@ -86,7 +87,13 @@ var (
 )
 
 // msHookProc 低级鼠标钩子回调：只做注入过滤 + 非阻塞投递。
-func msHookProc(code int32, wParam uintptr, lParam uintptr) uintptr {
+func msHookProc(code int32, wParam uintptr, lParam uintptr) (rc uintptr) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("[鼠标捕获] 钩子回调异常: %v\n", r)
+			rc = 0
+		}
+	}()
 	if code >= 0 {
 		ms := (*msllhookstruct)(unsafe.Pointer(lParam))
 		// 过滤注入事件，防止捕获/注入无限回环
@@ -162,7 +169,19 @@ func getCursor() (int, int, bool, bool, bool) {
 
 // runEventCapture 以 WH_MOUSE_LL 低级钩子事件驱动捕获鼠标：
 // 移动合并到 ~60Hz 发送，按下/抬起/滚轮即时发送（过滤注入事件防回环）。
+// 系统 API 解析失败时回退轮询模式；钩子全程 recover 防护。
 func runEventCapture(ctx context.Context, emit func(MouseEvent)) bool {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("[鼠标捕获] 事件钩子异常退出，已回退轮询模式: %v\n", r)
+		}
+	}()
+	for _, p := range []*syscall.LazyProc{procSetWindowsHooksExW, procUnhookWindowsHookEx, procCallNextHookEx, procGetMessageW, procPostThreadMessageW, procGetModuleHandleW, procGetCurrentThreadId} {
+		if err := p.Find(); err != nil {
+			fmt.Printf("[鼠标捕获] 系统 API 不可用 (%v)，回退轮询模式\n", err)
+			return false
+		}
+	}
 	events := make(chan MouseEvent, 512)
 	msEventCh = events
 	installed := make(chan bool, 1)
