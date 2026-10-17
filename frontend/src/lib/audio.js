@@ -1,4 +1,7 @@
-// Web Audio 播放器：接收服务端 PCM（16bit 交错立体声 48kHz）并调度播放
+// Web Audio 播放器：接收服务端 PCM（16bit 交错立体声 48kHz）并调度播放。
+// 两台机器的音频时钟必然存在微小偏差（晶振漂移 + 网络抖动），若放任
+// 播放位置与到达速率偏离，会周期性触发硬重置，听感为咔哒/杂音。
+// 策略：小偏差用 ±2.5% 播放速率平滑追赶；大偏差（积压/断流）才整体重置。
 let audioCtx = null;
 let gainNode = null;
 let nextAudioTime = 0;
@@ -31,13 +34,25 @@ export function playPCM(arrayBuffer) {
   }
 
   const now = audioCtx.currentTime;
-  if (nextAudioTime < now || nextAudioTime > now + 0.3) {
+  const drift = nextAudioTime - now;
+  let rate = 1.0;
+
+  if (nextAudioTime < now - 0.25 || drift > 0.35) {
+    // 断流后重新起步 / 积压过多：丢弃偏差整体对齐（伴随一次可感知的跳变）
     nextAudioTime = now + 0.05;
+  } else if (drift < -0.025) {
+    // 播放位置落后 25ms 以上：轻微加速追赶
+    rate = 1.025;
+  } else if (drift > 0.025) {
+    // 播放位置领先：轻微减速
+    rate = 0.975;
   }
 
   const source = audioCtx.createBufferSource();
   source.buffer = audioBuffer;
+  source.playbackRate.value = rate;
   source.connect(gainNode);
   source.start(nextAudioTime);
-  nextAudioTime += audioBuffer.duration;
+  // 追赶/减速会影响实际消耗时长，按速率折算后续调度位置
+  nextAudioTime += audioBuffer.duration / rate;
 }

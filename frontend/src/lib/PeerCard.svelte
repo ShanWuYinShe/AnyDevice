@@ -30,14 +30,17 @@
   function onToggleSystemAudio() {
     primeAudio();
     const next = !sysAudioMapped;
+    // 开启时带上设备名：若对端是占位测试音（未装虚拟声卡）用户能立即识别
+    const dev = provides.audio_device ? '（' + provides.audio_device + '）' : '';
     toggleMapping(peer, 'play_system_audio', next,
-      '已开启播放对端系统声音 🔊', '已停止播放系统声音 🔇');
+      '已开启播放对端系统声音 🔊 ' + dev, '已停止播放系统声音 🔇');
   }
   function onToggleMicAudio() {
     primeAudio();
     const next = !micAudioMapped;
+    const dev = provides.mic_device ? '（' + provides.mic_device + '）' : '';
     toggleMapping(peer, 'play_mic_audio', next,
-      '已开启收听对端麦克风 🎙️', '已停止收听麦克风 🔇');
+      '已开启收听对端麦克风 🎙️ ' + dev, '已停止收听麦克风 🔇');
   }
   function onToggleMouse() {
     const next = !mouseMapped;

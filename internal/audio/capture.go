@@ -317,11 +317,16 @@ func (e *Engine) startTestTone() {
 					continue
 				}
 				for i := 0; i < framesPerChunk; i++ {
+					// 占位测试音使用「每 1.5 秒一短哔（660Hz，260ms）」的模式：
+					// 与真实声音/环境噪声截然不同，一听即知是占位信号，
+					// 避免连续双频正弦被误认为电流声或杂音。
 					t := float64(sampleIndex) / float64(SampleRate)
-					amp := 0.15 * (0.8 + 0.2*math.Sin(2*math.Pi*0.5*t))
-					sample1 := math.Sin(2 * math.Pi * 440 * t)
-					sample2 := 0.5 * math.Sin(2*math.Pi*880*t)
-					val := int16((sample1 + sample2) * amp * 32767 / 1.5)
+					phase := math.Mod(t, 1.5)
+					var val int16
+					if phase < 0.26 {
+						amp := 0.22 * math.Min(1.0, phase/0.02) * math.Min(1.0, (0.26-phase)/0.02)
+						val = int16(math.Sin(2*math.Pi*660*t) * amp * 32767)
+					}
 
 					offset := i * FrameSize
 					// Left channel (Little Endian)
