@@ -146,6 +146,21 @@
   </div>
 </main>
 
+<!-- 页脚：构建版本与日志路径（确认运行的是哪个版本、日志去哪找） -->
+<footer style="padding: 14px 20px 22px; text-align: center; font-size: 0.72rem; color: var(--text-sub); border-top: 1px solid var(--border); margin-top: 8px;">
+  <div>
+    构建: {selfState.data && selfState.data.build_time ? selfState.data.build_time : 'unknown（旧版本）'}
+    {#if selfState.data && selfState.data.build_time && selfState.data.build_time !== 'dev'}
+      ✓ 最新版
+    {/if}
+  </div>
+  {#if selfState.data && selfState.data.log_path}
+    <div style="margin-top: 4px; word-break: break-all;">
+      日志文件: <span style="color: #60a5fa;">{selfState.data.log_path}</span>
+    </div>
+  {/if}
+</footer>
+
 <!-- 弹窗：本机共享功能设置 -->
 <Modal open={uiState.modal === 'self'} title="⚙️ 本机功能共享设置" onClose={closeModal}>
   <p style="font-size: 0.82rem; color: var(--text-muted); line-height: 1.4;">

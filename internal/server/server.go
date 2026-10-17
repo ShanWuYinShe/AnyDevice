@@ -444,6 +444,8 @@ func (s *Server) SetupRoutes() http.Handler {
 			"system_audio_device": sysDev,
 			"mic_device":          micDev,
 			"audio_device":        sysDev,
+			"build_time":          util.BuildTime,
+			"log_path":            util.LogFilePath(),
 		}
 		json.NewEncoder(w).Encode(resp)
 	})
