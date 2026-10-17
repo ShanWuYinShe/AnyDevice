@@ -11,9 +11,13 @@ import (
 	webview "github.com/webview/webview_go"
 )
 
-// OpenNativeWindow opens a dedicated native desktop window.
-func OpenNativeWindow(title, url string, width, height int) {
-	// First check if Chrome or Edge exists in App mode (for fast standalone window)
+// OpenNativeWindow 打开独立桌面应用窗口并阻塞到窗口关闭（macOS 专属语义）：
+//   - 优先 Chrome --app 独立 profile 模式，cmd.Run 阻塞到窗口关闭；
+//   - 回退 webview_go（WKWebView），其 Run 必须占用主线程，无法后台化。
+//
+// 返回 nil 通道表示“阻塞式关窗语义”：调用方只需等待系统信号即可，
+// 关闭窗口后本函数返回、应用自然退出，不存在 Windows 的启动器进程问题。
+func OpenNativeWindow(title, url string, width, height int) <-chan struct{} {
 	browserPaths := []string{
 		"/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
 		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -29,7 +33,7 @@ func OpenNativeWindow(title, url string, width, height int) {
 				"--no-first-run",
 			)
 			if err := cmd.Run(); err == nil {
-				return
+				return nil
 			}
 		}
 	}
@@ -41,4 +45,5 @@ func OpenNativeWindow(title, url string, width, height int) {
 	w.SetSize(width, height, webview.HintNone)
 	w.Navigate(url)
 	w.Run()
+	return nil
 }
