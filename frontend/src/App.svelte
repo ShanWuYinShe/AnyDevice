@@ -3,7 +3,7 @@
   import {
     selfState, peerState, uiState, targetSubs,
     openModal, closeModal, startPolling, sendSubscriptions,
-    renameSelf, switchNic, addPeer, saveSelfSettings, showToast,
+    fetchPeers, renameSelf, switchNic, addPeer, saveSelfSettings, showToast,
   } from './lib/state.svelte.js';
   import PeerCard from './lib/PeerCard.svelte';
   import Modal from './lib/Modal.svelte';
