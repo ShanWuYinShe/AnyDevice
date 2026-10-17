@@ -12,10 +12,11 @@ import (
 	"any_device/internal/audio"
 	"any_device/internal/mouse"
 	"any_device/internal/server"
+	"any_device/internal/ui"
 	"any_device/internal/util"
 )
 
-const Version = "1.1.0"
+const Version = "1.2.0"
 
 func main() {
 	port := flag.Int("port", 8080, "Web & WebSocket server port")
@@ -24,6 +25,7 @@ func main() {
 	deviceIdx := flag.Int("device", -1, "Select specific audio device index (use -list to view)")
 	listDevices := flag.Bool("list", false, "List all available audio devices and exit")
 	noQR := flag.Bool("no-qr", false, "Disable printing QR code to the terminal")
+	noUI := flag.Bool("no-ui", false, "Run in headless mode without launching native desktop window")
 	flag.Parse()
 
 	if *listDevices {
@@ -81,7 +83,7 @@ func main() {
 	fmt.Printf("├─ 操作系统: %s (%s)\n", runtime.GOOS, runtime.GOARCH)
 	fmt.Printf("├─ 音频设备: %s\n", audioEngine.DeviceName())
 	fmt.Printf("├─ 鼠标映射: 双向支持 (正向光标监视 + 反向触控板遥控)\n")
-	fmt.Printf("├─ 本地访问: %s\n", localURL)
+	fmt.Printf("├─ 本地窗口: %s\n", localURL)
 	fmt.Printf("└─ 局域网地址: %s\n", primaryURL)
 	util.PrintNetworkInfo(primaryIP, *port)
 
@@ -90,11 +92,8 @@ func main() {
 		util.PrintQRCode(primaryURL)
 	}
 
-	fmt.Printf("\n💡 提示: 访问网页后，可以在界面上按需勾选开启「🎧 音频」或「🖱️ 鼠标」映射。\n")
-	fmt.Printf("按 Ctrl+C 退出程序...\n\n")
-
-	// 5. Start HTTP & WebSocket Server
-	srv := server.NewServer(*port, hub, audioEngine, mouseEngine)
+	// 5. Start HTTP & WebSocket Server in background
+	srv := server.NewServer(*port, primaryURL, hub, audioEngine, mouseEngine)
 	go func() {
 		if err := srv.Start(); err != nil {
 			fmt.Printf("[Fatal] HTTP server error: %v\n", err)
@@ -102,10 +101,16 @@ func main() {
 		}
 	}()
 
-	// 6. Graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	<-sigChan
+	// 6. Desktop Window vs Headless Mode
+	if !*noUI {
+		fmt.Println("🖥️  正在打开桌面原生独立应用窗口...")
+		ui.OpenNativeWindow("AnyDevice - 跨端双向设备映射中心", localURL, 480, 840)
+	} else {
+		fmt.Printf("\n💡 无窗口模式运行中。按 Ctrl+C 退出程序...\n\n")
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+		<-sigChan
+	}
 
 	fmt.Println("\n正在停止 AnyDevice 服务...")
 	audioEngine.Stop()

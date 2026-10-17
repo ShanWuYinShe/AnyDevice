@@ -11,6 +11,7 @@ import (
 	"any_device/internal/web"
 
 	"github.com/gorilla/websocket"
+	"rsc.io/qr"
 )
 
 var upgrader = websocket.Upgrader{
@@ -24,14 +25,16 @@ var upgrader = websocket.Upgrader{
 
 type Server struct {
 	port        int
+	primaryURL  string
 	hub         *Hub
 	audioEngine *audio.Engine
 	mouseEngine *mouse.Engine
 }
 
-func NewServer(port int, hub *Hub, audioEngine *audio.Engine, mouseEngine *mouse.Engine) *Server {
+func NewServer(port int, primaryURL string, hub *Hub, audioEngine *audio.Engine, mouseEngine *mouse.Engine) *Server {
 	return &Server{
 		port:        port,
+		primaryURL:  primaryURL,
 		hub:         hub,
 		audioEngine: audioEngine,
 		mouseEngine: mouseEngine,
@@ -65,6 +68,18 @@ func (s *Server) Start() error {
 		go client.readPump()
 	})
 
+	// QR Code PNG endpoint for native desktop UI and browser rendering
+	mux.HandleFunc("/api/qrcode", func(w http.ResponseWriter, r *http.Request) {
+		code, err := qr.Encode(s.primaryURL, qr.M)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Write(code.PNG())
+	})
+
 	// Status API
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -74,6 +89,7 @@ func (s *Server) Start() error {
 			"sample_rate":  audio.SampleRate,
 			"channels":     audio.Channels,
 			"device_name":  s.audioEngine.DeviceName(),
+			"primary_url":  s.primaryURL,
 			"mouse_active": true,
 		}
 		json.NewEncoder(w).Encode(status)
