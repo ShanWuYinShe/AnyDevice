@@ -377,3 +377,98 @@ func TestClaimNodeIdentity(t *testing.T) {
 		t.Fatalf("expected inbound entry renamed and kept online, got %+v", p)
 	}
 }
+
+// TestClaimNodeIdentityBeforeBeaconMultiNIC 跨网卡场景：入站先建且上报身份，后续 beacon 从另一网卡 IP 到达，必须去重
+func TestClaimNodeIdentityBeforeBeaconMultiNIC(t *testing.T) {
+	s := NewService(8080, "192.168.1.100", DeviceCapabilities{})
+
+	// 1. 对端从网卡2 (10.0.0.50) 建立入站连接
+	s.RegisterInboundClient("client-1", "10.0.0.50:5000", "Mozilla/5.0")
+	// 2. 对端立即上报其 nodeID "nodeA"
+	s.ClaimNodeIdentity("10.0.0.50", "nodeA", "客厅 Mac mini")
+
+	// 3. 稍后，对端从网卡1 (192.168.1.50) 广播的 beacon 到达
+	s.upsertBeacon(Beacon{ID: "nodeA", Name: "客厅 Mac mini", OS: "darwin", IP: "192.168.1.50", Port: 8080}, "192.168.1.50")
+
+	// 必须去重为 1 个设备！
+	peers := s.GetPeers()
+	if len(peers) != 1 {
+		t.Fatalf("expected 1 deduped peer, got %d: %+v", len(peers), peers)
+	}
+	if peers[0].Name != "客厅 Mac mini" {
+		t.Fatalf("expected display name preserved, got %s", peers[0].Name)
+	}
+}
+
+// TestClaimNodeIdentityAfterBeaconMultiNIC 跨网卡场景：beacon 先到达，后续入站从另一网卡 IP 建立并上报身份
+func TestClaimNodeIdentityAfterBeaconMultiNIC(t *testing.T) {
+	s := NewService(8080, "192.168.1.100", DeviceCapabilities{})
+
+	// 1. 对端从网卡1 (192.168.1.50) 广播 beacon
+	s.upsertBeacon(Beacon{ID: "nodeA", Name: "出厂名", OS: "darwin", IP: "192.168.1.50", Port: 8080}, "192.168.1.50")
+	// 2. 对端从网卡2 (10.0.0.50) 建立入站连接
+	s.RegisterInboundClient("client-1", "10.0.0.50:5000", "Mozilla/5.0")
+	// 3. 对端握手上报其 nodeID "nodeA"
+	s.ClaimNodeIdentity("10.0.0.50", "nodeA", "客厅 Mac mini")
+
+	// 必须去重为 1 个设备！
+	peers := s.GetPeers()
+	if len(peers) != 1 {
+		t.Fatalf("expected 1 deduped peer, got %d: %+v", len(peers), peers)
+	}
+	if peers[0].ID != "nodeA" {
+		t.Fatalf("expected canonical nodeA peer, got %+v", peers[0])
+	}
+	if peers[0].Name != "客厅 Mac mini" {
+		t.Fatalf("expected display name updated to claimed name, got %s", peers[0].Name)
+	}
+}
+
+// TestManualPeerAbsorbedByClaimNodeIdentity 手动添加后，对端入站握手上报 nodeID 归并
+func TestManualPeerAbsorbedByClaimNodeIdentity(t *testing.T) {
+	s := NewService(8080, "192.168.1.100", DeviceCapabilities{})
+
+	// 1. 手动添加对端
+	m := s.AddManualPeer("192.168.1.50:8080", "我指定的电脑")
+	if m == nil {
+		t.Fatal("expected manual peer created")
+	}
+
+	// 2. 对端建立入站连接并上报身份
+	s.RegisterInboundClient("client-1", "192.168.1.50:5000", "Mozilla/5.0")
+	s.ClaimNodeIdentity("192.168.1.50", "nodeA", "对端自报的主机名")
+
+	// 必须去重为 1 个设备，且保留手动属性与别名
+	peers := s.GetPeers()
+	if len(peers) != 1 {
+		t.Fatalf("expected 1 deduped peer, got %d: %+v", len(peers), peers)
+	}
+	if !peers[0].IsManual {
+		t.Fatal("expected manual flag preserved")
+	}
+	if peers[0].Alias != "我指定的电脑" {
+		t.Fatalf("expected manual alias preserved, got %s", peers[0].Alias)
+	}
+}
+
+// TestMultiNICReconcileKeepsOnline 跨网卡活跃连接应保持条目在线
+func TestMultiNICReconcileKeepsOnline(t *testing.T) {
+	s := NewService(8080, "192.168.1.100", DeviceCapabilities{})
+
+	// 1. 网卡1 广播 beacon 形成权威条目
+	s.upsertBeacon(Beacon{ID: "nodeA", Name: "Mac", OS: "darwin", IP: "192.168.1.50", Port: 8080}, "192.168.1.50")
+	// 2. 网卡2 (10.0.0.50) 建立入站连接并认领身份
+	s.RegisterInboundClient("client-1", "10.0.0.50:5000", "Mozilla/5.0")
+	s.ClaimNodeIdentity("10.0.0.50", "nodeA", "Mac")
+
+	// 3. 校准在线状态：当前仅 10.0.0.50 上有活跃连接
+	s.ReconcileInbound(map[string]bool{"10.0.0.50": true})
+
+	peers := s.GetPeers()
+	if len(peers) != 1 {
+		t.Fatalf("expected 1 peer, got %d: %+v", len(peers), peers)
+	}
+	if !peers[0].Online {
+		t.Fatal("expected peer kept online by active connection on secondary NIC")
+	}
+}

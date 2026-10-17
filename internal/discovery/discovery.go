@@ -85,18 +85,20 @@ type DiscoveredPeer struct {
 }
 
 type Service struct {
-	id          string
-	name        string
-	port        int
-	currentIP   string
-	provides    DeviceCapabilities
-	peers       map[string]*DiscoveredPeer
-	aliases     map[string]string
-	aliasesByIP map[string]string
-	persist     func(util.NodeConfig)
-	mu          sync.RWMutex
-	cancel      context.CancelFunc
-	onPeerFound func(peer DiscoveredPeer)
+	id             string
+	name           string
+	port           int
+	currentIP      string
+	provides       DeviceCapabilities
+	peers          map[string]*DiscoveredPeer
+	aliases        map[string]string
+	aliasesByIP    map[string]string
+	nodeByIP       map[string]string // IP -> 对端节点 ID（跨网卡场景辅助归并）
+	peerIDByNodeID map[string]string // 节点 ID -> peers 表中的实际键值（兼容既有 ID 策略）
+	persist        func(util.NodeConfig)
+	mu             sync.RWMutex
+	cancel         context.CancelFunc
+	onPeerFound    func(peer DiscoveredPeer)
 }
 
 func GenerateNodeID() string {
@@ -124,14 +126,16 @@ func DefaultNodeName() string {
 
 func NewService(port int, initialIP string, provides DeviceCapabilities) *Service {
 	return &Service{
-		id:          GenerateNodeID(),
-		name:        DefaultNodeName(),
-		port:        port,
-		currentIP:   initialIP,
-		provides:    provides,
-		peers:       make(map[string]*DiscoveredPeer),
-		aliases:     make(map[string]string),
-		aliasesByIP: make(map[string]string),
+		id:             GenerateNodeID(),
+		name:           DefaultNodeName(),
+		port:           port,
+		currentIP:      initialIP,
+		provides:       provides,
+		peers:          make(map[string]*DiscoveredPeer),
+		aliases:        make(map[string]string),
+		aliasesByIP:    make(map[string]string),
+		nodeByIP:       make(map[string]string),
+		peerIDByNodeID: make(map[string]string),
 	}
 }
 
@@ -518,15 +522,27 @@ func (s *Service) upsertBeacon(b Beacon, peerIP string) {
 	peerTarget := fmt.Sprintf("%s:%d", peerIP, b.Port)
 
 	s.mu.Lock()
+	s.nodeByIP[peerIP] = b.ID
+
 	p, exists := s.peers[b.ID]
 	if !exists {
-		// 同 IP 已有其他来源的条目：归并复用，避免同一设备多条目
+		// 1. 检查是否有已知属于该 nodeID 的既有条目（例如先通过其他网卡建立了入站连接并上报了身份）
+		if pid := s.peerIDByNodeID[b.ID]; pid != "" {
+			if existing := s.peers[pid]; existing != nil {
+				p = existing
+				exists = true
+			}
+		}
+	}
+	if !exists {
+		// 2. 同 IP 已有其他来源的条目：归并复用，避免同一设备多条目
 		if old := s.findByIPLocked(peerIP, ""); old != nil {
 			p = old
 			exists = true
 		}
 	}
 	if exists {
+		s.peerIDByNodeID[b.ID] = p.ID
 		// 同 IP 的其他来源档案（更早的手动/入站记录）并入本条目后必须清除，
 		// 否则同一设备会出现 beacon + 入站残留双条目（外部终端 52749 之类的来源）。
 		// 排除自身（p.ID）：归并复用的场景 p 就是那个同 IP 条目，不能误删。
@@ -542,6 +558,16 @@ func (s *Service) upsertBeacon(b Beacon, peerIP string) {
 			}
 			delete(s.peers, other.ID)
 		}
+		// 若之前该节点曾通过别的 IP 建立了入站记录（如入站先到达且上报了身份，后续 beacon 从另一 IP 到达），清除冗余入站条目
+		for id, entry := range s.peers {
+			if id != p.ID && strings.HasPrefix(id, inboundIDPrefix) && s.nodeByIP[entry.IP] == b.ID {
+				if p.Alias == "" && entry.Alias != "" {
+					p.Alias = entry.Alias
+					s.aliases[p.ID] = entry.Alias
+				}
+				delete(s.peers, id)
+			}
+		}
 		p.Name = b.Name
 		p.OS = b.OS
 		p.IP = peerIP
@@ -556,7 +582,7 @@ func (s *Service) upsertBeacon(b Beacon, peerIP string) {
 			p.Source = SourceBeacon
 		}
 		if p.Alias == "" {
-			p.Alias = s.aliasForLocked(b.ID, peerIP)
+			p.Alias = s.aliasForLocked(p.ID, peerIP)
 		}
 	} else {
 		p = &DiscoveredPeer{
@@ -573,6 +599,7 @@ func (s *Service) upsertBeacon(b Beacon, peerIP string) {
 			Alias:    s.aliasForLocked(b.ID, peerIP),
 		}
 		s.peers[b.ID] = p
+		s.peerIDByNodeID[b.ID] = b.ID
 	}
 	snapshot := *p
 	onFound := s.onPeerFound
@@ -588,7 +615,7 @@ func (s *Service) upsertBeacon(b Beacon, peerIP string) {
 //   - beacon 档案与入站档案并存：入站档案是同一设备经连接注册的重复档案，
 //     删除入站档案、别名转移给 beacon 档案（多网卡机器 beacon IP 与连接源 IP
 //     可能不同，按 IP 归并在这种场景会失效，节点 ID 是唯一权威身份）；
-//   - 只有入站档案（beacon 尚未到达）：直接用对端名称更新，ID 等 beacon 到达后归并；
+//   - 只有入站档案（beacon 尚未到达）：用对端名称更新，登记 peerIDByNodeID 等待 beacon 归并；
 //   - 只有 beacon 档案：刷新在线状态（这是一次来自该设备的主动连接）。
 func (s *Service) ClaimNodeIdentity(ip, nodeID, nodeName string) {
 	if nodeID == "" {
@@ -600,10 +627,29 @@ func (s *Service) ClaimNodeIdentity(ip, nodeID, nodeName string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.nodeByIP[ip] = nodeID
+	s.aliasesByIP[ip] = nodeID
+
+	// 查找既有权威档案（可能直接以 nodeID 存在，或通过 peerIDByNodeID 索引）
+	var beacon *DiscoveredPeer
+	if p, ok := s.peers[nodeID]; ok {
+		beacon = p
+	} else if pid := s.peerIDByNodeID[nodeID]; pid != "" {
+		beacon = s.peers[pid]
+	}
+
+	hasBeacon := beacon != nil
+
 	inbound := s.peers[inboundIDPrefix+ip]
-	beacon, hasBeacon := s.peers[nodeID]
+	if inbound == nil {
+		inbound = s.findByIPLocked(ip, "")
+	}
 
 	if hasBeacon && (beacon == inbound || inbound == nil) {
+		s.peerIDByNodeID[nodeID] = beacon.ID
+		if nodeName != "" {
+			beacon.Name = nodeName
+		}
 		beacon.LastSeen = now
 		beacon.Online = true
 		return
@@ -613,8 +659,15 @@ func (s *Service) ClaimNodeIdentity(ip, nodeID, nodeName string) {
 			beacon.Alias = inbound.Alias
 			s.aliases[beacon.ID] = inbound.Alias
 		}
-		s.aliasesByIP[ip] = beacon.ID // 别名索引指向权威档案
+		if inbound.IsManual {
+			beacon.IsManual = true
+			beacon.Source = SourceManual
+		}
 		delete(s.peers, inbound.ID)
+		s.peerIDByNodeID[nodeID] = beacon.ID
+		if nodeName != "" {
+			beacon.Name = nodeName
+		}
 		beacon.LastSeen = now
 		beacon.Online = true
 		return
@@ -623,8 +676,24 @@ func (s *Service) ClaimNodeIdentity(ip, nodeID, nodeName string) {
 		if nodeName != "" {
 			inbound.Name = nodeName
 		}
+		s.peerIDByNodeID[nodeID] = inbound.ID
 		inbound.LastSeen = now
 		inbound.Online = true
+	} else {
+		p := &DiscoveredPeer{
+			ID:       nodeID,
+			Name:     nodeName,
+			OS:       "web",
+			IP:       ip,
+			Port:     s.port,
+			Target:   fmt.Sprintf("%s:%d", ip, s.port),
+			LastSeen: now,
+			Online:   true,
+			Source:   SourceInbound,
+			Alias:    s.aliasForLocked(nodeID, ip),
+		}
+		s.peers[nodeID] = p
+		s.peerIDByNodeID[nodeID] = nodeID
 	}
 }
 
@@ -688,6 +757,11 @@ func (s *Service) pruneLoop(ctx context.Context) {
 					// If offline for over 60 seconds and not manual, prune it
 					if !p.IsManual && now.Sub(p.LastSeen) > 60*time.Second {
 						delete(s.peers, id)
+						for nid, pid := range s.peerIDByNodeID {
+							if pid == id {
+								delete(s.peerIDByNodeID, nid)
+							}
+						}
 					}
 				}
 			}
@@ -714,7 +788,29 @@ func (s *Service) AddManualPeer(target string, name string) *DiscoveredPeer {
 		return nil
 	}
 
-	// 同 IP 已有档案（自动发现/入站连接/旧手动记录）：复用为本次手动条目，
+	// 1. 如果该 IP 之前已探测为某个 nodeID，且该设备档案已存在，复用为手动条目
+	if nodeID := s.nodeByIP[ip]; nodeID != "" {
+		if pid := s.peerIDByNodeID[nodeID]; pid != "" {
+			if existing := s.peers[pid]; existing != nil {
+				existing.IsManual = true
+				existing.Source = SourceManual
+				existing.Port = port
+				existing.Target = target
+				existing.LastSeen = time.Now()
+				existing.Online = true
+				if custom := strings.TrimSpace(name); custom != "" {
+					existing.Alias = custom
+					s.aliases[existing.ID] = custom
+					s.aliasesByIP[ip] = custom
+					s.persistLocked()
+				}
+				snapshot := *existing
+				return &snapshot
+			}
+		}
+	}
+
+	// 2. 同 IP 已有档案（自动发现/入站连接/旧手动记录）：复用为本次手动条目，
 	// 用户显式命名的别名覆盖生效——绝不新建第二条
 	if existing := s.findByIPLocked(ip, ""); existing != nil {
 		existing.IsManual = true
@@ -790,7 +886,18 @@ func (s *Service) RegisterInboundClient(id, remoteAddr, userAgent string) *Disco
 	}
 
 	peerID := inboundIDPrefix + ip
-	// 同 IP 已有自动发现/手动添加的条目：它就是同一台设备，只刷新在线状态，
+	// 1. 如果该 IP 之前已探测为某个 nodeID，且该设备档案已存在，刷新并复用
+	if nodeID := s.nodeByIP[ip]; nodeID != "" {
+		if pid := s.peerIDByNodeID[nodeID]; pid != "" {
+			if p := s.peers[pid]; p != nil {
+				p.LastSeen = time.Now()
+				p.Online = true
+				snapshot := *p
+				return &snapshot
+			}
+		}
+	}
+	// 2. 同 IP 已有自动发现/手动添加的条目：它就是同一台设备，只刷新在线状态，
 	// 绝不再建一个 inbound 条目（否则设备列表里同一台机器会出现多条）
 	if existing := s.findByIPLocked(ip, ""); existing != nil {
 		existing.LastSeen = time.Now()
@@ -861,7 +968,17 @@ func (s *Service) ReconcileInbound(liveIPs map[string]bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, p := range s.peers {
-		if !liveIPs[p.IP] {
+		isLive := liveIPs[p.IP]
+		if !isLive {
+			// 多网卡场景：连接可能建立在对端的另一网卡 IP 上
+			for lip := range liveIPs {
+				if s.nodeByIP[lip] != "" && (s.peerIDByNodeID[s.nodeByIP[lip]] == p.ID || s.nodeByIP[lip] == p.ID) {
+					isLive = true
+					break
+				}
+			}
+		}
+		if !isLive {
 			if p.Source == SourceInbound {
 				p.Online = false
 				p.LastSeen = now.Add(-PeerTimeoutSecs * time.Second)
@@ -899,13 +1016,68 @@ func (s *Service) GetPeers() []DiscoveredPeer {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	result := make([]DiscoveredPeer, 0, len(s.peers))
+	rank := func(src PeerSource) int {
+		switch src {
+		case SourceBeacon:
+			return 3
+		case SourceManual:
+			return 2
+		default:
+			return 1
+		}
+	}
+
+	byIP := make(map[string]*DiscoveredPeer, len(s.peers))
+	byNodeID := make(map[string]*DiscoveredPeer, len(s.peers))
+	order := make([]*DiscoveredPeer, 0, len(s.peers))
+
 	for _, p := range s.peers {
 		// Strictly filter out self and local loopback/interface IPs
 		if s.isSelfUnlocked(p.ID, p.IP, p.Port) || util.IsLocalIP(p.IP) || util.IsLocalIP(p.Target) {
 			continue
 		}
-		copied := *p
+
+		nodeID := p.ID
+		if mapped := s.nodeByIP[p.IP]; mapped != "" {
+			nodeID = mapped
+		}
+
+		if existing, ok := byNodeID[nodeID]; ok {
+			if rank(p.Source) > rank(existing.Source) || (rank(p.Source) == rank(existing.Source) && p.Online && !existing.Online) {
+				byNodeID[nodeID] = p
+			}
+			continue
+		}
+
+		if existing, ok := byIP[p.IP]; ok {
+			if rank(p.Source) > rank(existing.Source) || (rank(p.Source) == rank(existing.Source) && p.Online && !existing.Online) {
+				byIP[p.IP] = p
+			}
+			continue
+		}
+
+		byNodeID[nodeID] = p
+		byIP[p.IP] = p
+		order = append(order, p)
+	}
+
+	seen := make(map[string]bool, len(order))
+	result := make([]DiscoveredPeer, 0, len(order))
+	for _, p := range order {
+		nodeID := p.ID
+		if mapped := s.nodeByIP[p.IP]; mapped != "" {
+			nodeID = mapped
+		}
+		best := byNodeID[nodeID]
+		if best == nil {
+			best = byIP[p.IP]
+		}
+		if best == nil || seen[best.ID] {
+			continue
+		}
+		seen[best.ID] = true
+
+		copied := *best
 		// 展示名：本地备注优先，其次对端广播名
 		if copied.Alias != "" {
 			copied.Name = copied.Alias
