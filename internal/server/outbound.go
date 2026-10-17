@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -214,6 +215,14 @@ func (m *OutboundManager) runPeer(ctx context.Context, peer *OutboundPeer, wsURL
 			// Forward remote audio chunk to local Hub so local UI Web Audio hears it
 			m.hub.BroadcastAudio(data)
 		} else if msgType == websocket.TextMessage && recvMouse {
+			var obj map[string]interface{}
+			if err := json.Unmarshal(data, &obj); err == nil {
+				obj["source_peer"] = peer.Target
+				obj["peer_id"] = peer.ID
+				if enriched, err := json.Marshal(obj); err == nil {
+					data = enriched
+				}
+			}
 			// Forward remote mouse event JSON to local Hub so local UI radar tracks it
 			m.hub.BroadcastMouse(data)
 		}
@@ -302,4 +311,57 @@ func (m *OutboundManager) ListPeers() []*OutboundPeer {
 		list = append(list, item)
 	}
 	return list
+}
+
+// UpdateAll updates all active outbound peers.
+func (m *OutboundManager) UpdateAll(receiveAudio, receiveMouse, sendMouse *bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, peer := range m.peers {
+		peer.mu.Lock()
+		if receiveAudio != nil {
+			peer.ReceiveAudio = *receiveAudio
+		}
+		if receiveMouse != nil {
+			peer.ReceiveMouse = *receiveMouse
+		}
+		if sendMouse != nil {
+			peer.SendMouse = *sendMouse
+		}
+		c := peer.conn
+		handshake := map[string]interface{}{
+			"action": "set_mapping",
+			"audio":  peer.ReceiveAudio,
+			"mouse":  peer.ReceiveMouse,
+		}
+		peer.mu.Unlock()
+
+		if c != nil {
+			_ = c.WriteJSON(handshake)
+		}
+	}
+}
+
+// DisconnectAll closes all active outbound peers.
+func (m *OutboundManager) DisconnectAll() {
+	m.mu.Lock()
+	peers := make([]*OutboundPeer, 0, len(m.peers))
+	for _, p := range m.peers {
+		peers = append(peers, p)
+	}
+	m.peers = make(map[string]*OutboundPeer)
+	m.mu.Unlock()
+
+	for _, peer := range peers {
+		peer.mu.Lock()
+		peer.Status = "disconnected"
+		if peer.cancel != nil {
+			peer.cancel()
+		}
+		if peer.conn != nil {
+			peer.conn.Close()
+		}
+		peer.mu.Unlock()
+	}
 }

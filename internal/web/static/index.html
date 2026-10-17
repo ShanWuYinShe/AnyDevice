@@ -489,71 +489,145 @@
             box-shadow: 0 0 10px var(--primary-glow);
         }
 
-        /* Mode Selector Banner */
-        .mode-selector-banner {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
-            margin-bottom: 4px;
-        }
-
-        .mode-card {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid var(--border);
-            border-radius: 14px;
-            padding: 12px 14px;
-            cursor: pointer;
-            transition: all 0.22s ease;
+        /* Multi-Mapping Topology Matrix Banner */
+        .topology-banner {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(59, 130, 246, 0.08));
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 16px;
+            padding: 16px 20px;
             display: flex;
             flex-direction: column;
-            gap: 5px;
-            position: relative;
+            gap: 12px;
+            margin-bottom: 8px;
         }
 
-        .mode-card:hover {
-            border-color: rgba(255, 255, 255, 0.22);
-            background: rgba(255, 255, 255, 0.06);
-        }
-
-        .mode-card.active {
-            border-color: var(--primary);
-            background: rgba(16, 185, 129, 0.1);
-            box-shadow: 0 0 16px rgba(16, 185, 129, 0.15);
-        }
-
-        .mode-header {
+        .topology-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
         }
 
-        .mode-badge {
-            font-size: 0.84rem;
-            font-weight: 700;
+        .topology-title {
+            font-size: 0.95rem;
+            font-weight: 800;
             color: #fff;
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 8px;
         }
 
-        .mode-tag {
-            font-size: 0.68rem;
+        .topology-sub {
+            font-size: 0.74rem;
             color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        .topology-flow {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            align-items: center;
+            gap: 14px;
             background: rgba(0, 0, 0, 0.35);
-            padding: 2px 6px;
-            border-radius: 6px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px 18px;
         }
 
-        .mode-card.active .mode-tag {
-            color: var(--primary);
+        .flow-node {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .flow-node-inbound .flow-icon {
             background: rgba(16, 185, 129, 0.2);
-            font-weight: 700;
+            color: #10b981;
         }
 
-        .mode-desc {
+        .flow-node-outbound .flow-icon {
+            background: rgba(59, 130, 246, 0.2);
+            color: #3b82f6;
+        }
+
+        .flow-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            flex-shrink: 0;
+        }
+
+        .flow-label {
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .flow-val {
             font-size: 0.72rem;
             color: var(--text-muted);
-            line-height: 1.4;
+            font-family: monospace;
+            margin-top: 2px;
+        }
+
+        .flow-arrows {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 1.1rem;
+            color: var(--primary);
+            text-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+        }
+
+        .arrow-pulse {
+            animation: pulseGlow 2s infinite ease-in-out;
+        }
+
+        @keyframes pulseGlow {
+            0%, 100% { opacity: 0.6; transform: scale(0.98); }
+            50% { opacity: 1; transform: scale(1.05); }
+        }
+
+        .batch-bar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            padding-top: 4px;
+        }
+
+        .batch-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            padding: 5px 10px;
+            border-radius: 8px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .batch-btn:hover {
+            border-color: rgba(255, 255, 255, 0.25);
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .batch-danger {
+            border-color: rgba(239, 68, 68, 0.3);
+            color: #f87171;
+            background: rgba(239, 68, 68, 0.08);
+            margin-left: auto;
+        }
+
+        .batch-danger:hover {
+            border-color: #ef4444;
+            background: rgba(239, 68, 68, 0.2);
         }
 
         /* Peer List & Items */
@@ -861,28 +935,50 @@
 
             <!-- TAB 1: OVERVIEW DASHBOARD -->
             <div class="tab-panel active" id="tab-overview">
-                <!-- 1. Mode Selector Banner -->
-                <div class="mode-selector-banner">
-                    <div class="mode-card" data-mode="provider" id="modeCardProvider">
-                        <div class="mode-header">
-                            <span class="mode-badge">📤 把本机映射成别人的虚拟设备</span>
-                            <span class="mode-tag">被映射端 (提供者)</span>
+                <!-- 1. Multi-Mapping Topology Matrix Banner -->
+                <div class="topology-banner">
+                    <div class="topology-header">
+                        <div>
+                            <div class="topology-title">
+                                <span>🌐 全网状多端并发映射拓扑中枢 (Mesh Topology)</span>
+                            </div>
+                            <div class="topology-sub">
+                                支持同时存在多个「被映射端」与多个「映射端」：本机既可将自身设备并发广播给多台对端，也可同时接入多台外部电脑的虚拟设备，无需做单选切换。
+                            </div>
                         </div>
-                        <div class="mode-desc">向手机或其他电脑广播本机的系统声音与物理鼠标，作为对方的外设使用。</div>
                     </div>
-                    <div class="mode-card" data-mode="receiver" id="modeCardReceiver">
-                        <div class="mode-header">
-                            <span class="mode-badge">📥 接收别人的虚拟设备到本机</span>
-                            <span class="mode-tag">映射端 (接收者)</span>
+
+                    <!-- Visual Topology Flow -->
+                    <div class="topology-flow">
+                        <div class="flow-node flow-node-inbound">
+                            <span class="flow-icon">📤</span>
+                            <div>
+                                <div class="flow-label">被映射端 (本机对外广播)</div>
+                                <div class="flow-val" id="flowInboundCount">0 台设备正在使用本机</div>
+                            </div>
                         </div>
-                        <div class="mode-desc">拉取远端电脑的声音从本机扬声器播放，接收对端光标或用本机触控板反向遥控对方。</div>
+                        <div class="flow-arrows">
+                            <span class="arrow-pulse">⇄</span>
+                            <span style="font-size:0.7rem; color:var(--text-muted); font-weight:700;">全链路并发互通</span>
+                            <span class="arrow-pulse">⇄</span>
+                        </div>
+                        <div class="flow-node flow-node-outbound">
+                            <span class="flow-icon">📥</span>
+                            <div>
+                                <div class="flow-label">映射端 (本机接收远端)</div>
+                                <div class="flow-val" id="flowOutboundCount">0 台外部主机正在被本机使用</div>
+                            </div>
+                        </div>
                     </div>
-                    <div class="mode-card active" data-mode="bidirectional" id="modeCardBidi">
-                        <div class="mode-header">
-                            <span class="mode-badge">🔄 双向互通全能协同</span>
-                            <span class="mode-tag">混合模式 (双向)</span>
-                        </div>
-                        <div class="mode-desc">既向外部设备广播本机，也可同时接入多台远端电脑，所有虚拟通道自由组网。</div>
+
+                    <!-- Batch Controls -->
+                    <div class="batch-bar">
+                        <span style="font-size:0.72rem; color:var(--text-muted); font-weight:700;">⚡ 批量通道调度：</span>
+                        <button class="batch-btn" id="batchInboundAudioBtn">🔊 一键切换全部对外声音</button>
+                        <button class="batch-btn" id="batchInboundMouseBtn">🖱️ 一键切换全部对外鼠标</button>
+                        <button class="batch-btn" id="batchOutboundAudioBtn">🎧 一键切换全部接入声音</button>
+                        <button class="batch-btn" id="batchControlBtn">🛡️ 一键禁用对端反向控制</button>
+                        <button class="batch-btn batch-danger" id="batchDisconnectBtn">🔌 一键断开全部连接</button>
                     </div>
                 </div>
 
@@ -893,14 +989,17 @@
                         <div class="card-header">
                             <div class="card-title-group">
                                 <svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
-                                <span class="card-title">谁连接上了我 (连入本机的访客设备)</span>
+                                <span class="card-title">📤 被映射端 · 本机设备对外映射 (多设备并发中)</span>
                             </div>
                             <span id="inboundBadge" style="font-size: 0.72rem; color: var(--primary); font-weight: 700; background: rgba(16, 185, 129, 0.15); padding: 2px 8px; border-radius: 6px;">0 台在线</span>
+                        </div>
+                        <div style="font-size:0.74rem; color:var(--text-muted); margin-bottom:8px;">
+                            本机声音与物理鼠标正并发投递给以下所有设备（支持多台设备同时接入，每台设备通道独立配置）：
                         </div>
                         <div class="peer-list" id="inboundPeerList">
                             <div class="peer-empty">
                                 📡 暂无外部设备连入本机<br>
-                                <span style="font-size: 0.7rem; opacity: 0.7;">手机/平板可扫下方二维码，或局域网电脑直接访问本机 IP 地址即刻接入</span>
+                                <span style="font-size: 0.7rem; opacity: 0.7;">手机/平板/其他电脑可扫下方二维码或输入本机 IP 地址即刻加入映射</span>
                             </div>
                         </div>
                     </div>
@@ -910,23 +1009,26 @@
                         <div class="card-header">
                             <div class="card-title-group">
                                 <svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
-                                <span class="card-title">自己连接上了谁 (本机连出的远端主机)</span>
+                                <span class="card-title">📥 映射端 · 接收并使用远端设备 (多主机并发中)</span>
                             </div>
                             <span id="outboundBadge" style="font-size: 0.72rem; color: #f59e0b; font-weight: 700; background: rgba(245, 158, 11, 0.15); padding: 2px 8px; border-radius: 6px;">0 台主机</span>
+                        </div>
+                        <div style="font-size:0.74rem; color:var(--text-muted); margin-bottom:8px;">
+                            本机已接入以下所有外部主机（可在此并发连接任意多台电脑，独立混音播放与光标监视）：
                         </div>
 
                         <!-- Connect bar -->
                         <div class="connect-bar">
                             <input type="text" id="outboundTargetInput" class="connect-input" placeholder="输入远端电脑 IP:端口 (例如 192.168.1.105:8080)">
                             <button class="copy-btn" id="connectOutboundBtn" style="padding: 8px 14px; font-size: 0.78rem; white-space: nowrap;">
-                                ➕ 连接远端
+                                ➕ 并发接入此主机
                             </button>
                         </div>
 
                         <div class="peer-list" id="outboundPeerList">
                             <div class="peer-empty">
                                 🌐 当前未连接到任何远端主机<br>
-                                <span style="font-size: 0.7rem; opacity: 0.7;">在上方输入其他电脑的 IP 即可接入，将其音频拉取至本机播放或接收光标</span>
+                                <span style="font-size: 0.7rem; opacity: 0.7;">在上方输入其他电脑的 IP 即可接入，支持同时添加多台远端电脑</span>
                             </div>
                         </div>
                     </div>
@@ -1006,6 +1108,8 @@
                         </div>
                     </div>
                 </div>
+            </div>
+
             <!-- TAB: PEERS & MAPPING MANAGEMENT -->
             <div class="tab-panel" id="tab-peers">
                 <div class="content-card">
@@ -1024,7 +1128,7 @@
                     <!-- Left: Inbound -->
                     <div class="content-card">
                         <div class="card-header">
-                            <span class="card-title">📥 谁连接上了我 (访客列表)</span>
+                            <span class="card-title">📤 被映射端 · 本机设备对外映射列表 (Inbound)</span>
                             <span id="tabInboundBadge" style="font-size: 0.72rem; color: var(--primary); font-weight: 700;">0 台在线</span>
                         </div>
                         <div class="peer-list" id="tabInboundPeerList"></div>
@@ -1033,7 +1137,7 @@
                     <!-- Right: Outbound -->
                     <div class="content-card">
                         <div class="card-header">
-                            <span class="card-title">📤 自己连接上了谁 (远端主机)</span>
+                            <span class="card-title">📥 映射端 · 本机接收远端主机列表 (Outbound)</span>
                             <span id="tabOutboundBadge" style="font-size: 0.72rem; color: #f59e0b; font-weight: 700;">0 台主机</span>
                         </div>
                         <div class="connect-bar">
@@ -1282,7 +1386,13 @@
                 const boxH = mouseRadarBox.clientHeight;
                 radarCursor.style.transform = `translate(${evt.x * boxW}px, ${evt.y * boxH}px)`;
             }
-            if (screenRes) screenRes.innerText = `${evt.screen_w} × ${evt.screen_h}`;
+            if (screenRes) {
+                let text = `${evt.screen_w} × ${evt.screen_h}`;
+                if (evt.source_peer) {
+                    text += ` (源: ${evt.source_peer})`;
+                }
+                screenRes.innerText = text;
+            }
         }
 
         // Audio controls
@@ -1449,76 +1559,90 @@
             });
         }
 
-        // Mode Selector Switching
-        const modeCards = document.querySelectorAll('.mode-card');
-        let currentMode = 'bidirectional';
+        // Topology Matrix and Batch Operations (多端全并发映射)
+        let inboundAudioAll = true;
+        let inboundMouseAll = true;
+        let outboundAudioAll = true;
+        let allowControlAll = true;
 
-        function updateModeUI(mode) {
-            currentMode = mode;
-            modeCards.forEach(c => {
-                if (c.getAttribute('data-mode') === mode) {
-                    c.classList.add('active');
-                } else {
-                    c.classList.remove('active');
-                }
+        const flowInboundCount = document.getElementById('flowInboundCount');
+        const flowOutboundCount = document.getElementById('flowOutboundCount');
+
+        const batchInboundAudioBtn = document.getElementById('batchInboundAudioBtn');
+        const batchInboundMouseBtn = document.getElementById('batchInboundMouseBtn');
+        const batchOutboundAudioBtn = document.getElementById('batchOutboundAudioBtn');
+        const batchControlBtn = document.getElementById('batchControlBtn');
+        const batchDisconnectBtn = document.getElementById('batchDisconnectBtn');
+
+        if (batchInboundAudioBtn) {
+            batchInboundAudioBtn.addEventListener('click', async () => {
+                inboundAudioAll = !inboundAudioAll;
+                batchInboundAudioBtn.innerText = inboundAudioAll ? '🔊 一键开启全部对外声音' : '🔇 一键静音全部对外声音';
+                await fetch('/api/inbound/batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ audio: inboundAudioAll })
+                });
+                fetchInboundClients();
             });
-
-            const pageDesc = document.getElementById('pageDesc');
-            const inboundCardArea = document.getElementById('inboundCardArea');
-            const outboundCardArea = document.getElementById('outboundCardArea');
-
-            if (pageDesc) {
-                if (mode === 'provider') {
-                    pageDesc.innerText = '当前工作模式：被映射端 (提供者) · 正在将声音与鼠标信号广播给其他设备使用';
-                } else if (mode === 'receiver') {
-                    pageDesc.innerText = '当前工作模式：映射端 (接收者) · 正在接收远端主机的虚拟设备并在本机呈现';
-                } else {
-                    pageDesc.innerText = '当前工作模式：双向互通全能协同 · 正在同时进行设备广播与远端虚拟设备接入';
-                }
-            }
-
-            if (inboundCardArea && outboundCardArea) {
-                if (mode === 'provider') {
-                    inboundCardArea.style.opacity = '1';
-                    inboundCardArea.style.borderColor = 'rgba(16, 185, 129, 0.4)';
-                    outboundCardArea.style.opacity = '0.7';
-                    outboundCardArea.style.borderColor = 'var(--border)';
-                } else if (mode === 'receiver') {
-                    inboundCardArea.style.opacity = '0.7';
-                    inboundCardArea.style.borderColor = 'var(--border)';
-                    outboundCardArea.style.opacity = '1';
-                    outboundCardArea.style.borderColor = 'rgba(59, 130, 246, 0.4)';
-                } else {
-                    inboundCardArea.style.opacity = '1';
-                    inboundCardArea.style.borderColor = 'var(--border)';
-                    outboundCardArea.style.opacity = '1';
-                    outboundCardArea.style.borderColor = 'var(--border)';
-                }
-            }
         }
 
-        modeCards.forEach(card => {
-            card.addEventListener('click', async () => {
-                const mode = card.getAttribute('data-mode');
-                updateModeUI(mode);
-                try {
-                    await fetch('/api/mapping/mode', {
+        if (batchInboundMouseBtn) {
+            batchInboundMouseBtn.addEventListener('click', async () => {
+                inboundMouseAll = !inboundMouseAll;
+                batchInboundMouseBtn.innerText = inboundMouseAll ? '🖱️ 一键开启全部对外鼠标' : '⏹️ 一键关闭全部对外鼠标';
+                await fetch('/api/inbound/batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mouse: inboundMouseAll })
+                });
+                fetchInboundClients();
+            });
+        }
+
+        if (batchOutboundAudioBtn) {
+            batchOutboundAudioBtn.addEventListener('click', async () => {
+                outboundAudioAll = !outboundAudioAll;
+                batchOutboundAudioBtn.innerText = outboundAudioAll ? '🎧 一键开启全部接入声音' : '🔇 一键静音全部接入声音';
+                await fetch('/api/outbound/batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ receive_audio: outboundAudioAll })
+                });
+                fetchOutboundPeers();
+            });
+        }
+
+        if (batchControlBtn) {
+            batchControlBtn.addEventListener('click', async () => {
+                allowControlAll = !allowControlAll;
+                batchControlBtn.innerText = allowControlAll ? '🛡️ 一键允许对端反向控制' : '⛔ 一键禁用对端反向控制';
+                await fetch('/api/inbound/batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ allow_control: allowControlAll })
+                });
+                fetchInboundClients();
+            });
+        }
+
+        if (batchDisconnectBtn) {
+            batchDisconnectBtn.addEventListener('click', async () => {
+                if (confirm('确认断开当前所有对内与对外连接？')) {
+                    await fetch('/api/inbound/batch', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ mode: mode })
+                        body: JSON.stringify({ disconnect: true })
                     });
-                } catch (e) {}
-            });
-        });
-
-        async function fetchMappingMode() {
-            try {
-                const res = await fetch('/api/mapping/mode');
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.mode) updateModeUI(data.mode);
+                    await fetch('/api/outbound/batch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ disconnect: true })
+                    });
+                    fetchInboundClients();
+                    fetchOutboundPeers();
                 }
-            } catch (e) {}
+            });
         }
 
         // Inbound Peers Management (谁连接上了我)
@@ -1532,11 +1656,13 @@
                 const metricInboundCount = document.getElementById('metricInboundCount');
                 const inboundBadge = document.getElementById('inboundBadge');
                 const tabInboundBadge = document.getElementById('tabInboundBadge');
+                const flowInboundCount = document.getElementById('flowInboundCount');
 
                 const countText = `${clients.length} 台在线`;
                 if (metricInboundCount) metricInboundCount.innerText = countText;
                 if (inboundBadge) inboundBadge.innerText = countText;
                 if (tabInboundBadge) tabInboundBadge.innerText = countText;
+                if (flowInboundCount) flowInboundCount.innerText = `${clients.length} 台外部设备正在使用本机`;
 
                 renderInboundList('inboundPeerList', clients);
                 renderInboundList('tabInboundPeerList', clients);
@@ -1624,11 +1750,13 @@
                 const metricOutboundCount = document.getElementById('metricOutboundCount');
                 const outboundBadge = document.getElementById('outboundBadge');
                 const tabOutboundBadge = document.getElementById('tabOutboundBadge');
+                const flowOutboundCount = document.getElementById('flowOutboundCount');
 
                 const countText = `${peers.length} 台主机`;
                 if (metricOutboundCount) metricOutboundCount.innerText = countText;
                 if (outboundBadge) outboundBadge.innerText = countText;
                 if (tabOutboundBadge) tabOutboundBadge.innerText = countText;
+                if (flowOutboundCount) flowOutboundCount.innerText = `${peers.length} 台外部主机已接入使用`;
 
                 renderOutboundList('outboundPeerList', peers);
                 renderOutboundList('tabOutboundPeerList', peers);
@@ -1762,7 +1890,10 @@
                 const res = await fetch('/api/status');
                 if (res.ok) {
                     const data = await res.json();
-                    if (data.role_mode) updateModeUI(data.role_mode);
+                    if (data.sample_rate) {
+                        const audioMetric = document.getElementById('metricAudioStatus');
+                        if (audioMetric) audioMetric.innerText = `${(data.sample_rate / 1000).toFixed(0)}kHz ${data.channels === 2 ? '立体声' : '单声道'}`;
+                    }
                 }
             } catch (e) {}
         }
@@ -1775,7 +1906,6 @@
         setInterval(fetchStatus, 3000);
         fetchInboundClients();
         fetchOutboundPeers();
-        fetchMappingMode();
         fetchStatus();
     </script>
 </body>

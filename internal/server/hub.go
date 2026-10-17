@@ -299,11 +299,50 @@ func (h *Hub) DisconnectInboundClient(id string) bool {
 
 	for c := range h.clients {
 		if c.id == id {
-			c.conn.Close()
+			if c.conn != nil {
+				c.conn.Close()
+			}
 			return true
 		}
 	}
 	return false
+}
+
+// UpdateAllInboundClients updates permissions across all connected inbound clients.
+func (h *Hub) UpdateAllInboundClients(audio *bool, mouse *bool, allowControl *bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for c := range h.clients {
+		c.mu.Lock()
+		if audio != nil {
+			c.audioEnabled = *audio
+		}
+		if mouse != nil {
+			c.mouseEnabled = *mouse
+		}
+		if allowControl != nil {
+			c.allowControl = *allowControl
+		}
+		c.mu.Unlock()
+	}
+
+	select {
+	case h.updateSubs <- struct{}{}:
+	default:
+	}
+}
+
+// DisconnectAllInboundClients disconnects all connected inbound clients.
+func (h *Hub) DisconnectAllInboundClients() {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for c := range h.clients {
+		if c.conn != nil {
+			c.conn.Close()
+		}
+	}
 }
 
 func (c *Client) writePump() {

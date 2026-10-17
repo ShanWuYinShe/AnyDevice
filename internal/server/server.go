@@ -84,7 +84,7 @@ func (s *Server) getCurrentURLUnlocked() string {
 	return fmt.Sprintf("http://%s:%d", s.currentIP, s.port)
 }
 
-func (s *Server) Start() error {
+func (s *Server) SetupRoutes() http.Handler {
 	mux := http.NewServeMux()
 
 	// WebSocket unified stream endpoint (audio binary + mouse JSON text)
@@ -276,6 +276,46 @@ func (s *Server) Start() error {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": ok})
 	})
 
+	mux.HandleFunc("/api/inbound/batch", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body struct {
+			Audio        *bool `json:"audio"`
+			Mouse        *bool `json:"mouse"`
+			AllowControl *bool `json:"allow_control"`
+			Disconnect   bool  `json:"disconnect"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if body.Disconnect {
+			s.hub.DisconnectAllInboundClients()
+		} else {
+			s.hub.UpdateAllInboundClients(body.Audio, body.Mouse, body.AllowControl)
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+	})
+
+	mux.HandleFunc("/api/outbound/batch", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body struct {
+			ReceiveAudio *bool `json:"receive_audio"`
+			ReceiveMouse *bool `json:"receive_mouse"`
+			SendMouse    *bool `json:"send_mouse"`
+			Disconnect   bool  `json:"disconnect"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if body.Disconnect {
+			s.outboundMgr.DisconnectAll()
+		} else {
+			s.outboundMgr.UpdateAll(body.ReceiveAudio, body.ReceiveMouse, body.SendMouse)
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+	})
+
 	// Mapping Role Mode API (接收别人的虚拟设备 / 把自己的设备映射成别人的虚拟设备)
 	mux.HandleFunc("/api/mapping/mode", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -305,11 +345,14 @@ func (s *Server) Start() error {
 
 	// Embedded Static UI
 	staticFS, err := web.GetFileSystem()
-	if err != nil {
-		return fmt.Errorf("failed to load embedded static filesystem: %w", err)
+	if err == nil {
+		mux.Handle("/", http.FileServer(staticFS))
 	}
-	mux.Handle("/", http.FileServer(staticFS))
 
+	return mux
+}
+
+func (s *Server) Start() error {
 	addr := fmt.Sprintf(":%d", s.port)
-	return http.ListenAndServe(addr, mux)
+	return http.ListenAndServe(addr, s.SetupRoutes())
 }
