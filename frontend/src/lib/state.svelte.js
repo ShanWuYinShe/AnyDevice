@@ -1,6 +1,6 @@
 // 全局响应式状态（Svelte 5 runes 模块）：数据轮询、WebSocket 流、订阅同步
 import { api } from './api.js';
-import { ensureAudioContext, playPCM } from './audio.js';
+import { ensureAudioContext, playPCM, audioContextState } from './audio.js';
 
 // —— 可变状态（对象属性形式，跨模块保持响应式） ——
 export const selfState = $state({ data: null }); // /api/self：本机信息
@@ -110,10 +110,12 @@ export function sendSubscriptions() {
 let ws = null;
 let reconnectTimer = null;
 
-// 音频流接收诊断（URL 带 ?audiodebug 时开启）
-const audioDebug = location.search.includes('audiodebug');
-let audioDbgBytes = 0;
-let audioDbgLastLog = 0;
+// 音频接收实时统计（卡片上可见）：按 tag 分类字节率（每 2 秒刷新一次）
+export const audioRate = $state({ sys: 0, mic: 0 });
+let audioRateBytes = { AUDS: 0, AUDM: 0 };
+let audioRateLast = 0;
+// 播放链路状态描述（AudioContext 是否被系统挂起等）
+export const audioPlayState = $state({ text: '未创建' });
 
 export function connectWebSocket() {
   // 浏览器访问：同源相对地址；Wails 桌面窗口（location.host 为空）：
@@ -138,15 +140,18 @@ export function connectWebSocket() {
 
   ws.onmessage = (event) => {
     if (event.data instanceof ArrayBuffer) {
-      // 音频流接收诊断：每 2 秒汇总一次字节率与 AudioContext 状态（?audiodebug 时）
-      if (audioDebug) {
-        audioDbgBytes += event.data.byteLength;
-        const now = performance.now();
-        if (now - audioDbgLastLog > 2000) {
-          console.log('[音频诊断] 收到 ' + Math.round(audioDbgBytes / 1024) + ' KB/2s, ctx=' + (audioCtx ? audioCtx.state : 'null') + ', rate=' + (audioCtx ? audioCtx.sampleRate : '?') + ', playState=' + JSON.stringify(playState()));
-          audioDbgBytes = 0;
-          audioDbgLastLog = now;
-        }
+      // 接收速率统计：每 2 秒刷新到 audioRate（卡片可见）
+      const nowMs = performance.now();
+      if (event.data.byteLength > 4) {
+        const t = String.fromCharCode(...new Uint8Array(event.data, 0, 4));
+        if (t === 'AUDS' || t === 'AUDM') audioRateBytes[t] = (audioRateBytes[t] || 0) + event.data.byteLength;
+      }
+      if (nowMs - audioRateLast >= 2000) {
+        const kb = (n) => Math.round((audioRateBytes[n] || 0) / 2 / 1024);
+        audioRate.sys = kb('AUDS');
+        audioRate.mic = kb('AUDM');
+        audioRateBytes = { AUDS: 0, AUDM: 0 };
+        audioRateLast = nowMs;
       }
       if (event.data.byteLength > 4) {
         const tag = String.fromCharCode(...new Uint8Array(event.data, 0, 4));
@@ -192,6 +197,8 @@ export function connectWebSocket() {
 // 播放对端音频前先解锁 AudioContext
 export function primeAudio() {
   ensureAudioContext();
+  // 播放链路状态对外可见：AudioContext 是否被系统挂起（无声排查关键线索）
+  audioPlayState.text = 'ctx=' + audioContextState();
 }
 
 // —— 映射与改名操作 ——

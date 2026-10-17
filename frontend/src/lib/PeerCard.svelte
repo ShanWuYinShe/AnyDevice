@@ -1,5 +1,5 @@
 <script>
-  import { telemetry, renamePeer, toggleMapping, primeAudio } from './state.svelte.js';
+  import { telemetry, audioRate, audioPlayState, renamePeer, toggleMapping, primeAudio } from './state.svelte.js';
 
   let { peer } = $props();
 
@@ -80,6 +80,9 @@
         <div class="service-label"><span>🎵</span><span>系统声音输出 (扬声器原声)</span></div>
         <span class="service-state-text">
           {hasSystemAudio ? (provides.audio_device || '立体声系统声音流') : '对端未开启系统声音'}
+          {#if sysAudioMapped}
+            · 收到 {audioRate.sys} KB/s · {audioPlayState.text}
+          {/if}
         </span>
       </div>
       <button class="map-btn" class:active-emerald={sysAudioMapped} disabled={!hasSystemAudio} onclick={onToggleSystemAudio}>
@@ -93,6 +96,9 @@
         <div class="service-label"><span>🎙️</span><span>麦克风音频输入 (拾音)</span></div>
         <span class="service-state-text">
           {hasMicAudio ? (provides.mic_device || '麦克风高清拾音') : '对端未开启麦克风'}
+          {#if micAudioMapped}
+            · 收到 {audioRate.mic} KB/s · {audioPlayState.text}
+          {/if}
         </span>
       </div>
       <button class="map-btn" class:active-purple={micAudioMapped} disabled={!hasMicAudio} onclick={onToggleMicAudio}>
