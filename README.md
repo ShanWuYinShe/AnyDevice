@@ -69,10 +69,24 @@
 
 ## 💻 编译与构建
 
-```bash
-# 本机编译 (macOS / Linux)
-go build -o any_device main.go
+UI 使用 **Svelte 5 + Vite**（源码在 `frontend/`），构建产物输出到 `internal/web/dist/` 并由 `go:embed` 打进二进制，无需任何运行时前端服务。
 
-# 交叉编译 Windows .exe
+```bash
+# 一键构建（前端 + macOS 二进制 + Windows 交叉编译）
 ./scripts/build.sh
+
+# 只改了 Go 代码、前端未动时，可直接：
+go build -o any_device main.go
 ```
+
+### 前端开发
+
+```bash
+cd frontend
+bun install        # 安装依赖（包管理器：bun）
+bun run dev        # 启动 Vite 开发服务器（默认 5173）
+                   # /api 与 /ws 自动代理到本机 8080 的 AnyDevice 服务
+bun run build      # 构建产物到 internal/web/dist（随后 go build 即可）
+```
+
+> 全新检出后若直接 `go build`，`internal/web/dist` 只有占位文件，页面为空白——请先执行前端构建（或使用 `scripts/build.sh`）。

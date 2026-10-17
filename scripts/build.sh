@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -e
 
+echo ">>> 正在构建前端 (Svelte + Vite, 产物嵌入 internal/web/dist)..."
+cd frontend
+if [ ! -d node_modules ]; then
+    bun install
+fi
+bun run build
+cd ..
+
 mkdir -p bin
 
 echo ">>> 正在编译 macOS (arm64)..."

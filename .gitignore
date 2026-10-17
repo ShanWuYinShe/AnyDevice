@@ -7,6 +7,11 @@ any_device
 .workwork/
 .worktrees/
 
+# Frontend (Svelte + Vite)
+frontend/node_modules/
+internal/web/dist/*
+!internal/web/dist/.gitkeep
+
 # OS / IDE
 .DS_Store
 .idea/
