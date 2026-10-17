@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"any_device/internal/audio"
+	"any_device/internal/keyboard"
 	"any_device/internal/mouse"
 	"any_device/internal/server"
 	"any_device/internal/ui"
@@ -55,7 +56,7 @@ func main() {
 		util.PrintNoDeviceHelp()
 	}
 
-	// 1. Initialize Mouse Capture Engine
+	// 1. Initialize Mouse & Keyboard Capture Engines
 	var hub *server.Hub
 	mouseEngine := mouse.NewEngine(func(evt mouse.MouseEvent) {
 		if data, err := json.Marshal(evt); err == nil {
@@ -63,14 +64,24 @@ func main() {
 		}
 	})
 
+	keyboardEngine := keyboard.NewEngine(func(evt keyboard.KeyEvent) {
+		if data, err := json.Marshal(evt); err == nil {
+			hub.BroadcastKeyboard(data)
+		}
+	})
+
 	// 2. Initialize WebSocket 1-to-N broadcast hub
-	hub = server.NewHub(func(audioSubs, mouseSubs int) {
+	hub = server.NewHub(func(audioSubs, mouseSubs, keyboardSubs int) {
 		mouseEngine.SetSubscribers(int64(mouseSubs))
+		keyboardEngine.SetSubscribers(int64(keyboardSubs))
 	})
 	go hub.Run()
 
 	mouseEngine.Start()
 	defer mouseEngine.Stop()
+
+	keyboardEngine.Start()
+	defer keyboardEngine.Stop()
 
 	// 3. Initialize Audio Engines (Independent System Output & Microphone Input)
 	systemAudioEngine := audio.NewEngine(audio.KindSystem, audio.CaptureMode(*mode), *deviceIdx, hub.BroadcastAudio)
@@ -95,6 +106,7 @@ func main() {
 	fmt.Printf("├─ 系统声音: %s\n", systemAudioEngine.DeviceName())
 	fmt.Printf("├─ 麦克风: %s\n", micAudioEngine.DeviceName())
 	fmt.Printf("├─ 鼠标映射: 全桌面物理光标与按键无缝同步\n")
+	fmt.Printf("├─ 键盘映射: 跨端物理按键实时同步\n")
 	fmt.Printf("├─ 本地窗口: %s\n", localURL)
 	fmt.Printf("└─ 局域网地址: %s\n", primaryURL)
 	util.PrintNetworkInfo(primaryIP, *port)
@@ -105,7 +117,7 @@ func main() {
 	}
 
 	// 5. Start HTTP & WebSocket Server in background
-	srv := server.NewServer(*port, primaryIP, hub, systemAudioEngine, micAudioEngine, mouseEngine)
+	srv := server.NewServer(*port, primaryIP, hub, systemAudioEngine, micAudioEngine, mouseEngine, keyboardEngine)
 	go func() {
 		if err := srv.Start(); err != nil {
 			fmt.Printf("[Fatal] HTTP server error: %v\n", err)
@@ -128,12 +140,13 @@ func main() {
 	systemAudioEngine.Stop()
 	micAudioEngine.Stop()
 	mouseEngine.Stop()
+	keyboardEngine.Stop()
 	fmt.Println("服务已安全退出。")
 }
 
 func printBanner() {
 	fmt.Println("==================================================================")
-	fmt.Printf("        AnyDevice v%s - 跨端音频与鼠标多设备无线映射中心\n", Version)
+	fmt.Printf("    AnyDevice v%s - 跨端音频、鼠标与键盘多设备无线映射中心\n", Version)
 	fmt.Println("==================================================================")
 }
 

@@ -20,33 +20,35 @@ type OutMessage struct {
 
 // InboundClientInfo represents public status of a connected client.
 type InboundClientInfo struct {
-	ID           string `json:"id"`
-	RemoteAddr   string `json:"remote_addr"`
-	RemoteIP     string `json:"remote_ip"`
-	UserAgent    string `json:"user_agent"`
-	DeviceType   string `json:"device_type"`
-	ConnectedAt  string `json:"connected_at"`
-	DurationSec  int64  `json:"duration_sec"`
-	AudioEnabled bool   `json:"audio_enabled"`
-	MouseEnabled bool   `json:"mouse_enabled"`
-	AllowControl bool   `json:"allow_control"`
+	ID              string `json:"id"`
+	RemoteAddr      string `json:"remote_addr"`
+	RemoteIP        string `json:"remote_ip"`
+	UserAgent       string `json:"user_agent"`
+	DeviceType      string `json:"device_type"`
+	ConnectedAt     string `json:"connected_at"`
+	DurationSec     int64  `json:"duration_sec"`
+	AudioEnabled    bool   `json:"audio_enabled"`
+	MouseEnabled    bool   `json:"mouse_enabled"`
+	KeyboardEnabled bool   `json:"keyboard_enabled"`
+	AllowControl    bool   `json:"allow_control"`
 }
 
 // Client represents a connected browser or receiver client.
 type Client struct {
-	id           string
-	hub          *Hub
-	conn         *websocket.Conn
-	send         chan OutMessage
-	remoteIP     string
-	remoteAddr   string
-	userAgent    string
-	deviceType   string
-	joinedAt     time.Time
-	audioEnabled bool
-	mouseEnabled bool
-	allowControl bool
-	mu           sync.RWMutex
+	id              string
+	hub             *Hub
+	conn            *websocket.Conn
+	send            chan OutMessage
+	remoteIP        string
+	remoteAddr      string
+	userAgent       string
+	deviceType      string
+	joinedAt        time.Time
+	audioEnabled    bool
+	mouseEnabled    bool
+	keyboardEnabled bool
+	allowControl    bool
+	mu              sync.RWMutex
 }
 
 var clientSeq uint64
@@ -79,28 +81,30 @@ func ParseDeviceType(ua string) string {
 
 // Hub maintains the set of active clients and broadcasts messages to them.
 type Hub struct {
-	clients        map[*Client]bool
-	audioBroadcast chan []byte
-	mouseBroadcast chan []byte
-	register       chan *Client
-	unregister     chan *Client
-	updateSubs     chan struct{}
-	mu             sync.RWMutex
+	clients           map[*Client]bool
+	audioBroadcast    chan []byte
+	mouseBroadcast    chan []byte
+	keyboardBroadcast chan []byte
+	register          chan *Client
+	unregister        chan *Client
+	updateSubs        chan struct{}
+	mu                sync.RWMutex
 
 	totalBytesSent uint64
 	clientCount    int64
-	onSubsChanged  func(audioSubs, mouseSubs int)
+	onSubsChanged  func(audioSubs, mouseSubs, keyboardSubs int)
 }
 
-func NewHub(onSubsChanged func(audioSubs, mouseSubs int)) *Hub {
+func NewHub(onSubsChanged func(audioSubs, mouseSubs, keyboardSubs int)) *Hub {
 	return &Hub{
-		clients:        make(map[*Client]bool),
-		audioBroadcast: make(chan []byte, 128),
-		mouseBroadcast: make(chan []byte, 64),
-		register:       make(chan *Client),
-		unregister:     make(chan *Client),
-		updateSubs:     make(chan struct{}, 8),
-		onSubsChanged:  onSubsChanged,
+		clients:           make(map[*Client]bool),
+		audioBroadcast:    make(chan []byte, 128),
+		mouseBroadcast:    make(chan []byte, 64),
+		keyboardBroadcast: make(chan []byte, 64),
+		register:          make(chan *Client),
+		unregister:        make(chan *Client),
+		updateSubs:        make(chan struct{}, 8),
+		onSubsChanged:     onSubsChanged,
 	}
 }
 
@@ -164,13 +168,32 @@ func (h *Hub) Run() {
 				}
 			}
 			h.mu.RUnlock()
+
+		case keyboardEvent := <-h.keyboardBroadcast:
+			msg := OutMessage{isBinary: false, data: keyboardEvent}
+			h.mu.RLock()
+			for client := range h.clients {
+				client.mu.RLock()
+				enabled := client.keyboardEnabled
+				client.mu.RUnlock()
+
+				if enabled {
+					select {
+					case client.send <- msg:
+						atomic.AddUint64(&h.totalBytesSent, uint64(len(keyboardEvent)))
+					default:
+						// Drop frame if client buffer is backed up
+					}
+				}
+			}
+			h.mu.RUnlock()
 		}
 	}
 }
 
 func (h *Hub) notifySubscribers() {
 	h.mu.RLock()
-	var audioCount, mouseCount int
+	var audioCount, mouseCount, keyboardCount int
 	for client := range h.clients {
 		client.mu.RLock()
 		if client.audioEnabled {
@@ -179,12 +202,15 @@ func (h *Hub) notifySubscribers() {
 		if client.mouseEnabled {
 			mouseCount++
 		}
+		if client.keyboardEnabled {
+			keyboardCount++
+		}
 		client.mu.RUnlock()
 	}
 	h.mu.RUnlock()
 
 	if h.onSubsChanged != nil {
-		h.onSubsChanged(audioCount, mouseCount)
+		h.onSubsChanged(audioCount, mouseCount, keyboardCount)
 	}
 }
 
@@ -200,6 +226,14 @@ func (h *Hub) BroadcastAudio(chunk []byte) {
 func (h *Hub) BroadcastMouse(event []byte) {
 	select {
 	case h.mouseBroadcast <- event:
+	default:
+	}
+}
+
+// BroadcastKeyboard pushes a keyboard event JSON to subscribed clients.
+func (h *Hub) BroadcastKeyboard(event []byte) {
+	select {
+	case h.keyboardBroadcast <- event:
 	default:
 	}
 }
@@ -221,18 +255,19 @@ func NewClient(hub *Hub, conn *websocket.Conn, remoteAddr, userAgent string) *Cl
 		remoteIP = remoteAddr[:idx]
 	}
 	return &Client{
-		id:           fmt.Sprintf("client-%d", atomic.AddUint64(&clientSeq, 1)),
-		hub:          hub,
-		conn:         conn,
-		send:         make(chan OutMessage, 64),
-		remoteIP:     remoteIP,
-		remoteAddr:   remoteAddr,
-		userAgent:    userAgent,
-		deviceType:   ParseDeviceType(userAgent),
-		joinedAt:     time.Now(),
-		audioEnabled: true,
-		mouseEnabled: true,
-		allowControl: true,
+		id:              fmt.Sprintf("client-%d", atomic.AddUint64(&clientSeq, 1)),
+		hub:             hub,
+		conn:            conn,
+		send:            make(chan OutMessage, 64),
+		remoteIP:        remoteIP,
+		remoteAddr:      remoteAddr,
+		userAgent:       userAgent,
+		deviceType:      ParseDeviceType(userAgent),
+		joinedAt:        time.Now(),
+		audioEnabled:    true,
+		mouseEnabled:    true,
+		keyboardEnabled: true,
+		allowControl:    true,
 	}
 }
 
@@ -246,16 +281,17 @@ func (h *Hub) GetInboundClients() []InboundClientInfo {
 	for c := range h.clients {
 		c.mu.RLock()
 		info := InboundClientInfo{
-			ID:           c.id,
-			RemoteAddr:   c.remoteAddr,
-			RemoteIP:     c.remoteIP,
-			UserAgent:    c.userAgent,
-			DeviceType:   c.deviceType,
-			ConnectedAt:  c.joinedAt.Format("15:04:05"),
-			DurationSec:  int64(now.Sub(c.joinedAt).Seconds()),
-			AudioEnabled: c.audioEnabled,
-			MouseEnabled: c.mouseEnabled,
-			AllowControl: c.allowControl,
+			ID:              c.id,
+			RemoteAddr:      c.remoteAddr,
+			RemoteIP:        c.remoteIP,
+			UserAgent:       c.userAgent,
+			DeviceType:      c.deviceType,
+			ConnectedAt:     c.joinedAt.Format("15:04:05"),
+			DurationSec:     int64(now.Sub(c.joinedAt).Seconds()),
+			AudioEnabled:    c.audioEnabled,
+			MouseEnabled:    c.mouseEnabled,
+			KeyboardEnabled: c.keyboardEnabled,
+			AllowControl:    c.allowControl,
 		}
 		c.mu.RUnlock()
 		result = append(result, info)
@@ -264,7 +300,7 @@ func (h *Hub) GetInboundClients() []InboundClientInfo {
 }
 
 // UpdateInboundClient updates permissions for a specific client.
-func (h *Hub) UpdateInboundClient(id string, audio *bool, mouse *bool, allowControl *bool) bool {
+func (h *Hub) UpdateInboundClient(id string, audio *bool, mouse *bool, keyboard *bool, allowControl *bool) bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -276,6 +312,9 @@ func (h *Hub) UpdateInboundClient(id string, audio *bool, mouse *bool, allowCont
 			}
 			if mouse != nil {
 				c.mouseEnabled = *mouse
+			}
+			if keyboard != nil {
+				c.keyboardEnabled = *keyboard
 			}
 			if allowControl != nil {
 				c.allowControl = *allowControl
@@ -309,7 +348,7 @@ func (h *Hub) DisconnectInboundClient(id string) bool {
 }
 
 // UpdateAllInboundClients updates permissions across all connected inbound clients.
-func (h *Hub) UpdateAllInboundClients(audio *bool, mouse *bool, allowControl *bool) {
+func (h *Hub) UpdateAllInboundClients(audio *bool, mouse *bool, keyboard *bool, allowControl *bool) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -320,6 +359,9 @@ func (h *Hub) UpdateAllInboundClients(audio *bool, mouse *bool, allowControl *bo
 		}
 		if mouse != nil {
 			c.mouseEnabled = *mouse
+		}
+		if keyboard != nil {
+			c.keyboardEnabled = *keyboard
 		}
 		if allowControl != nil {
 			c.allowControl = *allowControl
@@ -406,9 +448,10 @@ func (c *Client) readPump() {
 
 		if msgType == websocket.TextMessage {
 			var cmd struct {
-				Action string `json:"action"` // "set_mapping" or "remote_input"
-				Audio  *bool  `json:"audio"`
-				Mouse  *bool  `json:"mouse"`
+				Action   string `json:"action"` // "set_mapping" or "remote_input"
+				Audio    *bool  `json:"audio"`
+				Mouse    *bool  `json:"mouse"`
+				Keyboard *bool  `json:"keyboard"`
 				// Reverse input control fields
 				Type string `json:"type"` // "move", "click", "button", "scroll"
 				Dx   int    `json:"dx"`
@@ -427,6 +470,9 @@ func (c *Client) readPump() {
 				}
 				if cmd.Mouse != nil {
 					c.mouseEnabled = *cmd.Mouse
+				}
+				if cmd.Keyboard != nil {
+					c.keyboardEnabled = *cmd.Keyboard
 				}
 				c.mu.Unlock()
 

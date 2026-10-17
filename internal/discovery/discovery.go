@@ -28,6 +28,7 @@ type DeviceCapabilities struct {
 	SystemAudio bool   `json:"system_audio"`
 	MicAudio    bool   `json:"mic_audio"`
 	Mouse       bool   `json:"mouse"`
+	Keyboard    bool   `json:"keyboard"`
 	Control     bool   `json:"control"`
 	AudioDevice string `json:"audio_device,omitempty"`
 	MicDevice   string `json:"mic_device,omitempty"`
@@ -131,13 +132,14 @@ func (s *Service) SetCurrentIP(ip string) {
 	s.currentIP = ip
 }
 
-func (s *Service) UpdateProvides(systemAudio, micAudio, mouse, control bool, sysDev, micDev string) {
+func (s *Service) UpdateProvides(systemAudio, micAudio, mouse, keyboard, control bool, sysDev, micDev string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.provides = DeviceCapabilities{
 		SystemAudio: systemAudio,
 		MicAudio:    micAudio,
 		Mouse:       mouse,
+		Keyboard:    keyboard,
 		Control:     control,
 		AudioDevice: sysDev,
 		MicDevice:   micDev,
@@ -381,6 +383,7 @@ func (s *Service) AddManualPeer(target string, name string) *DiscoveredPeer {
 			SystemAudio: true,
 			MicAudio:    true,
 			Mouse:       true,
+			Keyboard:    true,
 			Control:     true,
 			Audio:       true,
 		},
@@ -438,6 +441,7 @@ func (s *Service) RegisterInboundClient(id, remoteAddr, userAgent string) *Disco
 				SystemAudio: false,
 				MicAudio:    false,
 				Mouse:       false,
+				Keyboard:    false,
 				Control:     true,
 				Audio:       false,
 			},

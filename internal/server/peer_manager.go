@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"any_device/internal/discovery"
+	"any_device/internal/keyboard"
 	"any_device/internal/mouse"
 
 	"github.com/gorilla/websocket"
@@ -20,13 +21,14 @@ type PeerMappingState struct {
 	PlaySystemAudioLocal bool   `json:"play_system_audio_local"`
 	PlayMicAudioLocal    bool   `json:"play_mic_audio_local"`
 	ExecuteMouseLocal    bool   `json:"execute_mouse_local"`
+	ExecuteKeyboardLocal bool   `json:"execute_keyboard_local"`
 	ConnectionStatus     string `json:"connection_status"` // "connected", "connecting", "disconnected", "error"
 	LatencyMs            int64  `json:"latency_ms"`
 	LastError            string `json:"last_error,omitempty"`
 
 	// Backward compatibility fields
-	PlayAudioLocal       bool   `json:"play_audio_local"`
-	RemoteControlActive  bool   `json:"remote_control_active,omitempty"`
+	PlayAudioLocal      bool `json:"play_audio_local"`
+	RemoteControlActive bool `json:"remote_control_active,omitempty"`
 }
 
 // UnifiedPeer is the clean, discoverer-centric peer model exposed to the UI.
@@ -133,7 +135,7 @@ func (pm *PeerManager) RenamePeer(peerID, newName string) error {
 }
 
 // SetMapping updates the discoverer's local mapping decisions for a peer.
-func (pm *PeerManager) SetMapping(peerID string, playSystemAudio, playMicAudio, executeMouse *bool) error {
+func (pm *PeerManager) SetMapping(peerID string, playSystemAudio, playMicAudio, executeMouse, executeKeyboard *bool) error {
 	pm.mu.Lock()
 	mapping, exists := pm.mappings[peerID]
 	if !exists {
@@ -153,8 +155,11 @@ func (pm *PeerManager) SetMapping(peerID string, playSystemAudio, playMicAudio, 
 	if executeMouse != nil {
 		mapping.ExecuteMouseLocal = *executeMouse
 	}
+	if executeKeyboard != nil {
+		mapping.ExecuteKeyboardLocal = *executeKeyboard
+	}
 
-	needsConn := mapping.PlaySystemAudioLocal || mapping.PlayMicAudioLocal || mapping.ExecuteMouseLocal
+	needsConn := mapping.PlaySystemAudioLocal || mapping.PlayMicAudioLocal || mapping.ExecuteMouseLocal || mapping.ExecuteKeyboardLocal
 	pm.mu.Unlock()
 
 	// Find peer target
@@ -263,7 +268,7 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 		pm.mu.Lock()
 		delete(pm.conns, peerID)
 		if m, ok := pm.mappings[peerID]; ok {
-			if m.PlaySystemAudioLocal || m.PlayMicAudioLocal || m.ExecuteMouseLocal {
+			if m.PlaySystemAudioLocal || m.PlayMicAudioLocal || m.ExecuteMouseLocal || m.ExecuteKeyboardLocal {
 				m.ConnectionStatus = "disconnected"
 			}
 		}
@@ -310,32 +315,56 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 					}
 				}
 			}
-		} else if msgType == websocket.TextMessage && curMapping.ExecuteMouseLocal {
-			var evt mouse.MouseEvent
-			if err := json.Unmarshal(data, &evt); err == nil {
-				// Execute remote mouse movements & clicks directly on local OS!
-				mouse.SimulateAbsolute(evt.X, evt.Y)
-				if evt.Action == "down" || evt.Action == "up" {
-					btn := "left"
-					if evt.RightDown {
-						btn = "right"
-					} else if evt.MiddleDown {
-						btn = "middle"
-					}
-					mouse.SimulateButton(btn, evt.Action == "down")
-				}
+		} else if msgType == websocket.TextMessage {
+			var baseEvt struct {
+				Type string `json:"type"`
 			}
+			_ = json.Unmarshal(data, &baseEvt)
 
-			// Also forward with source metadata so local UI can visualize cursor position
-			var obj map[string]interface{}
-			if err := json.Unmarshal(data, &obj); err == nil {
-				obj["source_peer"] = target
-				obj["peer_id"] = peerID
-				if enriched, err := json.Marshal(obj); err == nil {
-					data = enriched
+			if (baseEvt.Type == "" || baseEvt.Type == "mouse") && curMapping.ExecuteMouseLocal {
+				var evt mouse.MouseEvent
+				if err := json.Unmarshal(data, &evt); err == nil {
+					// Execute remote mouse movements & clicks directly on local OS!
+					mouse.SimulateAbsolute(evt.X, evt.Y)
+					if evt.Action == "down" || evt.Action == "up" {
+						btn := "left"
+						if evt.RightDown {
+							btn = "right"
+						} else if evt.MiddleDown {
+							btn = "middle"
+						}
+						mouse.SimulateButton(btn, evt.Action == "down")
+					}
 				}
+
+				// Also forward with source metadata so local UI can visualize cursor position
+				var obj map[string]interface{}
+				if err := json.Unmarshal(data, &obj); err == nil {
+					obj["source_peer"] = target
+					obj["peer_id"] = peerID
+					if enriched, err := json.Marshal(obj); err == nil {
+						data = enriched
+					}
+				}
+				pm.hub.BroadcastMouse(data)
+			} else if baseEvt.Type == "keyboard" && curMapping.ExecuteKeyboardLocal {
+				var evt keyboard.KeyEvent
+				if err := json.Unmarshal(data, &evt); err == nil {
+					// Execute remote physical keyboard events directly on local OS!
+					keyboard.SimulateKey(evt.Key, evt.Action == "down")
+				}
+
+				// Also forward with source metadata so local UI can visualize active key telemetry
+				var obj map[string]interface{}
+				if err := json.Unmarshal(data, &obj); err == nil {
+					obj["source_peer"] = target
+					obj["peer_id"] = peerID
+					if enriched, err := json.Marshal(obj); err == nil {
+						data = enriched
+					}
+				}
+				pm.hub.BroadcastKeyboard(data)
 			}
-			pm.hub.BroadcastMouse(data)
 		}
 	}
 }

@@ -63,9 +63,9 @@ func TestDiscoveryService(t *testing.T) {
 	}
 
 	// Test UpdateProvides
-	s1.UpdateProvides(false, true, true, false, "扬声器", "USB 麦克风")
+	s1.UpdateProvides(false, true, true, true, false, "扬声器", "USB 麦克风")
 	caps := s1.GetProvides()
-	if caps.SystemAudio || !caps.MicAudio || !caps.Mouse || caps.Control {
+	if caps.SystemAudio || !caps.MicAudio || !caps.Mouse || !caps.Keyboard || caps.Control {
 		t.Fatalf("unexpected capabilities: %+v", caps)
 	}
 	if caps.MicDevice != "USB 麦克风" {

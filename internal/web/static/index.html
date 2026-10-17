@@ -409,6 +409,12 @@
             color: #ffffff;
             box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
         }
+        .map-btn.active-amber {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            border-color: #fbbf24;
+            color: #ffffff;
+            box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+        }
         .map-btn.btn-purple {
             background: linear-gradient(135deg, #8b5cf6, #6d28d9);
             border-color: #a78bfa;
@@ -418,11 +424,21 @@
             opacity: 0.92;
         }
 
-        /* Live cursor telemetry display */
+        /* Live cursor & keyboard telemetry displays */
         .cursor-telemetry {
             font-size: 0.75rem;
             color: #93c5fd;
             background: rgba(59, 130, 246, 0.1);
+            padding: 4px 8px;
+            border-radius: var(--radius-sm);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .keyboard-telemetry {
+            font-size: 0.75rem;
+            color: #fde68a;
+            background: rgba(245, 158, 11, 0.1);
             padding: 4px 8px;
             border-radius: var(--radius-sm);
             display: flex;
@@ -721,7 +737,7 @@
         </div>
 
         <p class="discovery-hint">
-            每个端点设备会提供各自的声音输出或鼠标光标。您可以在下方决定是否将对端的功能映射为本地播放或操作。
+            每个端点设备会提供各自的声音输出、麦克风录音、鼠标光标或物理键盘。您可以在下方决定是否将对端的功能映射为本地播放或操作。
         </p>
 
         <!-- Peer Cards Grid -->
@@ -786,6 +802,17 @@
                 </div>
                 <label class="toggle-switch">
                     <input type="checkbox" id="selfMouseCheck" checked>
+                    <span class="slider"></span>
+                </label>
+            </div>
+
+            <div class="switch-row">
+                <div class="switch-label">
+                    <span class="switch-title">⌨️ 共享本机物理键盘操作</span>
+                    <span class="switch-desc">允许对端在他们电脑上实时同步执行本机的键盘按键 (无弹窗直通)</span>
+                </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="selfKeyboardCheck" checked>
                     <span class="slider"></span>
                 </label>
             </div>
@@ -944,6 +971,8 @@
                         const msg = JSON.parse(event.data);
                         if (msg.type === 'mouse' && msg.peer_id) {
                             updateCursorTelemetry(msg.peer_id, msg);
+                        } else if (msg.type === 'keyboard' && msg.peer_id) {
+                            updateKeyboardTelemetry(msg.peer_id, msg);
                         }
                     } catch (e) {}
                 }
@@ -960,6 +989,16 @@
                 const posX = Math.round(evt.x * (evt.screen_w || 1920));
                 const posY = Math.round(evt.y * (evt.screen_h || 1080));
                 el.innerText = `● 正在本地执行: (${posX}, ${posY})`;
+                el.style.display = 'flex';
+            }
+        }
+
+        function updateKeyboardTelemetry(peerId, evt) {
+            const el = document.getElementById(`keyboardTelemetry-${peerId}`);
+            if (el) {
+                const actionText = evt.action === 'down' ? '按下' : '释放';
+                const keyName = evt.friendly || evt.key || '按键';
+                el.innerText = `● 正在本地执行: ${actionText} [${keyName}]`;
                 el.style.display = 'flex';
             }
         }
@@ -1070,7 +1109,7 @@
                 const mapping = p.mapping || {};
                 const provides = p.provides || {};
 
-                const hasActiveMapping = mapping.play_system_audio_local || mapping.play_mic_audio_local || mapping.play_audio_local || mapping.execute_mouse_local;
+                const hasActiveMapping = mapping.play_system_audio_local || mapping.play_mic_audio_local || mapping.play_audio_local || mapping.execute_mouse_local || mapping.execute_keyboard_local;
                 card.className = `peer-card ${hasActiveMapping ? 'active-mapping' : ''}`;
                 
                 const isOnline = p.online;
@@ -1085,10 +1124,12 @@
                 const hasSystemAudio = provides.system_audio || provides.audio;
                 const hasMicAudio = provides.mic_audio;
                 const hasMouse = provides.mouse;
+                const hasKeyboard = provides.keyboard;
 
                 const sysAudioMapped = mapping.play_system_audio_local || mapping.play_audio_local;
                 const micAudioMapped = mapping.play_mic_audio_local;
                 const mouseMapped = mapping.execute_mouse_local;
+                const keyboardMapped = mapping.execute_keyboard_local;
 
                 card.innerHTML = `
                     <div class="peer-header">
@@ -1170,6 +1211,28 @@
                                 ● 正在本地执行对端物理鼠标
                             </div>
                         </div>
+
+                        <!-- 4. Physical Keyboard Synchronization -->
+                        <div class="service-row">
+                            <div class="service-info">
+                                <div class="service-label">
+                                    <span>⌨️</span>
+                                    <span>物理键盘设备 (同步操作)</span>
+                                </div>
+                                <span class="service-state-text">
+                                    ${hasKeyboard ? '物理按键直通同步' : '对端未提供键盘'}
+                                </span>
+                            </div>
+                            <button class="map-btn ${keyboardMapped ? 'active-amber' : ''}" 
+                                    data-peer-id="${p.id}" 
+                                    data-action="toggle-keyboard"
+                                    ${!hasKeyboard ? 'disabled style="opacity:0.5;cursor:not-allowed;"' : ''}>
+                                ${keyboardMapped ? '⌨️ 正在同步对端键盘 (点击停止)' : '⌨️ 映射为本地键盘 (同步对端按键)'}
+                            </button>
+                            <div class="keyboard-telemetry" id="keyboardTelemetry-${p.id}" style="${keyboardMapped ? 'display:flex;' : 'display:none;'}">
+                                ● 正在本地执行对端物理按键
+                            </div>
+                        </div>
                     </div>
                 `;
 
@@ -1193,6 +1256,10 @@
                             const nextState = !mouseMapped;
                             await updateMapping(peerId, { execute_mouse: nextState });
                             showToast(nextState ? '已开启同步对端物理鼠标 🖱️' : '已停止同步对端鼠标 ⏹️');
+                        } else if (action === 'toggle-keyboard') {
+                            const nextState = !keyboardMapped;
+                            await updateMapping(peerId, { execute_keyboard: nextState });
+                            showToast(nextState ? '已开启同步对端物理键盘 ⌨️' : '已停止同步对端键盘 ⏹️');
                         }
                     });
                 });
@@ -1341,6 +1408,7 @@
         const selfSystemAudioCheck = document.getElementById('selfSystemAudioCheck');
         const selfMicAudioCheck = document.getElementById('selfMicAudioCheck');
         const selfMouseCheck = document.getElementById('selfMouseCheck');
+        const selfKeyboardCheck = document.getElementById('selfKeyboardCheck');
         const saveSelfSettingsBtn = document.getElementById('saveSelfSettingsBtn');
 
         if (openSelfSettingsBtn) {
@@ -1351,6 +1419,7 @@
                         selfSystemAudioCheck.checked = !!(localSelf.provides.system_audio || localSelf.provides.audio);
                         selfMicAudioCheck.checked = !!localSelf.provides.mic_audio;
                         selfMouseCheck.checked = !!localSelf.provides.mouse;
+                        selfKeyboardCheck.checked = !!localSelf.provides.keyboard;
                     }
                 }
                 openModal('selfSettingsModal');
@@ -1363,7 +1432,8 @@
                     name: selfNodeNameInput.value.trim(),
                     system_audio: selfSystemAudioCheck.checked,
                     mic_audio: selfMicAudioCheck.checked,
-                    mouse: selfMouseCheck.checked
+                    mouse: selfMouseCheck.checked,
+                    keyboard: selfKeyboardCheck.checked
                 };
                 await fetch('/api/self', {
                     method: 'POST',

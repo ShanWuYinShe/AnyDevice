@@ -9,6 +9,7 @@ import (
 
 	"any_device/internal/audio"
 	"any_device/internal/discovery"
+	"any_device/internal/keyboard"
 	"any_device/internal/mouse"
 	"any_device/internal/util"
 	"any_device/internal/web"
@@ -33,6 +34,7 @@ type Server struct {
 	systemAudioEngine *audio.Engine
 	micAudioEngine    *audio.Engine
 	mouseEngine       *mouse.Engine
+	keyboardEngine    *keyboard.Engine
 	discovery         *discovery.Service
 	peerMgr           *PeerManager
 	outboundMgr       *OutboundManager
@@ -40,7 +42,7 @@ type Server struct {
 	mu                sync.RWMutex
 }
 
-func NewServer(port int, initialIP string, hub *Hub, systemAudioEngine *audio.Engine, micAudioEngine *audio.Engine, mouseEngine *mouse.Engine) *Server {
+func NewServer(port int, initialIP string, hub *Hub, systemAudioEngine *audio.Engine, micAudioEngine *audio.Engine, mouseEngine *mouse.Engine, keyboardEngine *keyboard.Engine) *Server {
 	sysDev := "系统扬声器输出"
 	if systemAudioEngine != nil {
 		sysDev = systemAudioEngine.DeviceName()
@@ -54,6 +56,7 @@ func NewServer(port int, initialIP string, hub *Hub, systemAudioEngine *audio.En
 		SystemAudio: systemAudioEngine != nil,
 		MicAudio:    micAudioEngine != nil,
 		Mouse:       true,
+		Keyboard:    keyboardEngine != nil,
 		Control:     true,
 		AudioDevice: sysDev,
 		MicDevice:   micDev,
@@ -70,6 +73,7 @@ func NewServer(port int, initialIP string, hub *Hub, systemAudioEngine *audio.En
 		systemAudioEngine: systemAudioEngine,
 		micAudioEngine:    micAudioEngine,
 		mouseEngine:       mouseEngine,
+		keyboardEngine:    keyboardEngine,
 		discovery:         disc,
 		peerMgr:           peerMgr,
 		outboundMgr:       NewOutboundManager(hub),
@@ -252,6 +256,7 @@ func (s *Server) SetupRoutes() http.Handler {
 			PlayMicAudio    *bool  `json:"play_mic_audio"`
 			PlayAudio       *bool  `json:"play_audio"` // fallback
 			ExecuteMouse    *bool  `json:"execute_mouse"`
+			ExecuteKeyboard *bool  `json:"execute_keyboard"`
 			RemoteControl   *bool  `json:"remote_control"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -266,7 +271,7 @@ func (s *Server) SetupRoutes() http.Handler {
 		if playSys == nil && body.PlayAudio != nil {
 			playSys = body.PlayAudio
 		}
-		err := s.peerMgr.SetMapping(body.PeerID, playSys, body.PlayMicAudio, body.ExecuteMouse)
+		err := s.peerMgr.SetMapping(body.PeerID, playSys, body.PlayMicAudio, body.ExecuteMouse, body.ExecuteKeyboard)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -312,6 +317,7 @@ func (s *Server) SetupRoutes() http.Handler {
 				MicAudio    *bool   `json:"mic_audio"`
 				Audio       *bool   `json:"audio"` // fallback
 				Mouse       *bool   `json:"mouse"`
+				Keyboard    *bool   `json:"keyboard"`
 				Control     *bool   `json:"control"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -333,6 +339,10 @@ func (s *Server) SetupRoutes() http.Handler {
 			if body.Mouse != nil {
 				mouseVal = *body.Mouse
 			}
+			keyboardVal := cur.Keyboard
+			if body.Keyboard != nil {
+				keyboardVal = *body.Keyboard
+			}
 			ctrlVal := cur.Control
 			if body.Control != nil {
 				ctrlVal = *body.Control
@@ -348,7 +358,7 @@ func (s *Server) SetupRoutes() http.Handler {
 			if s.micAudioEngine != nil {
 				micDev = s.micAudioEngine.DeviceName()
 			}
-			s.discovery.UpdateProvides(sysAudioVal, micAudioVal, mouseVal, ctrlVal, sysDev, micDev)
+			s.discovery.UpdateProvides(sysAudioVal, micAudioVal, mouseVal, keyboardVal, ctrlVal, sysDev, micDev)
 			json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 			return
 		}
@@ -402,7 +412,8 @@ func (s *Server) SetupRoutes() http.Handler {
 			"mic_device":          micDev,
 			"current_ip":          s.GetCurrentIP(),
 			"primary_url":         s.GetCurrentURL(),
-			"mouse_active":   true,
+			"mouse_active":       true,
+			"keyboard_active":    true,
 		}
 		json.NewEncoder(w).Encode(status)
 	})
@@ -424,13 +435,14 @@ func (s *Server) SetupRoutes() http.Handler {
 			ID           string `json:"id"`
 			Audio        *bool  `json:"audio"`
 			Mouse        *bool  `json:"mouse"`
+			Keyboard     *bool  `json:"keyboard"`
 			AllowControl *bool  `json:"allow_control"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		ok := s.hub.UpdateInboundClient(body.ID, body.Audio, body.Mouse, body.AllowControl)
+		ok := s.hub.UpdateInboundClient(body.ID, body.Audio, body.Mouse, body.Keyboard, body.AllowControl)
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": ok})
 	})
 
@@ -514,6 +526,7 @@ func (s *Server) SetupRoutes() http.Handler {
 		var body struct {
 			Audio        *bool `json:"audio"`
 			Mouse        *bool `json:"mouse"`
+			Keyboard     *bool `json:"keyboard"`
 			AllowControl *bool `json:"allow_control"`
 			Disconnect   bool  `json:"disconnect"`
 		}
@@ -524,7 +537,7 @@ func (s *Server) SetupRoutes() http.Handler {
 		if body.Disconnect {
 			s.hub.DisconnectAllInboundClients()
 		} else {
-			s.hub.UpdateAllInboundClients(body.Audio, body.Mouse, body.AllowControl)
+			s.hub.UpdateAllInboundClients(body.Audio, body.Mouse, body.Keyboard, body.AllowControl)
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 	})

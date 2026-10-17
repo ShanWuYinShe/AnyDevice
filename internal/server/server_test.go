@@ -10,7 +10,7 @@ import (
 )
 
 func TestHubInboundBatch(t *testing.T) {
-	hub := NewHub(func(a, m int) {})
+	hub := NewHub(func(a, m, k int) {})
 	// Fake inbound clients
 	c1 := &Client{
 		id:           "client-1",
@@ -20,6 +20,7 @@ func TestHubInboundBatch(t *testing.T) {
 		joinedAt:     time.Now(),
 		audioEnabled: true,
 		mouseEnabled: true,
+		keyboardEnabled: true,
 		allowControl: false,
 		send:         make(chan OutMessage, 10),
 	}
@@ -31,6 +32,7 @@ func TestHubInboundBatch(t *testing.T) {
 		joinedAt:     time.Now(),
 		audioEnabled: true,
 		mouseEnabled: true,
+		keyboardEnabled: true,
 		allowControl: false,
 		send:         make(chan OutMessage, 10),
 	}
@@ -44,7 +46,7 @@ func TestHubInboundBatch(t *testing.T) {
 
 	// Test UpdateAllInboundClients - disable audio for all
 	f := false
-	hub.UpdateAllInboundClients(&f, nil, nil)
+	hub.UpdateAllInboundClients(&f, nil, nil, nil)
 
 	clients := hub.GetInboundClients()
 	for _, c := range clients {
@@ -58,7 +60,7 @@ func TestHubInboundBatch(t *testing.T) {
 
 	// Test UpdateAllInboundClients - enable allowControl for all
 	tr := true
-	hub.UpdateAllInboundClients(nil, nil, &tr)
+	hub.UpdateAllInboundClients(nil, nil, nil, &tr)
 	clients = hub.GetInboundClients()
 	for _, c := range clients {
 		if !c.AllowControl {
@@ -71,7 +73,7 @@ func TestHubInboundBatch(t *testing.T) {
 }
 
 func TestOutboundBatch(t *testing.T) {
-	hub := NewHub(func(a, m int) {})
+	hub := NewHub(func(a, m, k int) {})
 	mgr := NewOutboundManager(hub)
 
 	// Add manual peers
@@ -131,8 +133,8 @@ func TestOutboundBatch(t *testing.T) {
 }
 
 func TestBatchAPIs(t *testing.T) {
-	hub := NewHub(func(a, m int) {})
-	s := NewServer(8080, "127.0.0.1", hub, nil, nil, nil)
+	hub := NewHub(func(a, m, k int) {})
+	s := NewServer(8080, "127.0.0.1", hub, nil, nil, nil, nil)
 	handler := s.SetupRoutes()
 
 	// 1. POST /api/inbound/batch
@@ -161,8 +163,8 @@ func TestBatchAPIs(t *testing.T) {
 }
 
 func TestPeerManagerAndAPIs(t *testing.T) {
-	hub := NewHub(func(a, m int) {})
-	s := NewServer(8080, "127.0.0.1", hub, nil, nil, nil)
+	hub := NewHub(func(a, m, k int) {})
+	s := NewServer(8080, "127.0.0.1", hub, nil, nil, nil, nil)
 	handler := s.SetupRoutes()
 
 	// 1. GET /api/self
@@ -179,6 +181,7 @@ func TestPeerManagerAndAPIs(t *testing.T) {
 		"system_audio": f,
 		"mic_audio":    true,
 		"mouse":        true,
+		"keyboard":     true,
 		"control":      f,
 	})
 	req = httptest.NewRequest(http.MethodPost, "/api/self", bytes.NewReader(selfBody))
@@ -220,13 +223,14 @@ func TestPeerManagerAndAPIs(t *testing.T) {
 		t.Fatalf("expected Remote-Office-PC, got %s", p.Name)
 	}
 
-	// 5. POST /api/peers/map (test separate audio mapping)
+	// 5. POST /api/peers/map (test separate audio, mouse and keyboard mapping)
 	tr := true
 	mapBody, _ := json.Marshal(map[string]interface{}{
 		"peer_id":           p.ID,
 		"play_system_audio": tr,
 		"play_mic_audio":    f,
 		"execute_mouse":     tr,
+		"execute_keyboard":  tr,
 	})
 	req = httptest.NewRequest(http.MethodPost, "/api/peers/map", bytes.NewReader(mapBody))
 	rec = httptest.NewRecorder()
