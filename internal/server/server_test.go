@@ -232,4 +232,29 @@ func TestPeerManagerAndAPIs(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK from POST /api/peers/map, got %d", rec.Code)
 	}
+
+	// 6. POST /api/peers/rename
+	renameBody, _ := json.Marshal(map[string]interface{}{
+		"peer_id": p.ID,
+		"name":    "会议室主屏电脑",
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/peers/rename", bytes.NewReader(renameBody))
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK from POST /api/peers/rename, got %d", rec.Code)
+	}
+
+	// Verify rename in GET /api/peers
+	req = httptest.NewRequest(http.MethodGet, "/api/peers", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	var peersResp2 struct {
+		Peers []UnifiedPeer `json:"peers"`
+		Total int           `json:"total"`
+	}
+	_ = json.NewDecoder(rec.Body).Decode(&peersResp2)
+	if len(peersResp2.Peers) == 0 || peersResp2.Peers[0].Name != "会议室主屏电脑" {
+		t.Fatalf("expected 会议室主屏电脑, got %+v", peersResp2.Peers)
+	}
 }

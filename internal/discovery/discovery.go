@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"any_device/internal/util"
 )
 
 const (
@@ -268,7 +270,7 @@ func (s *Service) listenLoop(ctx context.Context) {
 
 		// Skip self announcement
 		s.mu.RLock()
-		isSelf := b.ID == s.id || (b.IP == s.currentIP && b.Port == s.port)
+		isSelf := b.ID == s.id || (b.IP == s.currentIP && b.Port == s.port) || (util.IsLocalIP(b.IP) && b.Port == s.port)
 		s.mu.RUnlock()
 		if isSelf {
 			continue
@@ -280,6 +282,9 @@ func (s *Service) listenLoop(ctx context.Context) {
 			if udpAddr, ok := remoteAddr.(*net.UDPAddr); ok {
 				peerIP = udpAddr.IP.String()
 			}
+		}
+		if util.IsLocalIP(peerIP) && b.Port == s.port {
+			continue
 		}
 		peerTarget := fmt.Sprintf("%s:%d", peerIP, b.Port)
 
@@ -384,6 +389,11 @@ func (s *Service) RegisterInboundClient(id, remoteAddr, userAgent string) *Disco
 		ip = remoteAddr[:idx]
 	}
 
+	// Never register local UI or loopback connections as an external peer!
+	if util.IsLocalIP(ip) {
+		return nil
+	}
+
 	friendlyName := "外部终端"
 	osName := "web"
 	if strings.Contains(userAgent, "iPhone") {
@@ -425,12 +435,31 @@ func (s *Service) RegisterInboundClient(id, remoteAddr, userAgent string) *Disco
 	return p
 }
 
+func (s *Service) RenamePeer(id, newName string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	p, exists := s.peers[id]
+	if !exists {
+		return false
+	}
+	newName = strings.TrimSpace(newName)
+	if newName != "" {
+		p.Name = newName
+	}
+	return true
+}
+
 func (s *Service) GetPeers() []DiscoveredPeer {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	result := make([]DiscoveredPeer, 0, len(s.peers))
 	for _, p := range s.peers {
+		// Strictly filter out self and local loopback/interface IPs
+		if p.ID == s.id || util.IsLocalIP(p.IP) {
+			continue
+		}
 		result = append(result, *p)
 	}
 	return result

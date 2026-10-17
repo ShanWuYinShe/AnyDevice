@@ -104,6 +104,25 @@
             box-shadow: 0 0 8px var(--emerald);
         }
 
+        .rename-trigger-btn {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 0.75rem;
+            padding: 2px 7px;
+            border-radius: 4px;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+        }
+        .rename-trigger-btn:hover {
+            color: #60a5fa;
+            border-color: rgba(96, 165, 250, 0.4);
+            background: rgba(96, 165, 250, 0.12);
+        }
+
         .nic-select {
             background: rgba(255, 255, 255, 0.05);
             border: 1px solid var(--border);
@@ -716,6 +735,7 @@
             <div class="host-badge">
                 <span class="dot"></span>
                 <span id="headerHostName">本机设备</span>
+                <button class="rename-trigger-btn" id="renameSelfBtn" title="修改本机名称">✏️ 改名</button>
             </div>
             <select class="nic-select" id="nicSelect" title="切换通信网卡">
                 <option value="">载入网卡中...</option>
@@ -1049,8 +1069,15 @@
                 const data = await res.json();
                 activePeers = data.peers || [];
 
-                // Filter out self if present
-                const peers = activePeers.filter(p => p.id !== (localSelf ? localSelf.id : ''));
+                // Filter out self strictly
+                const peers = activePeers.filter(p => {
+                    if (!p) return false;
+                    if (localSelf && p.id === localSelf.id) return false;
+                    if (p.ip === '127.0.0.1' || p.ip === 'localhost' || p.ip === '::1' || p.ip.startsWith('127.')) return false;
+                    if (localSelf && p.ip === localSelf.current_ip) return false;
+                    if (localSelf && localSelf.interfaces && localSelf.interfaces.some(i => i.ip === p.ip)) return false;
+                    return true;
+                });
 
                 if (discoveryCountLabel) {
                     discoveryCountLabel.innerText = `发现 ${peers.length} 台对端设备`;
@@ -1107,7 +1134,13 @@
                         <div class="peer-main-info">
                             <div class="peer-avatar">${devIcon}</div>
                             <div class="peer-names">
-                                <div class="peer-name">${escapeHTML(p.name)}</div>
+                                <div style="display: flex; align-items: center; gap: 6px;">
+                                    <span class="peer-name">${escapeHTML(p.name)}</span>
+                                    <button class="rename-trigger-btn peer-rename-btn" 
+                                            title="修改此对端的备注名称" 
+                                            data-peer-id="${p.id}" 
+                                            data-peer-name="${escapeHTML(p.name)}">✏️ 备注</button>
+                                </div>
                                 <div class="peer-addr">${escapeHTML(p.target || p.ip)} · 最近更新 ${p.last_seen || ''}</div>
                             </div>
                         </div>
@@ -1198,6 +1231,34 @@
                         } else if (action === 'remote-control') {
                             const peerName = btn.getAttribute('data-peer-name');
                             openRemoteControl(peerId, peerName);
+                        }
+                    });
+                });
+
+                // Bind peer rename buttons
+                card.querySelectorAll('.peer-rename-btn').forEach(btn => {
+                    btn.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        const peerId = btn.getAttribute('data-peer-id');
+                        const curName = btn.getAttribute('data-peer-name');
+                        const newName = prompt(`为设备 "${curName}" 设置备注名称:`, curName);
+                        if (newName !== null && newName.trim() !== '' && newName.trim() !== curName) {
+                            try {
+                                const res = await fetch('/api/peers/rename', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ peer_id: peerId, name: newName.trim() })
+                                });
+                                if (res.ok) {
+                                    showToast(`对端已备注为: ${newName.trim()} ✏️`);
+                                    fetchPeers();
+                                } else {
+                                    const err = await res.text();
+                                    showToast('修改备注失败: ' + err);
+                                }
+                            } catch (err) {
+                                showToast('网络错误: ' + err);
+                            }
                         }
                     });
                 });
@@ -1350,6 +1411,32 @@
                 closeModal('selfSettingsModal');
                 fetchSelf();
                 showToast('本机共享设置已更新');
+            });
+        }
+
+        // Rename Self Quick Handler
+        const renameSelfBtn = document.getElementById('renameSelfBtn');
+        if (renameSelfBtn) {
+            renameSelfBtn.addEventListener('click', async () => {
+                const curName = localSelf ? localSelf.name : '';
+                const newName = prompt('请输入新的本机设备名称 (在局域网中显示的名称):', curName);
+                if (newName !== null && newName.trim() !== '' && newName.trim() !== curName) {
+                    try {
+                        const res = await fetch('/api/self', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ name: newName.trim() })
+                        });
+                        if (res.ok) {
+                            showToast(`本机名称已更新为: ${newName.trim()} ✏️`);
+                            fetchSelf();
+                        } else {
+                            showToast('修改本机名称失败');
+                        }
+                    } catch (e) {
+                        showToast('网络错误: ' + e);
+                    }
+                }
             });
         }
 

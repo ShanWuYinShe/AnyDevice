@@ -213,6 +213,28 @@ func (s *Server) SetupRoutes() http.Handler {
 		})
 	})
 
+	mux.HandleFunc("/api/peers/rename", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var body struct {
+			PeerID string `json:"peer_id"`
+			Name   string `json:"name"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if body.PeerID == "" || body.Name == "" {
+			http.Error(w, "缺少 peer_id 或设备名称", http.StatusBadRequest)
+			return
+		}
+		err := s.peerMgr.RenamePeer(body.PeerID, body.Name)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+	})
+
 	mux.HandleFunc("/api/peers/map", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		var body struct {

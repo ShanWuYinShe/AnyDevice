@@ -160,3 +160,21 @@ func PrintAllInterfaces() {
 	fmt.Println("可以通过 -ip 参数指定使用某一个 IP, 例如: any_device -ip 192.168.1.100")
 	fmt.Println("==================================================================")
 }
+
+// IsLocalIP returns true if the given IP string matches loopback, localhost, or any local NIC IPv4.
+func IsLocalIP(ipStr string) bool {
+	ipStr = strings.TrimSpace(ipStr)
+	if ipStr == "" || ipStr == "localhost" || ipStr == "127.0.0.1" || ipStr == "::1" || strings.HasPrefix(ipStr, "127.") {
+		return true
+	}
+	parsed := net.ParseIP(ipStr)
+	if parsed != nil && (parsed.IsLoopback() || parsed.IsUnspecified()) {
+		return true
+	}
+	for _, info := range GetAllIPs() {
+		if info.IP == ipStr {
+			return true
+		}
+	}
+	return false
+}

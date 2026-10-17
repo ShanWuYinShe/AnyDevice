@@ -116,6 +116,18 @@ func (pm *PeerManager) AddManualPeer(target, name string) UnifiedPeer {
 	}
 }
 
+// RenamePeer assigns a custom name or alias to a peer.
+func (pm *PeerManager) RenamePeer(peerID, newName string) error {
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		return fmt.Errorf("设备名称不能为空")
+	}
+	if !pm.discovery.RenamePeer(peerID, newName) {
+		return fmt.Errorf("未找到该对端设备")
+	}
+	return nil
+}
+
 // SetMapping updates the discoverer's local mapping decisions for a peer.
 func (pm *PeerManager) SetMapping(peerID string, playAudio, executeMouse, remoteControl *bool) error {
 	pm.mu.Lock()
