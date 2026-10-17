@@ -220,20 +220,25 @@ func (pm *PeerManager) SetMapping(peerID string, playSystemAudio, playMicAudio, 
 	}
 	pm.mu.RUnlock()
 	if connected && connObj != nil && connObj.conn != nil {
-		_ = connObj.conn.WriteJSON(mappingHandshake(snap))
+		_ = connObj.conn.WriteJSON(pm.mappingHandshake(snap))
 	}
 
 	return nil
 }
 
-// mappingHandshake 依据本地映射决策生成发给对端的订阅声明：
-// 对端 hub 按此决定是否把它的音频/鼠标/键盘流转发给本连接。
-func mappingHandshake(m PeerMappingState) map[string]interface{} {
+// mappingHandshake 依据本地映射决策生成发给对端的握手声明：
+//   - 订阅部分（audio/mouse/keyboard）：对端 hub 按此决定是否把它的
+//     音频/鼠标/键盘流转发给本连接；
+//   - 身份部分（node_id/node_name）：让对端把本连接归并到本机的设备档案，
+//     避免“同一台设备因自动发现/主动连接出现多条目”。
+func (pm *PeerManager) mappingHandshake(m PeerMappingState) map[string]interface{} {
 	return map[string]interface{}{
-		"action":   "set_mapping",
-		"audio":    m.PlaySystemAudioLocal || m.PlayMicAudioLocal || m.PlayAudioLocal,
-		"mouse":    m.ExecuteMouseLocal,
-		"keyboard": m.ExecuteKeyboardLocal,
+		"action":    "set_mapping",
+		"audio":     m.PlaySystemAudioLocal || m.PlayMicAudioLocal || m.PlayAudioLocal,
+		"mouse":     m.ExecuteMouseLocal,
+		"keyboard":  m.ExecuteKeyboardLocal,
+		"node_id":   pm.discovery.ID(),
+		"node_name": pm.discovery.Name(),
 	}
 }
 
@@ -306,7 +311,7 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 
 	// 连接建立即声明本端需要的流订阅（此前依赖对端默认全开；
 	// 现在对端把默认订阅收紧后，必须显式握手，否则收不到任何流）
-	_ = conn.WriteJSON(mappingHandshake(*mapping))
+	_ = conn.WriteJSON(pm.mappingHandshake(*mapping))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	connObj := &peerConnection{

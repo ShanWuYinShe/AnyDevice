@@ -527,8 +527,10 @@ func (s *Service) upsertBeacon(b Beacon, peerIP string) {
 		}
 	}
 	if exists {
-		// 同 IP 的其他来源档案（更早的手动/入站记录）并入本条目后清除
-		if other := s.findByIPLocked(peerIP, b.ID); other != nil {
+		// 同 IP 的其他来源档案（更早的手动/入站记录）并入本条目后必须清除，
+		// 否则同一设备会出现 beacon + 入站残留双条目（外部终端 52749 之类的来源）。
+		// 排除自身（p.ID）：归并复用的场景 p 就是那个同 IP 条目，不能误删。
+		if other := s.findByIPLocked(peerIP, p.ID); other != nil {
 			if p.Alias == "" && other.Alias != "" {
 				p.Alias = other.Alias
 				s.aliases[p.ID] = other.Alias
@@ -538,6 +540,7 @@ func (s *Service) upsertBeacon(b Beacon, peerIP string) {
 				p.IsManual = true
 				p.Source = SourceManual
 			}
+			delete(s.peers, other.ID)
 		}
 		p.Name = b.Name
 		p.OS = b.OS
@@ -577,6 +580,51 @@ func (s *Service) upsertBeacon(b Beacon, peerIP string) {
 
 	if !exists && onFound != nil {
 		go onFound(snapshot)
+	}
+}
+
+// ClaimNodeIdentity 将一次主动连接的对端身份认领到正确的设备档案：
+// 对端 AnyDevice 实例通过 ws 握手上报自己的节点 ID 与名称。
+//   - beacon 档案与入站档案并存：入站档案是同一设备经连接注册的重复档案，
+//     删除入站档案、别名转移给 beacon 档案（多网卡机器 beacon IP 与连接源 IP
+//     可能不同，按 IP 归并在这种场景会失效，节点 ID 是唯一权威身份）；
+//   - 只有入站档案（beacon 尚未到达）：直接用对端名称更新，ID 等 beacon 到达后归并；
+//   - 只有 beacon 档案：刷新在线状态（这是一次来自该设备的主动连接）。
+func (s *Service) ClaimNodeIdentity(ip, nodeID, nodeName string) {
+	if nodeID == "" {
+		return
+	}
+	ip = strings.Trim(ip, "[]")
+	now := time.Now()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	inbound := s.peers[inboundIDPrefix+ip]
+	beacon, hasBeacon := s.peers[nodeID]
+
+	if hasBeacon && (beacon == inbound || inbound == nil) {
+		beacon.LastSeen = now
+		beacon.Online = true
+		return
+	}
+	if hasBeacon && inbound != nil {
+		if beacon.Alias == "" && inbound.Alias != "" {
+			beacon.Alias = inbound.Alias
+			s.aliases[beacon.ID] = inbound.Alias
+		}
+		s.aliasesByIP[ip] = beacon.ID // 别名索引指向权威档案
+		delete(s.peers, inbound.ID)
+		beacon.LastSeen = now
+		beacon.Online = true
+		return
+	}
+	if inbound != nil {
+		if nodeName != "" {
+			inbound.Name = nodeName
+		}
+		inbound.LastSeen = now
+		inbound.Online = true
 	}
 }
 
@@ -750,7 +798,7 @@ func (s *Service) RegisterInboundClient(id, remoteAddr, userAgent string) *Disco
 		snapshot := *existing
 		return &snapshot
 	}
-	friendlyName := "外部终端"
+	friendlyName := "局域网设备"
 	osName := "web"
 	if strings.Contains(userAgent, "iPhone") {
 		friendlyName = "苹果手机 (iPhone)"

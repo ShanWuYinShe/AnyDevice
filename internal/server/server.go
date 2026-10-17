@@ -99,6 +99,13 @@ func NewServer(port int, initialIP string, hub *Hub, systemAudioEngine *audio.En
 	// 连接断开后最多 5 秒即在列表中显示离线（此前依赖 7 秒超时且重连会堆积条目）。
 	go s.reconcileInboundLoop()
 
+	// 对端节点身份回调：对端主动连接时通过握手上报自己的节点 ID，
+	// 据此把入站档案归并到正确的设备（跨 IP 场景按 IP 归并会失效，
+	// 节点 ID 是设备唯一权威身份）。
+	hub.SetNodeIdentityHandler(func(remoteIP, nodeID, nodeName string) {
+		s.discovery.ClaimNodeIdentity(viewerHost(remoteIP), nodeID, nodeName)
+	})
+
 	return s
 }
 

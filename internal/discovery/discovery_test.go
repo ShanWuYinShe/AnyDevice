@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"testing"
+	"time"
 )
 
 func TestDiscoveryService(t *testing.T) {
@@ -327,5 +328,52 @@ func TestReconcileByIP(t *testing.T) {
 	s.ReconcileInbound(map[string]bool{})
 	if p := s.peers["inbound-203.0.113.9"]; p.Online {
 		t.Fatal("expected inbound entry offline when connection set empty")
+	}
+}
+
+// TestDedupeBeaconRemovesStaleInbound 回归：beacon 更新同 IP 设备时，
+// 必须清除被吸收的入站残留档案（外部终端 52749 之类的来源）。
+func TestDedupeBeaconRemovesStaleInbound(t *testing.T) {
+	s := NewService(8080, "192.168.1.100", DeviceCapabilities{})
+
+	// 构造历史脏数据：beacon 档案 + 同 IP 的入站残留档案并存
+	s.upsertBeacon(Beacon{ID: "nodeA", Name: "Mac", OS: "darwin", IP: "192.168.1.200", Port: 8080}, "192.168.1.200")
+	s.peers["inbound-192.168.1.200"] = &DiscoveredPeer{
+		ID: "inbound-192.168.1.200", Name: "外部终端 [192.168.1.200:52749]",
+		OS: "web", IP: "192.168.1.200", Port: 8080,
+		Target: "192.168.1.200:52749", LastSeen: time.Now(), Online: true, Source: SourceInbound,
+	}
+
+	s.upsertBeacon(Beacon{ID: "nodeA", Name: "Mac", OS: "darwin", IP: "192.168.1.200", Port: 8080}, "192.168.1.200")
+
+	if len(s.peersList()) != 1 {
+		t.Fatalf("expected stale inbound entry removed, entries: %+v", s.peersList())
+	}
+	if _, ok := s.peers["inbound-192.168.1.200"]; ok {
+		t.Fatal("stale inbound entry still present")
+	}
+}
+
+// TestClaimNodeIdentity 校验节点身份认领：入站档案与 beacon 档案并存时
+// 以节点 ID 为权威身份归并为一条。
+func TestClaimNodeIdentity(t *testing.T) {
+	s := NewService(8080, "192.168.1.100", DeviceCapabilities{})
+
+	// 入站档案先建（连接先于 beacon 到达）
+	s.RegisterInboundClient("client-1", "192.168.1.200:5000", "Mozilla/5.0")
+	// 同 IP 的 beacon（不同节点 ID——多网卡场景 beacon IP 与连接源 IP 一致时按 IP 归并，
+	// 这里直接构造并存验证身份归并）
+	s.upsertBeacon(Beacon{ID: "nodeA", Name: "出厂名", OS: "darwin", IP: "192.168.1.200", Port: 8080}, "192.168.1.200")
+
+	// 连接方通过握手认领身份
+	s.ClaimNodeIdentity("192.168.1.200", "nodeA", "客厅 Mac mini")
+
+	if len(s.peersList()) != 1 {
+		t.Fatalf("expected 1 entry after identity claim, got %+v", s.peersList())
+	}
+	// ID 归并策略保持既有条目 ID（映射/备注绑定不破坏），
+	// 身份认领仅更新显示名并保活，等 beacon 到达后按 IP 自然归并
+	if p := s.peers["inbound-192.168.1.200"]; p == nil || !p.Online || p.Name != "客厅 Mac mini" {
+		t.Fatalf("expected inbound entry renamed and kept online, got %+v", p)
 	}
 }

@@ -93,6 +93,15 @@ type Hub struct {
 	totalBytesSent uint64
 	clientCount    int64
 	onSubsChanged  func(audioSubs, mouseSubs, keyboardSubs int)
+	// onNodeIdentity 在对端通过握手上报自己的节点身份时触发
+	// （remoteIP=连接源 IP，nodeID=对端节点 ID，nodeName=对端广播名），
+	// 服务端据此把入站档案归并到正确的设备（跨 IP 场景按 IP 归并会失效）。
+	onNodeIdentity func(remoteIP, nodeID, nodeName string)
+}
+
+// SetNodeIdentityHandler 注册对端节点身份回调（由 server 启动时注入）。
+func (h *Hub) SetNodeIdentityHandler(fn func(remoteIP, nodeID, nodeName string)) {
+	h.onNodeIdentity = fn
 }
 
 func NewHub(onSubsChanged func(audioSubs, mouseSubs, keyboardSubs int)) *Hub {
@@ -463,6 +472,9 @@ func (c *Client) readPump() {
 				Audio    *bool  `json:"audio"`
 				Mouse    *bool  `json:"mouse"`
 				Keyboard *bool  `json:"keyboard"`
+				// 对端节点身份（新版实例握手时上报，用于设备档案归并）
+				NodeID   string `json:"node_id"`
+				NodeName string `json:"node_name"`
 				// Reverse input control fields
 				Type string `json:"type"` // "move", "click", "button", "scroll"
 				Dx   int    `json:"dx"`
@@ -475,6 +487,9 @@ func (c *Client) readPump() {
 			}
 
 			if cmd.Action == "set_mapping" {
+				if cmd.NodeID != "" && c.hub.onNodeIdentity != nil {
+					c.hub.onNodeIdentity(c.remoteIP, cmd.NodeID, cmd.NodeName)
+				}
 				c.mu.Lock()
 				if cmd.Audio != nil {
 					c.audioEnabled = *cmd.Audio

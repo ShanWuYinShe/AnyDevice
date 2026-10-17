@@ -63,7 +63,7 @@
           <span class="peer-name">{peer.name}</span>
           <button class="rename-trigger-btn" title="修改此对端的备注名称" onclick={() => renamePeer(peer, peer.name)}>✏️ 备注</button>
         </div>
-        <div class="peer-addr">{peer.target || peer.ip} · 最近更新 {peer.last_seen || ''}</div>
+        <div class="peer-addr">{peer.ip}:{peer.port} · 最近更新 {peer.last_seen || ''}</div>
       </div>
     </div>
     <div class="peer-status-pill" class:online={peer.online} class:offline={!peer.online}>

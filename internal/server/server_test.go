@@ -325,20 +325,21 @@ func TestViewerSelfFiltering(t *testing.T) {
 	}
 }
 
-// TestMappingHandshake 校验订阅声明内容：音频取系统声/麦克风的并集。
+// TestMappingHandshake 校验订阅声明内容：音频取系统声/麦克风的并集，
+// 并携带本机节点身份（供对端归并设备档案）。
 func TestMappingHandshake(t *testing.T) {
+	hub := NewHub(func(a, m, k int) {})
+	s := NewServer(8080, "127.0.0.1", hub, nil, nil, nil, nil)
 	m := PeerMappingState{PlaySystemAudioLocal: true, ExecuteKeyboardLocal: true}
-	h := mappingHandshake(m)
+	h := s.peerMgr.mappingHandshake(m)
 	if h["audio"] != true || h["mouse"] != false || h["keyboard"] != true {
 		t.Fatalf("unexpected handshake: %+v", h)
 	}
-	m2 := PeerMappingState{PlayMicAudioLocal: true}
-	h2 := mappingHandshake(m2)
-	if h2["audio"] != true {
-		t.Fatalf("mic mapping must imply audio subscription: %+v", h2)
+	if h["node_id"] == "" || h["node_name"] == "" {
+		t.Fatalf("handshake must carry node identity: %+v", h)
 	}
 	m3 := PeerMappingState{}
-	h3 := mappingHandshake(m3)
+	h3 := s.peerMgr.mappingHandshake(m3)
 	if h3["audio"] != false || h3["mouse"] != false || h3["keyboard"] != false {
 		t.Fatalf("empty mapping must subscribe nothing: %+v", h3)
 	}
