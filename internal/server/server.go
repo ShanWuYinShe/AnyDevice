@@ -75,7 +75,7 @@ func NewServer(port int, initialIP string, hub *Hub, systemAudioEngine *audio.En
 	}
 	disc.SetPersistHook(func(c util.NodeConfig) {
 		if err := util.SaveNodeConfig(c); err != nil {
-			fmt.Printf("[Discovery] 配置持久化失败 (可用环境变量 ANY_DEVICE_CONFIG 指定可写路径): %v\n", err)
+			util.Logf("[Discovery] 配置持久化失败 (可用环境变量 ANY_DEVICE_CONFIG 指定可写路径): %v\n", err)
 		}
 	})
 
@@ -459,7 +459,11 @@ func (s *Server) SetupRoutes() http.Handler {
 		if s.micAudioEngine != nil {
 			micDev = s.micAudioEngine.DeviceName()
 		}
+		audioSubs, mouseSubs, keyboardSubs := s.hub.SubscriberCounts()
 		status := map[string]interface{}{
+			"audio_subs":          audioSubs,
+			"mouse_subs":          mouseSubs,
+			"keyboard_subs":       keyboardSubs,
 			"clients":             s.hub.ClientCount(),
 			"inbound_count":       s.hub.ClientCount(),
 			"outbound_count":      len(s.outboundMgr.ListPeers()),

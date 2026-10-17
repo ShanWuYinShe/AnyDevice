@@ -388,7 +388,7 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 					audioFwdBytes += len(data)
 					now := time.Now()
 					if now.Sub(audioFwdLastLog) >= 2*time.Second {
-						fmt.Printf("[音频诊断] 转发端: 收到对端音频 %d 帧/%d KB（最新 tag=%s, 映射开=%v/%v/%v）\n",
+						util.Logf("[音频诊断] 转发端: 收到对端音频 %d 帧/%d KB（最新 tag=%s, 映射开=%v/%v/%v）\n",
 							audioFwdFrames-audioFwdLastFrames, (audioFwdBytes-audioFwdLastBytes)/1024, tag,
 							curMapping.PlaySystemAudioLocal, curMapping.PlayMicAudioLocal, curMapping.PlayAudioLocal)
 						audioFwdLastFrames = audioFwdFrames
@@ -422,7 +422,7 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 				if err := json.Unmarshal(data, &evt); err == nil {
 					// Execute remote mouse movements & clicks directly on local OS!
 					if util.DebugKeys() && evt.Action != "move" {
-						fmt.Printf("[鼠标链路] 收到对端鼠标 %s (%.2f, %.2f)\n", evt.Action, evt.X, evt.Y)
+						util.Logf("[鼠标链路] 收到对端鼠标 %s (%.2f, %.2f)\n", evt.Action, evt.X, evt.Y)
 					}
 					if evt.Action == "wheel" {
 						// 滚轮同步：正 = 向上
@@ -465,7 +465,7 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 				if err := json.Unmarshal(data, &evt); err == nil {
 					// Execute remote physical keyboard events directly on local OS!
 					if util.DebugKeys() {
-						fmt.Printf("[键盘链路] 收到对端按键 %s %s (键码 %d)\n", evt.Key, evt.Action, evt.KeyCode)
+						util.Logf("[键盘链路] 收到对端按键 %s %s (键码 %d)\n", evt.Key, evt.Action, evt.KeyCode)
 					}
 					keyboard.SimulateKey(evt.Key, evt.Action == "down")
 				}

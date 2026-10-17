@@ -11,11 +11,12 @@
 package ui
 
 import (
-	"fmt"
 	"net/http"
 
 	wails "github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
+
+	"any_device/internal/util"
 )
 
 // RunDesktop 打开原生桌面窗口并阻塞至窗口关闭。
@@ -28,6 +29,6 @@ func RunDesktop(handler http.Handler, localURL, title string, width, height int)
 		AssetsHandler: handler,
 	})
 	if err != nil {
-		fmt.Printf("[UI] Wails 窗口异常退出: %v\n", err)
+		util.Logf("[UI] Wails 窗口异常退出: %v\n", err)
 	}
 }

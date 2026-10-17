@@ -1,5 +1,5 @@
 <script>
-  import { telemetry, audioRate, audioPlayState, renamePeer, toggleMapping, primeAudio } from './state.svelte.js';
+  import { telemetry, audioRate, audioPlayState, renamePeer, toggleMapping, primeAudio, resumeAudio } from './state.svelte.js';
 
   let { peer } = $props();
 
@@ -82,12 +82,22 @@
           {hasSystemAudio ? (provides.audio_device || '立体声系统声音流') : '对端未开启系统声音'}
           {#if sysAudioMapped}
             · 收到 {audioRate.sys} KB/s · {audioPlayState.text}
+            {#if mapping.connection_status === 'connected'}
+              · 已连接
+            {:else if mapping.connection_status && mapping.connection_status !== 'disconnected'}
+              · 连接{String(mapping.connection_status).includes('error') ? '失败' : '中'}
+            {/if}
           {/if}
         </span>
       </div>
       <button class="map-btn" class:active-emerald={sysAudioMapped} disabled={!hasSystemAudio} onclick={onToggleSystemAudio}>
         {sysAudioMapped ? '🔊 正在本地播放对端系统声音 (点击关闭)' : '🔈 映射并在本地播放系统声音'}
       </button>
+      {#if sysAudioMapped && audioPlayState.text.includes('suspended')}
+        <button class="nav-btn" style="padding: 8px; justify-content: center;" onclick={resumeAudio}>
+          🔇 播放器被系统挂起 — 点击恢复播放
+        </button>
+      {/if}
     </div>
 
     <!-- 麦克风输入 -->

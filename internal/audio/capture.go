@@ -120,7 +120,7 @@ func (e *Engine) Start() error {
 	// Try hardware capture via malgo
 	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
-		fmt.Printf("[Audio] Malgo context init failed for %s: %v\n", e.kind, err)
+		util.Logf("[Audio] Malgo context init failed for %s: %v\n", e.kind, err)
 		if e.kind == KindSystem {
 			e.devName = "系统扬声器 (驱动回退测试音)"
 			e.startTestTone()
@@ -223,10 +223,10 @@ func (e *Engine) Start() error {
 				c, b, silent := e.dbgChunks, uint64(e.dbgBytes), e.dbgSilent
 				e.mu.Unlock()
 				if c == lastChunks && lastBytes != 0 {
-					fmt.Printf("[音频诊断] %s 捕获已停止增长（chunks=%d）\n", kindName, c)
+					util.Logf("[音频诊断] %s 捕获已停止增长（chunks=%d）\n", kindName, c)
 					continue
 				}
-				fmt.Printf("[音频诊断] %s 捕获: %d chunks/2s, %d KB/2s, 本段全零静音=%v\n", kindName, c-lastChunks, (b-lastBytes)/1024, silent)
+				util.Logf("[音频诊断] %s 捕获: %d chunks/2s, %d KB/2s, 本段全零静音=%v\n", kindName, c-lastChunks, (b-lastBytes)/1024, silent)
 				lastChunks, lastBytes = c, b
 			}
 		}()
@@ -257,7 +257,7 @@ func (e *Engine) Start() error {
 
 	device, err := malgo.InitDevice(e.ctx.Context, deviceConfig, callbacks)
 	if err != nil {
-		fmt.Printf("[Audio] Warning: Failed to init audio device for %s (%v).\n", e.kind, err)
+		util.Logf("[Audio] Warning: Failed to init audio device for %s (%v).\n", e.kind, err)
 		if e.kind == KindSystem {
 			e.devName = "系统扬声器 (测试音)"
 			e.startTestTone()
@@ -300,7 +300,7 @@ func (e *Engine) autoSelectVirtualDevice(config *malgo.DeviceConfig, devType mal
 	for _, d := range devices {
 		name := d.Name()
 		if isVirtualDeviceName(name) {
-			fmt.Printf("[Audio] Auto-detected virtual audio loopback: %s\n", name)
+			util.Logf("[Audio] Auto-detected virtual audio loopback: %s\n", name)
 			e.devName = fmt.Sprintf("系统输出 [%s]", name)
 			if devType == malgo.Loopback {
 				config.Playback.DeviceID = d.ID.Pointer()

@@ -223,6 +223,26 @@ func (h *Hub) notifySubscribers() {
 	}
 }
 
+// SubscriberCounts 返回各类流的当前订阅客户端数（诊断用）。
+func (h *Hub) SubscriberCounts() (audio, mouse, keyboard int) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for client := range h.clients {
+		client.mu.RLock()
+		if client.audioEnabled {
+			audio++
+		}
+		if client.mouseEnabled {
+			mouse++
+		}
+		if client.keyboardEnabled {
+			keyboard++
+		}
+		client.mu.RUnlock()
+	}
+	return
+}
+
 // BroadcastAudio pushes an audio PCM chunk to subscribed clients.
 func (h *Hub) BroadcastAudio(chunk []byte) {
 	select {

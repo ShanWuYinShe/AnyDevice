@@ -4,12 +4,13 @@ package keyboard
 
 import (
 	"context"
-	"fmt"
 	"runtime"
 	"sync"
 	"syscall"
 	"time"
 	"unsafe"
+
+	"any_device/internal/util"
 )
 
 var (
@@ -151,7 +152,7 @@ var (
 func kbHookProc(code int32, wParam uintptr, lParam uintptr) (rc uintptr) {
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Printf("[键盘捕获] 钩子回调异常: %v\n", r)
+			util.Logf("[键盘捕获] 钩子回调异常: %v\n", r)
 			rc = 0
 		}
 	}()
@@ -202,12 +203,12 @@ func kbHookProc(code int32, wParam uintptr, lParam uintptr) (rc uintptr) {
 func runEventCapture(ctx context.Context, emit func(KeyEvent)) bool {
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Printf("[键盘捕获] 事件钩子异常退出，已回退轮询模式: %v\n", r)
+			util.Logf("[键盘捕获] 事件钩子异常退出，已回退轮询模式: %v\n", r)
 		}
 	}()
 	for _, p := range []*syscall.LazyProc{procSetWindowsHooksExW, procUnhookWindowsHookEx, procCallNextHookEx, procGetMessageW, procPostThreadMessageW, procGetModuleHandleW, procGetCurrentThreadId} {
 		if err := p.Find(); err != nil {
-			fmt.Printf("[键盘捕获] 系统 API 不可用 (%v)，回退轮询模式\n", err)
+			util.Logf("[键盘捕获] 系统 API 不可用 (%v)，回退轮询模式\n", err)
 			return false
 		}
 	}
@@ -337,7 +338,7 @@ func SimulateKey(keyName string, down bool) {
 	vk, exists := windowsKeyMap[keyName]
 	if !exists {
 		if down {
-			fmt.Printf("[键盘执行] 收到未映射按键 %s，已忽略\n", keyName)
+			util.Logf("[键盘执行] 收到未映射按键 %s，已忽略\n", keyName)
 		}
 		return
 	}

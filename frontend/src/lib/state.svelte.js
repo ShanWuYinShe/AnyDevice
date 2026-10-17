@@ -195,6 +195,13 @@ export function connectWebSocket() {
 }
 
 // 播放对端音频前先解锁 AudioContext
+// resumeAudio 供"点击恢复播放"按钮调用：用户手势内恢复被系统挂起的 AudioContext
+export function resumeAudio() {
+  ensureAudioContext();
+  audioPlayState.text = 'ctx=' + audioContextState();
+  setTimeout(() => { audioPlayState.text = 'ctx=' + audioContextState(); }, 600);
+}
+
 export function primeAudio() {
   ensureAudioContext();
   // 播放链路状态对外可见：AudioContext 是否被系统挂起（无声排查关键线索）

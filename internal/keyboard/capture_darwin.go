@@ -364,7 +364,7 @@ func kbTapCallback(proxy C.CGEventTapProxy, etype C.CGEventType, event C.CGEvent
 	keyName, ok := codeToKeyName[code]
 	if !ok {
 		if util.DebugKeys() {
-			fmt.Printf("[键盘捕获] 收到未映射键码 %#x，已忽略\n", code)
+			util.Logf("[键盘捕获] 收到未映射键码 %#x，已忽略\n", code)
 		}
 		return event
 	}
@@ -447,14 +447,14 @@ func SimulateKey(keyName string, down bool) {
 	code, exists := darwinKeyMap[keyName]
 	if !exists {
 		if down {
-			fmt.Printf("[键盘执行] 收到未映射按键 %s，已忽略\n", keyName)
+			util.Logf("[键盘执行] 收到未映射按键 %s，已忽略\n", keyName)
 		}
 		return
 	}
 
 	if down {
 		if util.DebugKeys() {
-			fmt.Printf("[键盘执行] %s 按下 修饰位=%#x\n", keyName, activeFlags)
+			util.Logf("[键盘执行] %s 按下 修饰位=%#x\n", keyName, activeFlags)
 		}
 		if ch, ok := keyChar(keyName, activeFlags&flagShift != 0); ok {
 			encoded := utf16.Encode([]rune(ch))

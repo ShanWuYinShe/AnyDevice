@@ -42,6 +42,10 @@ func main() {
 		return
 	}
 
+	// 日志落文件：Wails GUI 版无控制台，引擎初始化失败等关键信息
+	// 写入 exe 同目录的 any_device.log（无权限回退临时目录）
+	util.InitLogFile()
+
 	printBanner()
 
 	// Check devices before starting
@@ -98,13 +102,13 @@ func main() {
 	// 3. Initialize Audio Engines (Independent System Output & Microphone Input)
 	systemAudioEngine = audio.NewEngine(audio.KindSystem, audio.CaptureMode(*mode), *deviceIdx, hub.BroadcastAudio)
 	if err := systemAudioEngine.Start(); err != nil {
-		fmt.Printf("[Audio] 系统声音捕获初始化警告: %v\n", err)
+		util.Logf("[Audio] 系统声音捕获初始化警告: %v\n", err)
 	}
 	defer systemAudioEngine.Stop()
 
 	micAudioEngine = audio.NewEngine(audio.KindMic, audio.CaptureMode(*mode), -1, hub.BroadcastAudio)
 	if err := micAudioEngine.Start(); err != nil {
-		fmt.Printf("[Audio] 麦克风输入捕获初始化警告: %v\n", err)
+		util.Logf("[Audio] 麦克风输入捕获初始化警告: %v\n", err)
 	}
 	defer micAudioEngine.Stop()
 
@@ -112,6 +116,10 @@ func main() {
 	primaryIP := util.GetPrimaryIP(*customIP)
 	primaryURL := fmt.Sprintf("http://%s:%d", primaryIP, *port)
 	localURL := fmt.Sprintf("http://localhost:%d", *port)
+
+	// 引擎状态落文件（GUI 模式排查关键信息）
+	util.Logf("[启动] 系统声音引擎: %s", systemAudioEngine.DeviceName())
+	util.Logf("[启动] 麦克风引擎: %s", micAudioEngine.DeviceName())
 
 	fmt.Printf("\n🚀 AnyDevice 跨端双向设备映射服务已就绪！\n")
 	fmt.Printf("├─ 操作系统: %s (%s)\n", runtime.GOOS, runtime.GOARCH)
@@ -134,12 +142,12 @@ func main() {
 	srv := server.NewServer(*port, primaryIP, hub, systemAudioEngine, micAudioEngine, mouseEngine, keyboardEngine)
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {
-		fmt.Printf("[Fatal] 端口 %d 监听失败（可能已被其他实例占用）: %v\n", *port, err)
+		util.Logf("[Fatal] 端口 %d 监听失败（可能已被其他实例占用）: %v\n", *port, err)
 		os.Exit(1)
 	}
 	go func() {
 		if err := http.Serve(ln, srv.SetupRoutes()); err != nil && err != http.ErrServerClosed {
-			fmt.Printf("[Fatal] HTTP server error: %v\n", err)
+			util.Logf("[Fatal] HTTP server error: %v\n", err)
 			os.Exit(1)
 		}
 	}()
