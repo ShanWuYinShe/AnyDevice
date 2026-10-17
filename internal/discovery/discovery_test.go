@@ -136,7 +136,7 @@ func TestAliasSurvivesBeacon(t *testing.T) {
 
 	// 重启恢复场景：SetAliases 应能应用到已存在条目
 	s2 := NewService(8080, "192.168.1.100", DeviceCapabilities{})
-	s2.SetAliases(map[string]string{c.ID: "客厅手机"})
+	s2.SetAliases(map[string]string{c.ID: "客厅手机"}, nil)
 	s2.upsertBeacon(Beacon{ID: c.ID, Name: "出厂名", OS: "ios", IP: "192.168.1.200", Port: 8080}, "192.168.1.200")
 	for _, p := range s2.GetPeers() {
 		if p.ID == c.ID && p.Name != "客厅手机" {
@@ -192,5 +192,140 @@ func TestDefaultNodeName(t *testing.T) {
 	name := DefaultNodeName()
 	if name == "" {
 		t.Fatal("expected non-empty default node name")
+	}
+}
+
+// —— IP 归并去重回归测试：同一台设备只允许一个条目 ——
+
+// beacon 到达时，同 IP 的入站条目必须被归并升级，而不是新增一条
+func TestDedupeBeaconMergesInbound(t *testing.T) {
+	s := NewService(8080, "192.168.1.100", DeviceCapabilities{})
+
+	reg := s.RegisterInboundClient("client-1", "192.168.1.200:5000", "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)")
+	if reg == nil {
+		t.Fatal("expected inbound registration")
+	}
+	s.upsertBeacon(Beacon{
+		ID: "nodeA", Name: "客厅 Mac mini", OS: "darwin", IP: "192.168.1.200", Port: 8080,
+		Provides: DeviceCapabilities{SystemAudio: true, Mouse: true, Control: true, Audio: true},
+	}, "192.168.1.200")
+
+	peers := s.GetPeers()
+	if len(peers) != 1 {
+		t.Fatalf("expected 1 deduped peer, got %d: %+v", len(peers), peers)
+	}
+	p := peers[0]
+	if p.ID != reg.ID {
+		t.Fatalf("expected stable ID %s, got %s", reg.ID, p.ID)
+	}
+	if p.Source != SourceBeacon {
+		t.Fatalf("expected upgraded source beacon, got %s", p.Source)
+	}
+	if !p.Provides.SystemAudio {
+		t.Fatal("expected provides upgraded from beacon")
+	}
+}
+
+// 手动添加的对端被 beacon 发现后合并为一条，且用户别名保留
+func TestDedupeManualMergeKeepsAlias(t *testing.T) {
+	s := NewService(8080, "192.168.1.100", DeviceCapabilities{})
+
+	manual := s.AddManualPeer("192.168.1.200:8080", "书房台式机")
+	if manual == nil {
+		t.Fatal("expected manual peer")
+	}
+	s.upsertBeacon(Beacon{
+		ID: "nodeB", Name: "出厂主机名", OS: "windows", IP: "192.168.1.200", Port: 8080,
+		Provides: DeviceCapabilities{SystemAudio: true, Control: true},
+	}, "192.168.1.200")
+
+	peers := s.GetPeers()
+	if len(peers) != 1 {
+		t.Fatalf("expected 1 deduped peer, got %d", len(peers))
+	}
+	p := peers[0]
+	if p.Name != "书房台式机" || p.Alias != "书房台式机" {
+		t.Fatalf("expected manual alias kept, got name=%s alias=%s", p.Name, p.Alias)
+	}
+	if !p.IsManual {
+		t.Fatal("manual peer must not lose manual semantics")
+	}
+	if !p.Provides.SystemAudio {
+		t.Fatal("expected provides upgraded from beacon")
+	}
+}
+
+// 对端重启后节点 ID 变化：同 IP 仍归并为一条，条目 ID 保持既有值
+func TestDedupeSameIPNewNodeID(t *testing.T) {
+	s := NewService(8080, "192.168.1.100", DeviceCapabilities{})
+
+	s.upsertBeacon(Beacon{ID: "nodeA", Name: "旧名", OS: "darwin", IP: "192.168.1.200", Port: 8080}, "192.168.1.200")
+	s.upsertBeacon(Beacon{ID: "nodeB", Name: "新名", OS: "darwin", IP: "192.168.1.200", Port: 8080}, "192.168.1.200")
+
+	peers := s.GetPeers()
+	if len(peers) != 1 {
+		t.Fatalf("expected 1 peer after node restart, got %d", len(peers))
+	}
+	if peers[0].ID != "nodeA" {
+		t.Fatalf("expected existing entry ID kept, got %s", peers[0].ID)
+	}
+	if peers[0].Name != "新名" {
+		t.Fatalf("expected beacon data refreshed, got %s", peers[0].Name)
+	}
+}
+
+// beacon 之后同 IP 的入站连接不再新建条目，只刷新在线状态
+func TestDedupeInboundAfterBeacon(t *testing.T) {
+	s := NewService(8080, "192.168.1.100", DeviceCapabilities{})
+
+	s.upsertBeacon(Beacon{ID: "nodeA", Name: "Mac", OS: "darwin", IP: "192.168.1.200", Port: 8080}, "192.168.1.200")
+	reg := s.RegisterInboundClient("client-9", "192.168.1.200:6000", "Mozilla/5.0 (Macintosh)")
+	if reg == nil {
+		t.Fatal("expected registration reuse")
+	}
+	if reg.ID != "nodeA" {
+		t.Fatalf("expected merged into beacon entry, got %s", reg.ID)
+	}
+	if len(s.GetPeers()) != 1 {
+		t.Fatalf("expected 1 peer, got %d", len(s.GetPeers()))
+	}
+}
+
+// 别名按 IP 恢复：设备重启换 ID 后，备注仍按 IP 生效
+func TestAliasRestoredByIP(t *testing.T) {
+	s := NewService(8080, "192.168.1.100", DeviceCapabilities{})
+	s.SetAliases(map[string]string{}, map[string]string{"192.168.1.200": "书房台式机"})
+
+	s.upsertBeacon(Beacon{ID: "brandNewID", Name: "出厂名", OS: "windows", IP: "192.168.1.200", Port: 8080}, "192.168.1.200")
+
+	peers := s.GetPeers()
+	if len(peers) != 1 || peers[0].Name != "书房台式机" {
+		t.Fatalf("expected alias restored by IP, got %+v", peers)
+	}
+}
+
+// 连接集合按 IP 保活：合并后的条目有存活连接时不被心跳超时误删语义影响
+func TestReconcileByIP(t *testing.T) {
+	s := NewService(8080, "192.168.1.100", DeviceCapabilities{})
+
+	s.upsertBeacon(Beacon{ID: "nodeA", Name: "Mac", OS: "darwin", IP: "192.168.1.200", Port: 8080}, "192.168.1.200")
+
+	// 连接存活：保活刷新
+	s.ReconcileInbound(map[string]bool{"192.168.1.200": true})
+	if p := s.peers["nodeA"]; !p.Online {
+		t.Fatal("expected live connection to keep peer online")
+	}
+
+	// 连接断开：beacon 条目离线交给广播心跳管理，不在此置离线
+	s.ReconcileInbound(map[string]bool{})
+	if p := s.peers["nodeA"]; !p.Online {
+		t.Fatal("beacon entry offline must be managed by beacon heartbeat, not reconcile")
+	}
+
+	// 纯入站条目：连接断开立即离线
+	s.RegisterInboundClient("c", "203.0.113.9:7000", "Mozilla/5.0 (iPhone)")
+	s.ReconcileInbound(map[string]bool{})
+	if p := s.peers["inbound-203.0.113.9"]; p.Online {
+		t.Fatal("expected inbound entry offline when connection set empty")
 	}
 }

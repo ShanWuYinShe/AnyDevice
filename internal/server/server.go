@@ -70,8 +70,8 @@ func NewServer(port int, initialIP string, hub *Hub, systemAudioEngine *audio.En
 	if cfg.Name != "" {
 		disc.SetName(cfg.Name)
 	}
-	if len(cfg.Aliases) > 0 {
-		disc.SetAliases(cfg.Aliases)
+	if len(cfg.Aliases) > 0 || len(cfg.AliasesByIP) > 0 {
+		disc.SetAliases(cfg.Aliases, cfg.AliasesByIP)
 	}
 	disc.SetPersistHook(func(c util.NodeConfig) {
 		if err := util.SaveNodeConfig(c); err != nil {

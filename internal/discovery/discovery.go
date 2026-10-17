@@ -92,6 +92,7 @@ type Service struct {
 	provides    DeviceCapabilities
 	peers       map[string]*DiscoveredPeer
 	aliases     map[string]string
+	aliasesByIP map[string]string
 	persist     func(util.NodeConfig)
 	mu          sync.RWMutex
 	cancel      context.CancelFunc
@@ -123,13 +124,14 @@ func DefaultNodeName() string {
 
 func NewService(port int, initialIP string, provides DeviceCapabilities) *Service {
 	return &Service{
-		id:        GenerateNodeID(),
-		name:      DefaultNodeName(),
-		port:      port,
-		currentIP: initialIP,
-		provides:  provides,
-		peers:     make(map[string]*DiscoveredPeer),
-		aliases:   make(map[string]string),
+		id:          GenerateNodeID(),
+		name:        DefaultNodeName(),
+		port:        port,
+		currentIP:   initialIP,
+		provides:    provides,
+		peers:       make(map[string]*DiscoveredPeer),
+		aliases:     make(map[string]string),
+		aliasesByIP: make(map[string]string),
 	}
 }
 
@@ -152,17 +154,31 @@ func (s *Service) SetPersistHook(fn func(util.NodeConfig)) {
 	s.persist = fn
 }
 
-// SetAliases 恢复持久化的对端备注（启动时由上层调用一次）。
-func (s *Service) SetAliases(m map[string]string) {
+// SetAliases 恢复持久化的对端备注（启动时由上层调用一次）：
+// byID 按条目 ID 精确恢复；byIP 按设备 IP 恢复（对端重启换 ID / 条目被清除后重连仍生效）。
+func (s *Service) SetAliases(byID map[string]string, byIP map[string]string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for k, v := range m {
+	apply := func(key, v string) {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return
+		}
+		s.aliases[key] = v
+		if p, ok := s.peers[key]; ok && p.Alias == "" {
+			p.Alias = v
+		}
+	}
+	for k, v := range byID {
+		apply(k, v)
+	}
+	for k, v := range byIP {
 		v = strings.TrimSpace(v)
 		if v == "" {
 			continue
 		}
-		s.aliases[k] = v
-		if p, ok := s.peers[k]; ok {
+		s.aliasesByIP[k] = v
+		if p := s.findByIPLocked(k, ""); p != nil && p.Alias == "" {
 			p.Alias = v
 		}
 	}
@@ -174,7 +190,11 @@ func (s *Service) snapshotConfigLocked() util.NodeConfig {
 	for k, v := range s.aliases {
 		aliases[k] = v
 	}
-	return util.NodeConfig{Name: s.name, Aliases: aliases}
+	byIP := make(map[string]string, len(s.aliasesByIP))
+	for k, v := range s.aliasesByIP {
+		byIP[k] = v
+	}
+	return util.NodeConfig{Name: s.name, Aliases: aliases, AliasesByIP: byIP}
 }
 
 // persistLocked 触发持久化；调用方必须持有写锁（改名属低频操作，同步写盘可接受）。
@@ -489,6 +509,9 @@ func (s *Service) readBeacons(ctx context.Context, conn net.PacketConn) bool {
 }
 
 // upsertBeacon 处理一条对端 beacon：新对端入库，已知对端刷新状态。
+// 去重铁律：同一 IP 视为同一台设备，无论来源（beacon/入站连接/手动添加）
+// 都归并到既有条目——否则同一台设备会因“自动发现 + 主动连接 + 手动添加”
+// 出现多条目。既有条目的 ID 保持不变，映射与备注不失效。
 // 注意：广播名只会写进 Name，绝不覆盖本地备注 Alias——
 // 否则用户给设备改的备注会在一个心跳周期（2 秒）内被打回原样。
 func (s *Service) upsertBeacon(b Beacon, peerIP string) {
@@ -497,6 +520,42 @@ func (s *Service) upsertBeacon(b Beacon, peerIP string) {
 	s.mu.Lock()
 	p, exists := s.peers[b.ID]
 	if !exists {
+		// 同 IP 已有其他来源的条目：归并复用，避免同一设备多条目
+		if old := s.findByIPLocked(peerIP, ""); old != nil {
+			p = old
+			exists = true
+		}
+	}
+	if exists {
+		// 同 IP 的其他来源档案（更早的手动/入站记录）并入本条目后清除
+		if other := s.findByIPLocked(peerIP, b.ID); other != nil {
+			if p.Alias == "" && other.Alias != "" {
+				p.Alias = other.Alias
+				s.aliases[p.ID] = other.Alias
+			}
+			if other.IsManual {
+				// 用户显式添加过的设备保持 manual 语义（不参与超时清除）
+				p.IsManual = true
+				p.Source = SourceManual
+			}
+		}
+		p.Name = b.Name
+		p.OS = b.OS
+		p.IP = peerIP
+		p.Port = b.Port
+		p.Target = peerTarget
+		p.Provides = b.Provides
+		p.LastSeen = time.Now()
+		p.Online = true
+		// 被主动连接过的设备收到 beacon 后升级为完整对端（能力来自广播）；
+		// 手动添加的设备保持 manual 语义（不参与超时清除），别名一律保留
+		if p.Source == SourceInbound {
+			p.Source = SourceBeacon
+		}
+		if p.Alias == "" {
+			p.Alias = s.aliasForLocked(b.ID, peerIP)
+		}
+	} else {
 		p = &DiscoveredPeer{
 			ID:       b.ID,
 			Name:     b.Name,
@@ -508,20 +567,9 @@ func (s *Service) upsertBeacon(b Beacon, peerIP string) {
 			LastSeen: time.Now(),
 			Online:   true,
 			Source:   SourceBeacon,
-			Alias:    s.aliases[b.ID],
+			Alias:    s.aliasForLocked(b.ID, peerIP),
 		}
 		s.peers[b.ID] = p
-	} else {
-		p.Name = b.Name
-		p.IP = peerIP
-		p.Port = b.Port
-		p.Target = peerTarget
-		p.Provides = b.Provides
-		p.LastSeen = time.Now()
-		p.Online = true
-		if p.Alias == "" {
-			p.Alias = s.aliases[b.ID]
-		}
 	}
 	snapshot := *p
 	onFound := s.onPeerFound
@@ -530,6 +578,49 @@ func (s *Service) upsertBeacon(b Beacon, peerIP string) {
 	if !exists && onFound != nil {
 		go onFound(snapshot)
 	}
+}
+
+// findByIPLocked 查找同 IP 的既有条目（ID 不同视为同设备的重复档案）；
+// 存在多条历史脏数据时保留优先级最高的一条（beacon 信息最全 > manual 用户显式添加 > inbound），
+// 其余直接清除。excludeID 用于跳过自身。
+func (s *Service) findByIPLocked(peerIP, excludeID string) *DiscoveredPeer {
+	if peerIP == "" {
+		return nil
+	}
+	rank := func(src PeerSource) int {
+		switch src {
+		case SourceBeacon:
+			return 3
+		case SourceManual:
+			return 2
+		default:
+			return 1
+		}
+	}
+	var best *DiscoveredPeer
+	for id, p := range s.peers {
+		if id == excludeID || p.IP != peerIP {
+			continue
+		}
+		if best == nil || rank(p.Source) > rank(best.Source) {
+			if best != nil {
+				delete(s.peers, best.ID)
+			}
+			best = p
+		} else {
+			delete(s.peers, id)
+		}
+	}
+	return best
+}
+
+// aliasForLocked 取设备备注：优先按条目 ID，其次按 IP（设备重启换 ID 或
+// 条目被超时清除后重连，备注仍可按 IP 恢复）。调用方必须持有写锁。
+func (s *Service) aliasForLocked(id, ip string) string {
+	if a := s.aliases[id]; a != "" {
+		return a
+	}
+	return s.aliasesByIP[ip]
 }
 
 func (s *Service) pruneLoop(ctx context.Context) {
@@ -575,6 +666,25 @@ func (s *Service) AddManualPeer(target string, name string) *DiscoveredPeer {
 		return nil
 	}
 
+	// 同 IP 已有档案（自动发现/入站连接/旧手动记录）：复用为本次手动条目，
+	// 用户显式命名的别名覆盖生效——绝不新建第二条
+	if existing := s.findByIPLocked(ip, ""); existing != nil {
+		existing.IsManual = true
+		existing.Source = SourceManual
+		existing.Port = port
+		existing.Target = target
+		existing.LastSeen = time.Now()
+		existing.Online = true
+		if custom := strings.TrimSpace(name); custom != "" {
+			existing.Alias = custom
+			s.aliases[existing.ID] = custom
+			s.aliasesByIP[ip] = custom
+			s.persistLocked()
+		}
+		snapshot := *existing
+		return &snapshot
+	}
+
 	id := "manual-" + hex.EncodeToString([]byte(target))
 	peerName := name
 	if peerName == "" {
@@ -605,6 +715,7 @@ func (s *Service) AddManualPeer(target string, name string) *DiscoveredPeer {
 	if custom := strings.TrimSpace(name); custom != "" {
 		p.Alias = custom
 		s.aliases[id] = custom
+		s.aliasesByIP[ip] = custom
 		s.persistLocked()
 	}
 	s.peers[id] = p
@@ -631,6 +742,14 @@ func (s *Service) RegisterInboundClient(id, remoteAddr, userAgent string) *Disco
 	}
 
 	peerID := inboundIDPrefix + ip
+	// 同 IP 已有自动发现/手动添加的条目：它就是同一台设备，只刷新在线状态，
+	// 绝不再建一个 inbound 条目（否则设备列表里同一台机器会出现多条）
+	if existing := s.findByIPLocked(ip, ""); existing != nil {
+		existing.LastSeen = time.Now()
+		existing.Online = true
+		snapshot := *existing
+		return &snapshot
+	}
 	friendlyName := "外部终端"
 	osName := "web"
 	if strings.Contains(userAgent, "iPhone") {
@@ -685,24 +804,24 @@ func (s *Service) RegisterInboundClient(id, remoteAddr, userAgent string) *Disco
 	return &snapshot
 }
 
-// ReconcileInbound 依据真实的连接集合校正入站条目在线状态：
-// 在连接集合中的保持在线并刷新心跳；不在的立即置为离线（不必等 PeerTimeout），
-// 避免连接早已断开的设备仍显示在线或长时间残留。
+// ReconcileInbound 依据真实的连接集合校正对端在线状态（按 IP 匹配）：
+// 有存活连接的设备条目保持在线并刷新心跳（即使其 beacon 已停止也不被清除）；
+// 入站条目在连接集合中消失时立即置为离线（不必等 PeerTimeout）。
+// beacon 条目离线仍由广播心跳超时管理，不在此处置离线。
 func (s *Service) ReconcileInbound(liveIPs map[string]bool) {
 	now := time.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, p := range s.peers {
-		if p.Source != SourceInbound {
+		if !liveIPs[p.IP] {
+			if p.Source == SourceInbound {
+				p.Online = false
+				p.LastSeen = now.Add(-PeerTimeoutSecs * time.Second)
+			}
 			continue
 		}
-		if liveIPs[p.IP] {
-			p.LastSeen = now
-			p.Online = true
-		} else {
-			p.Online = false
-			p.LastSeen = now.Add(-PeerTimeoutSecs * time.Second)
-		}
+		p.LastSeen = now
+		p.Online = true
 	}
 }
 
@@ -722,6 +841,8 @@ func (s *Service) RenamePeer(id, newName string) bool {
 	}
 	p.Alias = newName
 	s.aliases[id] = newName
+	// 按 IP 建立二级索引：设备重启换 ID 或条目被清除后重连，备注仍可按 IP 恢复
+	s.aliasesByIP[p.IP] = newName
 	s.persistLocked()
 	return true
 }

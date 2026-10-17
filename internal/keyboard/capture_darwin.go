@@ -10,15 +10,39 @@ static int is_key_down(int k) {
     return CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, (CGKeyCode)k);
 }
 
-static void sim_key(int k, int down) {
+// sim_key_flags 按指定修饰键位发送按键事件；
+// 不带修饰位时行为与裸键码一致（受目标输入法/布局解释）。
+static void sim_key_flags(int k, int down, unsigned long flags) {
     CGEventRef ev = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)k, (bool)down);
-    if (ev) {
-        CGEventPost(kCGHIDEventTap, ev);
-        CFRelease(ev);
+    if (!ev) return;
+    if (flags != 0) CGEventSetFlags(ev, (CGEventFlags)flags);
+    CGEventPost(kCGHIDEventTap, ev);
+    CFRelease(ev);
+}
+
+// sim_key_full 额外携带 Unicode 字符串：字符型按键（字母/数字/标点）
+// 直接以文本形式注入，绕开输入法与键盘布局对裸键码的转换，
+// 这是跨端键盘同步（Synergy/Barrier 同类方案）的标准做法。
+static void sim_key_full(int k, int down, unsigned long flags, const unsigned short* str, int len) {
+    CGEventRef ev = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)k, (bool)down);
+    if (!ev) return;
+    if (len > 0) {
+        CGEventKeyboardSetUnicodeString(ev, (UniCharCount)len, str);
     }
+    if (flags != 0) CGEventSetFlags(ev, (CGEventFlags)flags);
+    CGEventPost(kCGHIDEventTap, ev);
+    CFRelease(ev);
 }
 */
 import "C"
+
+import (
+	"fmt"
+	"strings"
+	"sync"
+	"unicode/utf16"
+	"unsafe"
+)
 
 var darwinKeyMap = map[string]int{
 	// Letters
@@ -36,6 +60,7 @@ var darwinKeyMap = map[string]int{
 	Backspace: 0x33,
 	Escape:    0x35,
 	CapsLock:  0x39,
+	Insert:    0x72, // macOS 无独立 Insert 键，近似映射到 fn/帮助键
 
 	// Modifiers
 	MetaLeft:     0x37, // Command
@@ -43,7 +68,7 @@ var darwinKeyMap = map[string]int{
 	AltLeft:      0x3A, // Option
 	ControlLeft:  0x3B,
 	ShiftRight:   0x3C,
-	AltRight:     0x3D,
+	AltRight:     0x3D, // Option
 	ControlRight: 0x3E,
 
 	// Navigation
@@ -85,6 +110,82 @@ var darwinKeyMap = map[string]int{
 	Backquote:    0x32,
 }
 
+// CGEventFlags 修饰键位（kCGEventFlagMask*）
+const (
+	flagAlphaShift = 0x00010000 // 大写锁定
+	flagShift      = 0x00020000
+	flagControl    = 0x00040000
+	flagAlt        = 0x00080000
+	flagCommand    = 0x00100000
+)
+
+// modifierFlagByName 标准键名 → 修饰位。对端报上来的修饰键按下/抬起
+// 会实时更新 activeFlags，普通键事件据此携带修饰状态（Shift+字母、
+// Cmd/Ctrl 组合键等不再丢失修饰信息）。
+var modifierFlagByName = map[string]uint64{
+	ShiftLeft:    flagShift,
+	ShiftRight:   flagShift,
+	ControlLeft:  flagControl,
+	ControlRight: flagControl,
+	AltLeft:      flagAlt,
+	AltRight:     flagAlt,
+	MetaLeft:     flagCommand,
+	MetaRight:    flagCommand,
+	CapsLock:     flagAlphaShift,
+}
+
+var (
+	simMu       sync.Mutex
+	activeFlags uint64
+)
+
+// keyCharMap 字符型按键在美式布局下的字符（[无 Shift, 有 Shift]）。
+// 方向键、功能键等非字符键不在此表，走纯键码 + 修饰位路径。
+// Space/Tab/Enter 不在字符表内：它们是输入法的提交/候选键，
+// 必须走纯键码让目标输入法按原始语义处理，不能注入字符。
+var keyCharMap = map[string][2]string{
+	Minus:        {"-", "_"},
+	Equal:        {"=", "+"},
+	BracketLeft:  {"[", "{"},
+	BracketRight: {"]", "}"},
+	Backslash:    {"\\", "|"},
+	Semicolon:    {";", ":"},
+	Quote:        {"'", "\""},
+	Comma:        {",", "<"},
+	Period:       {".", ">"},
+	Slash:        {"/", "?"},
+	Backquote:    {"`", "~"},
+	Digit1:       {"1", "!"},
+	Digit2:       {"2", "@"},
+	Digit3:       {"3", "#"},
+	Digit4:       {"4", "$"},
+	Digit5:       {"5", "%"},
+	Digit6:       {"6", "^"},
+	Digit7:       {"7", "&"},
+	Digit8:       {"8", "*"},
+	Digit9:       {"9", "("},
+	Digit0:       {"0", ")"},
+}
+
+// keyChar 返回字母/数字/标点键对应的字符（Shift 决定上档），非字符键返回 false。
+func keyChar(key string, shift bool) (string, bool) {
+	// 字母：KeyA → a / A
+	if strings.HasPrefix(key, "Key") && len(key) == 4 {
+		letter := strings.ToLower(key[3:])
+		if shift {
+			return strings.ToUpper(letter), true
+		}
+		return letter, true
+	}
+	if pair, ok := keyCharMap[key]; ok {
+		if shift {
+			return pair[1], true
+		}
+		return pair[0], true
+	}
+	return "", false
+}
+
 func getPressedKeys() map[string]int {
 	pressed := make(map[string]int)
 	for key, code := range darwinKeyMap {
@@ -95,15 +196,47 @@ func getPressedKeys() map[string]int {
 	return pressed
 }
 
-// SimulateKey simulates a key press or release on macOS.
+// SimulateKey 在本机模拟对端按键：
+//   - 修饰键（Shift/Ctrl/Option/Cmd/CapsLock）按下与抬起实时更新修饰位；
+//   - 普通键携带当前修饰位发送；字符型键额外携带 Unicode 字符，
+//     解决中文输入法/非美式布局下“字母数字键无反应”的问题；
+//   - 未映射的按键打印留痕，便于定位“某键无反应”类反馈。
+//
+// 注意：macOS 需要在「系统设置 → 隐私与安全性 → 辅助功能」中授权本应用，
+// 否则 CGEventPost 会被系统静默丢弃（所有按键都无反应）。
 func SimulateKey(keyName string, down bool) {
+	simMu.Lock()
+	defer simMu.Unlock()
+
+	if f, isModifier := modifierFlagByName[keyName]; isModifier {
+		if down {
+			activeFlags |= f
+		} else {
+			activeFlags &^= f
+		}
+	}
+
 	code, exists := darwinKeyMap[keyName]
 	if !exists {
+		if down {
+			fmt.Printf("[Keyboard] 收到未映射按键 %s，已忽略（可将该键反馈给开发者补充映射）\n", keyName)
+		}
 		return
 	}
-	d := 0
+
 	if down {
-		d = 1
+		if ch, ok := keyChar(keyName, activeFlags&flagShift != 0); ok {
+			encoded := utf16.Encode([]rune(ch))
+			C.sim_key_full(C.int(code), 1, C.ulong(activeFlags), (*C.ushort)(unsafe.Pointer(&encoded[0])), C.int(len(encoded)))
+			return
+		}
 	}
-	C.sim_key(C.int(code), C.int(d))
+	C.sim_key_flags(C.int(code), boolToInt(down), C.ulong(activeFlags))
+}
+
+func boolToInt(b bool) C.int {
+	if b {
+		return 1
+	}
+	return 0
 }

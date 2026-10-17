@@ -11,8 +11,9 @@ import (
 // Name 为本机在局域网中显示的名称，Aliases 为按对端 ID 的本地备注。
 // 此前两者只存在内存里，用户改完名一重启就丢——这是“设备改名没解决”的另一半根因。
 type NodeConfig struct {
-	Name    string            `json:"name,omitempty"`
-	Aliases map[string]string `json:"aliases,omitempty"`
+	Name        string            `json:"name,omitempty"`
+	Aliases     map[string]string `json:"aliases,omitempty"`
+	AliasesByIP map[string]string `json:"aliases_by_ip,omitempty"`
 }
 
 var (
@@ -64,6 +65,9 @@ func LoadNodeConfig() NodeConfig {
 	}
 	if cfg.Aliases == nil {
 		cfg.Aliases = map[string]string{}
+	}
+	if cfg.AliasesByIP == nil {
+		cfg.AliasesByIP = map[string]string{}
 	}
 	return cfg
 }

@@ -5,6 +5,33 @@ import (
 	"time"
 )
 
+// TestKeyChar 校验字符型按键的美式布局映射（含 Shift 上档）。
+func TestKeyChar(t *testing.T) {
+	cases := []struct {
+		key   string
+		shift bool
+		want  string
+	}{
+		{"KeyA", false, "a"}, {"KeyA", true, "A"}, {"KeyZ", true, "Z"},
+		{"Digit1", false, "1"}, {"Digit1", true, "!"},
+		{"Digit0", false, "0"}, {"Digit2", true, "@"},
+		{"Minus", false, "-"}, {"Minus", true, "_"},
+		{"Semicolon", true, ":"}, {"Slash", true, "?"},
+	}
+	for _, c := range cases {
+		got, ok := keyChar(c.key, c.shift)
+		if !ok || got != c.want {
+			t.Errorf("keyChar(%s, shift=%v) = %q,%v; want %q", c.key, c.shift, got, ok, c.want)
+		}
+	}
+	// 非字符键不产出字符（含输入法提交/导航键与方向键）
+	for _, key := range []string{ArrowUp, Enter, Tab, Space} {
+		if _, ok := keyChar(key, false); ok {
+			t.Errorf("%s must not produce a character", key)
+		}
+	}
+}
+
 func TestFriendlyKeyName(t *testing.T) {
 	if FriendlyKeyName(Enter) != "回车 (Enter)" {
 		t.Fatalf("expected '回车 (Enter)', got '%s'", FriendlyKeyName(Enter))
