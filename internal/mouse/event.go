@@ -10,18 +10,18 @@ import (
 
 // MouseEvent represents a normalized cursor movement or button event.
 type MouseEvent struct {
-	Type       string  `json:"type"`        // "mouse"
-	Action     string  `json:"action"`      // "move", "down", "up"
-	X          float64 `json:"x"`           // Normalized X (0.0 ~ 1.0)
-	Y          float64 `json:"y"`           // Normalized Y (0.0 ~ 1.0)
-	RawX       int     `json:"raw_x"`       // Host screen pixel X
-	RawY       int     `json:"raw_y"`       // Host screen pixel Y
-	ScreenWidth int    `json:"screen_w"`    // Host screen width
-	ScreenHeight int   `json:"screen_h"`    // Host screen height
-	LeftDown   bool    `json:"left_down"`   // Left button state
-	RightDown  bool    `json:"right_down"`  // Right button state
-	MiddleDown bool    `json:"middle_down"` // Middle button state
-	Timestamp  int64   `json:"timestamp"`   // Unix millisecond timestamp
+	Type         string  `json:"type"`        // "mouse"
+	Action       string  `json:"action"`      // "move", "down", "up"
+	X            float64 `json:"x"`           // Normalized X (0.0 ~ 1.0)
+	Y            float64 `json:"y"`           // Normalized Y (0.0 ~ 1.0)
+	RawX         int     `json:"raw_x"`       // Host screen pixel X
+	RawY         int     `json:"raw_y"`       // Host screen pixel Y
+	ScreenWidth  int     `json:"screen_w"`    // Host screen width
+	ScreenHeight int     `json:"screen_h"`    // Host screen height
+	LeftDown     bool    `json:"left_down"`   // Left button state
+	RightDown    bool    `json:"right_down"`  // Right button state
+	MiddleDown   bool    `json:"middle_down"` // Middle button state
+	Timestamp    int64   `json:"timestamp"`   // Unix millisecond timestamp
 }
 
 // Engine captures local host mouse events and emits them to a callback.
@@ -34,7 +34,7 @@ type Engine struct {
 	// Active subscriber count (when 0, polling can sleep to save CPU)
 	subscribers int64
 
-	lastX, lastY int
+	lastX, lastY        int
 	lastL, lastR, lastM bool
 }
 

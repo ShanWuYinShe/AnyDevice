@@ -875,6 +875,18 @@
         let localSelf = null;
         let activePeers = [];
         let ws = null;
+
+        // 已渲染的对端卡片缓存: peer id -> { fingerprint, el },用于增量渲染,
+        // 避免每轮全量重建 DOM 导致点击丢失、动画重启与卡顿
+        const peerCardCache = new Map();
+
+        // 网卡下拉内容签名: 仅在接口列表内容变化时才重建选项,避免打断用户下拉操作
+        let lastNicSignature = null;
+
+        // 订阅同步: targetSubs 为最近计算的目标订阅组合(null 表示尚未计算过),
+        // lastSubs 为上次实际通过 set_mapping 发送的组合(null 表示尚未发送过)
+        let targetSubs = null;
+        let lastSubs = { audio: null, mouse: null, keyboard: null };
         
         // Web Audio Player State (Separated System Output vs Mic Input)
         let audioCtx = null;
@@ -938,6 +950,15 @@
             nextAudioTime += audioBuffer.duration;
         }
 
+        // 向服务端同步本机客户端订阅状态:
+        // 仅在已计算目标状态、目标组合有变化且 ws 已连接时发送 set_mapping
+        function sendSubscriptions() {
+            if (!ws || ws.readyState !== 1 || !targetSubs) return;
+            if (lastSubs.audio === targetSubs.audio && lastSubs.mouse === targetSubs.mouse && lastSubs.keyboard === targetSubs.keyboard) return;
+            ws.send(JSON.stringify({ action: 'set_mapping', audio: targetSubs.audio, mouse: targetSubs.mouse, keyboard: targetSubs.keyboard }));
+            lastSubs = { audio: targetSubs.audio, mouse: targetSubs.mouse, keyboard: targetSubs.keyboard };
+        }
+
         // Connect Local WebSocket Stream for Live Audio & Mouse Telemetry
         function connectLocalWebSocket() {
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -978,7 +999,14 @@
                 }
             };
 
+            ws.onopen = () => {
+                // 连接建立后立即同步当前订阅状态(尚未计算过则跳过)
+                sendSubscriptions();
+            };
+
             ws.onclose = () => {
+                // 重连后服务端订阅恢复为默认值：重置已发送标记，onopen 时重新同步
+                lastSubs = { audio: null, mouse: null, keyboard: null };
                 setTimeout(connectLocalWebSocket, 2000);
             };
         }
@@ -1018,15 +1046,23 @@
                 }
 
                 // Populate NIC Select dropdown
+                // 仅在接口列表内容(名称+IP+当前选中 IP)与上次不同时才重建,避免打断用户下拉选择
                 if (nicSelect && localSelf.interfaces) {
-                    nicSelect.innerHTML = '';
-                    localSelf.interfaces.forEach(iface => {
-                        const opt = document.createElement('option');
-                        opt.value = iface.ip;
-                        opt.text = `${iface.name} - ${iface.ip}`;
-                        if (iface.ip === localSelf.current_ip) opt.selected = true;
-                        nicSelect.appendChild(opt);
-                    });
+                    const nicSignature = JSON.stringify([
+                        localSelf.interfaces.map(iface => [iface.name, iface.ip]),
+                        localSelf.current_ip
+                    ]);
+                    if (nicSignature !== lastNicSignature) {
+                        lastNicSignature = nicSignature;
+                        nicSelect.innerHTML = '';
+                        localSelf.interfaces.forEach(iface => {
+                            const opt = document.createElement('option');
+                            opt.value = iface.ip;
+                            opt.text = `${iface.name} - ${iface.ip}`;
+                            if (iface.ip === localSelf.current_ip) opt.selected = true;
+                            nicSelect.appendChild(opt);
+                        });
+                    }
                 }
             } catch (e) {
                 console.error('fetchSelf failed:', e);
@@ -1066,9 +1102,6 @@
                     return true;
                 }
                 if (localSelf.interfaces && localSelf.interfaces.some(i => i.ip && i.ip.trim() === cleanIP)) {
-                    return true;
-                }
-                if (localSelf.name && p.name && p.name.trim() === localSelf.name.trim()) {
                     return true;
                 }
             }
@@ -1114,6 +1147,15 @@
                 // Update audio playing flags
                 isSystemAudioPlaying = peers.some(p => p.mapping && (p.mapping.play_system_audio_local || p.mapping.play_audio_local));
                 isMicAudioPlaying = peers.some(p => p.mapping && p.mapping.play_mic_audio_local);
+
+                // 计算目标订阅组合并按需同步给服务端:
+                // audio = 任一对端开启了本地播放(系统声音/混音/麦克风)
+                targetSubs = {
+                    audio: isSystemAudioPlaying || isMicAudioPlaying,
+                    mouse: peers.some(p => p.mapping && p.mapping.execute_mouse_local),
+                    keyboard: peers.some(p => p.mapping && p.mapping.execute_keyboard_local)
+                };
+                sendSubscriptions();
             } catch (e) {
                 console.error('fetchPeers failed:', e);
             }
@@ -1123,6 +1165,9 @@
             if (!peerGrid) return;
 
             if (peers.length === 0) {
+                // 先清空卡片缓存,再按需写入空状态(已存在则跳过,避免重建打断点击)
+                peerCardCache.clear();
+                if (peerGrid.querySelector('.empty-state')) return;
                 peerGrid.innerHTML = `
                     <div class="empty-state">
                         <div class="empty-icon">📡</div>
@@ -1139,11 +1184,39 @@
                 return;
             }
 
-            peerGrid.innerHTML = '';
+            // 增量渲染: 以 p.id 为 key 复用 DOM 卡片,状态指纹变化时才重建并重绑事件
+            const emptyEl = peerGrid.querySelector('.empty-state');
+            if (emptyEl) emptyEl.remove();
+
+            const seenIds = new Set();
             peers.forEach(p => {
-                const card = document.createElement('div');
+                const cacheKey = p.id != null ? String(p.id) : null;
                 const mapping = p.mapping || {};
                 const provides = p.provides || {};
+                const fingerprint = JSON.stringify({
+                    name: p.name,
+                    online: p.online,
+                    provides: provides,
+                    mapping: mapping
+                });
+                const cached = cacheKey ? peerCardCache.get(cacheKey) : null;
+                if (cached && cached.fingerprint === fingerprint && cached.el.isConnected) {
+                    // 指纹未变: 保留原卡片(含 telemetry 元素),仅按服务端返回顺序归位;
+                    // last_seen 不参与指纹(后端每轮刷新),其变化通过定点更新 .peer-addr 文本体现
+                    seenIds.add(cacheKey);
+                    peerGrid.appendChild(cached.el);
+                    const addrEl = cached.el.querySelector('.peer-addr');
+                    if (addrEl) {
+                        const addrText = `${p.target || p.ip} · 最近更新 ${p.last_seen || ''}`;
+                        if (addrEl.textContent !== addrText) {
+                            addrEl.textContent = addrText;
+                        }
+                    }
+                    return;
+                }
+                // 指纹变化: 移除旧卡片后重建并重绑事件
+                if (cached) cached.el.remove();
+                const card = document.createElement('div');
 
                 const hasActiveMapping = mapping.play_system_audio_local || mapping.play_mic_audio_local || mapping.play_audio_local || mapping.execute_mouse_local || mapping.execute_keyboard_local;
                 card.className = `peer-card ${hasActiveMapping ? 'active-mapping' : ''}`;
@@ -1329,7 +1402,19 @@
                 });
 
                 peerGrid.appendChild(card);
+                if (cacheKey) {
+                    seenIds.add(cacheKey);
+                    peerCardCache.set(cacheKey, { fingerprint: fingerprint, el: card });
+                }
             });
+
+            // 移除已从列表消失的对端卡片
+            for (const [goneId, gone] of peerCardCache) {
+                if (!seenIds.has(goneId)) {
+                    gone.el.remove();
+                    peerCardCache.delete(goneId);
+                }
+            }
         }
 
         async function updateMapping(peerID, payload) {
@@ -1383,6 +1468,13 @@
         });
 
         document.getElementById('openAddPeerBtn').addEventListener('click', () => openModal('addPeerModal'));
+
+        // 首屏空状态按钮: 绑定打开弹窗事件
+        // (renderPeers 生成的空状态模板用内联 onclick,无需重复绑定)
+        const emptyAddBtn = document.getElementById('emptyAddBtn');
+        if (emptyAddBtn) emptyAddBtn.addEventListener('click', () => openModal('addPeerModal'));
+        const emptyQRBtn = document.getElementById('emptyQRBtn');
+        if (emptyQRBtn) emptyQRBtn.addEventListener('click', () => openModal('qrModal'));
         document.getElementById('manualScanBtn').addEventListener('click', () => {
             fetchPeers();
             showToast('已刷新对端列表');
@@ -1513,7 +1605,7 @@
             await fetchSelf();
             await fetchPeers();
             connectLocalWebSocket();
-            setInterval(fetchPeers, 1800);
+            setInterval(fetchPeers, 1200);
             setInterval(fetchSelf, 5000);
         }
         init();

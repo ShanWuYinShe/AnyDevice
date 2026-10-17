@@ -249,10 +249,21 @@ func (h *Hub) TotalBytesSent() uint64 {
 }
 
 // NewClient constructs a new connected client.
-func NewClient(hub *Hub, conn *websocket.Conn, remoteAddr, userAgent string) *Client {
+// local 表示连接是否来自本机（回环/本机 IP 打开的 UI 窗口）：
+//   - 本机 UI 默认不订阅音频/鼠标/键盘，由前端通过 set_mapping 按需开启，
+//     避免本机捕获引擎在无人消费事件时 60Hz 空转轮询；
+//   - 局域网远端保持默认全订阅，兼容未升级的旧版本对端（无需握手即可收到数据）。
+func NewClient(hub *Hub, conn *websocket.Conn, remoteAddr, userAgent string, local bool) *Client {
 	remoteIP := remoteAddr
 	if idx := strings.LastIndex(remoteAddr, ":"); idx != -1 {
 		remoteIP = remoteAddr[:idx]
+	}
+	// 默认订阅：局域网远端全开（兼容旧对端）；本机 UI 全关（前端按需 set_mapping 开启）
+	audioEnabled, mouseEnabled, keyboardEnabled := true, true, true
+	if local {
+		audioEnabled = false
+		mouseEnabled = false
+		keyboardEnabled = false
 	}
 	return &Client{
 		id:              fmt.Sprintf("client-%d", atomic.AddUint64(&clientSeq, 1)),
@@ -264,9 +275,9 @@ func NewClient(hub *Hub, conn *websocket.Conn, remoteAddr, userAgent string) *Cl
 		userAgent:       userAgent,
 		deviceType:      ParseDeviceType(userAgent),
 		joinedAt:        time.Now(),
-		audioEnabled:    true,
-		mouseEnabled:    true,
-		keyboardEnabled: true,
+		audioEnabled:    audioEnabled,
+		mouseEnabled:    mouseEnabled,
+		keyboardEnabled: keyboardEnabled,
 		allowControl:    true,
 	}
 }

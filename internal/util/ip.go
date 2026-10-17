@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -11,6 +12,9 @@ var virtualKeywords = []string{
 	"vmnet", "vbox", "virtualbox", "vethernet", "wsl", "hyper-v",
 	"docker", "tailscale", "zerotier", "tap", "tun", "utun",
 	"bluetooth", "npcap", "teredo", "cni", "flannel", "veth",
+	// macOS 网络共享/虚拟机网桥（bridge100 等）同样是虚拟接口；
+	// 之前漏判会导致它被当作物理网卡参与 IP 选择与广播。
+	"bridge",
 }
 
 // IPInfo contains IP address and its interface name with JSON tags.
@@ -18,6 +22,97 @@ type IPInfo struct {
 	IP        string `json:"ip"`
 	IfaceName string `json:"name"`
 	IsVirtual bool   `json:"is_virtual"`
+}
+
+// —— 网卡枚举缓存 ——
+// net.Interfaces/Addrs 是系统调用，而 IsLocalIP 位于 beacon 处理、/api/peers 等
+// 高频路径上，逐包枚举网卡既慢又费 CPU（用户反馈“设备很慢”的成因之一）。
+// 这里用短 TTL 缓存统一收敛；切换网卡时由 InvalidateNetCache 立即失效。
+const netCacheTTL = 2 * time.Second
+
+var (
+	netMu      sync.Mutex
+	netCacheAt time.Time
+	netIPs     []IPInfo
+	netBcasts  []string
+)
+
+// refreshNetCacheLocked 重新枚举网卡；调用方必须持有 netMu。
+func refreshNetCacheLocked() {
+	netIPs = nil
+	netBcasts = nil
+	netCacheAt = time.Now()
+
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return
+	}
+
+	bcastSet := make(map[string]bool)
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		nameLower := strings.ToLower(iface.Name)
+		isVirt := false
+		for _, kw := range virtualKeywords {
+			if strings.Contains(nameLower, kw) {
+				isVirt = true
+				break
+			}
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			ipnet, ok := addr.(*net.IPNet)
+			if !ok {
+				if ipaddr, isAddr := addr.(*net.IPAddr); isAddr {
+					ipnet = &net.IPNet{IP: ipaddr.IP}
+				} else {
+					continue
+				}
+			}
+
+			ip4 := ipnet.IP.To4()
+			if ip4 == nil || ip4.IsLoopback() {
+				continue
+			}
+
+			netIPs = append(netIPs, IPInfo{
+				IP:        ip4.String(),
+				IfaceName: iface.Name,
+				IsVirtual: isVirt,
+			})
+
+			// 定向广播地址 = 网段地址 | 反掩码；
+			// 点对点/无掩码接口、链路本地与全网广播没有意义，跳过。
+			if len(ipnet.Mask) != 4 || iface.Flags&net.FlagBroadcast == 0 {
+				continue
+			}
+			b := make(net.IP, 4)
+			for i := 0; i < 4; i++ {
+				b[i] = ip4[i] | ^ipnet.Mask[i]
+			}
+			if s := b.String(); s != "" && s != "255.255.255.255" && !strings.HasPrefix(s, "169.254.") {
+				bcastSet[s] = true
+			}
+		}
+	}
+
+	for s := range bcastSet {
+		netBcasts = append(netBcasts, s)
+	}
+}
+
+func refreshNetCacheIfStaleLocked() {
+	if netCacheAt.IsZero() || time.Since(netCacheAt) > netCacheTTL {
+		refreshNetCacheLocked()
+	}
 }
 
 // GetOutboundIP uses OS routing table resolution to find the true primary LAN IP
@@ -40,59 +135,34 @@ func GetOutboundIP() string {
 }
 
 // GetAllIPs returns all valid IPv4 addresses categorized by physical vs virtual.
+// 带短 TTL 缓存：同一份结果在 TTL 内复用，避免高频路径反复发起系统调用。
 func GetAllIPs() []IPInfo {
-	var result []IPInfo
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return result
-	}
+	netMu.Lock()
+	defer netMu.Unlock()
+	refreshNetCacheIfStaleLocked()
+	out := make([]IPInfo, len(netIPs))
+	copy(out, netIPs)
+	return out
+}
 
-	for _, iface := range interfaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-			continue
-		}
+// BroadcastTargets 返回本机各物理网段的定向广播地址（如 192.168.0.255，已去重）。
+// 相比只发 255.255.255.255（只走默认路由网卡），定向广播能覆盖
+// 其余网卡上的对端，显著改善多网卡机器（虚拟机/WSL 用户）的发现率。
+func BroadcastTargets() []string {
+	netMu.Lock()
+	defer netMu.Unlock()
+	refreshNetCacheIfStaleLocked()
+	out := make([]string, len(netBcasts))
+	copy(out, netBcasts)
+	return out
+}
 
-		nameLower := strings.ToLower(iface.Name)
-		isVirt := false
-		for _, kw := range virtualKeywords {
-			if strings.Contains(nameLower, kw) {
-				isVirt = true
-				break
-			}
-		}
-
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-
-		for _, addr := range addrs {
-			var ip net.IP
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-
-			if ip == nil || ip.IsLoopback() {
-				continue
-			}
-
-			ip4 := ip.To4()
-			if ip4 == nil {
-				continue
-			}
-
-			ipStr := ip4.String()
-			result = append(result, IPInfo{
-				IP:        ipStr,
-				IfaceName: iface.Name,
-				IsVirtual: isVirt,
-			})
-		}
-	}
-	return result
+// InvalidateNetCache 立即失效网卡缓存；切换通信网卡后调用，
+// 让下一个发现心跳立即按新拓扑发送广播。
+func InvalidateNetCache() {
+	netMu.Lock()
+	netCacheAt = time.Time{}
+	netMu.Unlock()
 }
 
 // GetPrimaryIP selects the best LAN IP address for external device access.

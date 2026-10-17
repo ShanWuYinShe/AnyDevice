@@ -13,28 +13,28 @@ func TestHubInboundBatch(t *testing.T) {
 	hub := NewHub(func(a, m, k int) {})
 	// Fake inbound clients
 	c1 := &Client{
-		id:           "client-1",
-		hub:          hub,
-		remoteAddr:   "192.168.1.50:5000",
-		deviceType:   "Chrome / macOS",
-		joinedAt:     time.Now(),
-		audioEnabled: true,
-		mouseEnabled: true,
+		id:              "client-1",
+		hub:             hub,
+		remoteAddr:      "192.168.1.50:5000",
+		deviceType:      "Chrome / macOS",
+		joinedAt:        time.Now(),
+		audioEnabled:    true,
+		mouseEnabled:    true,
 		keyboardEnabled: true,
-		allowControl: false,
-		send:         make(chan OutMessage, 10),
+		allowControl:    false,
+		send:            make(chan OutMessage, 10),
 	}
 	c2 := &Client{
-		id:           "client-2",
-		hub:          hub,
-		remoteAddr:   "192.168.1.51:5000",
-		deviceType:   "Safari / iOS (iPhone)",
-		joinedAt:     time.Now(),
-		audioEnabled: true,
-		mouseEnabled: true,
+		id:              "client-2",
+		hub:             hub,
+		remoteAddr:      "192.168.1.51:5000",
+		deviceType:      "Safari / iOS (iPhone)",
+		joinedAt:        time.Now(),
+		audioEnabled:    true,
+		mouseEnabled:    true,
 		keyboardEnabled: true,
-		allowControl: false,
-		send:         make(chan OutMessage, 10),
+		allowControl:    false,
+		send:            make(chan OutMessage, 10),
 	}
 
 	hub.clients[c1] = true
@@ -274,5 +274,72 @@ func TestPeerManagerAndAPIs(t *testing.T) {
 	_ = json.NewDecoder(rec.Body).Decode(&peersResp2)
 	if len(peersResp2.Peers) == 0 || peersResp2.Peers[0].Name != "会议室主屏电脑" {
 		t.Fatalf("expected 会议室主屏电脑, got %+v", peersResp2.Peers)
+	}
+	if peersResp2.Peers[0].Alias != "会议室主屏电脑" {
+		t.Fatalf("expected alias persisted on unified peer, got %+v", peersResp2.Peers[0])
+	}
+}
+
+// TestViewerSelfFiltering 回归测试：手机/外部浏览器打开 UI 时，
+// 自己的入站条目不得出现在自己的设备列表里（用户报告的“列表一直显示自己”）。
+func TestViewerSelfFiltering(t *testing.T) {
+	hub := NewHub(func(a, m, k int) {})
+	s := NewServer(8080, "127.0.0.1", hub, nil, nil, nil, nil)
+	handler := s.SetupRoutes()
+
+	phone := s.discovery.RegisterInboundClient("client-x", "203.0.113.7:51000", "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X)")
+	if phone == nil {
+		t.Fatal("expected inbound registration for external device")
+	}
+
+	// 手机自己的视角：必须看不到自己
+	req2 := httptest.NewRequest(http.MethodGet, "/api/peers", nil)
+	req2.RemoteAddr = "203.0.113.7:51002"
+	rec2 := httptest.NewRecorder()
+	handler.ServeHTTP(rec2, req2)
+	var fromPhone struct {
+		Peers []UnifiedPeer `json:"peers"`
+		Total int           `json:"total"`
+	}
+	if err := json.NewDecoder(rec2.Body).Decode(&fromPhone); err != nil {
+		t.Fatalf("decode peers failed: %v", err)
+	}
+	if fromPhone.Total != 0 {
+		t.Fatalf("viewer must not see itself, got %d peers", fromPhone.Total)
+	}
+
+	// 其他设备的视角：应看到这台手机
+	req3 := httptest.NewRequest(http.MethodGet, "/api/peers", nil)
+	req3.RemoteAddr = "198.51.100.9:6000"
+	rec3 := httptest.NewRecorder()
+	handler.ServeHTTP(rec3, req3)
+	var fromOther struct {
+		Peers []UnifiedPeer `json:"peers"`
+		Total int           `json:"total"`
+	}
+	if err := json.NewDecoder(rec3.Body).Decode(&fromOther); err != nil {
+		t.Fatalf("decode peers failed: %v", err)
+	}
+	if fromOther.Total != 1 || fromOther.Peers[0].ID != phone.ID {
+		t.Fatalf("other viewer should see the phone once, got %+v", fromOther)
+	}
+}
+
+// TestMappingHandshake 校验订阅声明内容：音频取系统声/麦克风的并集。
+func TestMappingHandshake(t *testing.T) {
+	m := PeerMappingState{PlaySystemAudioLocal: true, ExecuteKeyboardLocal: true}
+	h := mappingHandshake(m)
+	if h["audio"] != true || h["mouse"] != false || h["keyboard"] != true {
+		t.Fatalf("unexpected handshake: %+v", h)
+	}
+	m2 := PeerMappingState{PlayMicAudioLocal: true}
+	h2 := mappingHandshake(m2)
+	if h2["audio"] != true {
+		t.Fatalf("mic mapping must imply audio subscription: %+v", h2)
+	}
+	m3 := PeerMappingState{}
+	h3 := mappingHandshake(m3)
+	if h3["audio"] != false || h3["mouse"] != false || h3["keyboard"] != false {
+		t.Fatalf("empty mapping must subscribe nothing: %+v", h3)
 	}
 }

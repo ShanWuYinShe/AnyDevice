@@ -71,9 +71,19 @@ func main() {
 	})
 
 	// 2. Initialize WebSocket 1-to-N broadcast hub
+	// 音频引擎在 hub 之后才创建，先声明变量供下方闭包引用（与上方 hub 变量同模式）
+	var systemAudioEngine *audio.Engine
+	var micAudioEngine *audio.Engine
 	hub = server.NewHub(func(audioSubs, mouseSubs, keyboardSubs int) {
 		mouseEngine.SetSubscribers(int64(mouseSubs))
 		keyboardEngine.SetSubscribers(int64(keyboardSubs))
+		// 将音频订阅数回传给两个音频引擎：无订阅者时引擎静默，避免空转生成 PCM
+		if systemAudioEngine != nil {
+			systemAudioEngine.SetSubscribers(int64(audioSubs))
+		}
+		if micAudioEngine != nil {
+			micAudioEngine.SetSubscribers(int64(audioSubs))
+		}
 	})
 	go hub.Run()
 
@@ -84,13 +94,13 @@ func main() {
 	defer keyboardEngine.Stop()
 
 	// 3. Initialize Audio Engines (Independent System Output & Microphone Input)
-	systemAudioEngine := audio.NewEngine(audio.KindSystem, audio.CaptureMode(*mode), *deviceIdx, hub.BroadcastAudio)
+	systemAudioEngine = audio.NewEngine(audio.KindSystem, audio.CaptureMode(*mode), *deviceIdx, hub.BroadcastAudio)
 	if err := systemAudioEngine.Start(); err != nil {
 		fmt.Printf("[Audio] 系统声音捕获初始化警告: %v\n", err)
 	}
 	defer systemAudioEngine.Stop()
 
-	micAudioEngine := audio.NewEngine(audio.KindMic, audio.CaptureMode(*mode), -1, hub.BroadcastAudio)
+	micAudioEngine = audio.NewEngine(audio.KindMic, audio.CaptureMode(*mode), -1, hub.BroadcastAudio)
 	if err := micAudioEngine.Start(); err != nil {
 		fmt.Printf("[Audio] 麦克风输入捕获初始化警告: %v\n", err)
 	}

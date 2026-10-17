@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 	"sync"
@@ -34,17 +35,19 @@ type PeerMappingState struct {
 
 // UnifiedPeer is the clean, discoverer-centric peer model exposed to the UI.
 type UnifiedPeer struct {
-	ID        string                        `json:"id"`
-	Name      string                        `json:"name"`
-	OS        string                        `json:"os"`
-	IP        string                        `json:"ip"`
-	Port      int                           `json:"port"`
-	Target    string                        `json:"target"`
-	Online    bool                          `json:"online"`
-	Provides  discovery.DeviceCapabilities  `json:"provides"`
-	Mapping   PeerMappingState              `json:"mapping"`
-	LastSeen  string                        `json:"last_seen"`
-	IsManual  bool                          `json:"is_manual"`
+	ID       string                       `json:"id"`
+	Name     string                       `json:"name"`
+	Alias    string                       `json:"alias,omitempty"` // 本机备注（后端已把 Name 解析为“备注优先”的显示名）
+	OS       string                       `json:"os"`
+	IP       string                       `json:"ip"`
+	Port     int                          `json:"port"`
+	Target   string                       `json:"target"`
+	Online   bool                         `json:"online"`
+	Provides discovery.DeviceCapabilities `json:"provides"`
+	Mapping  PeerMappingState             `json:"mapping"`
+	LastSeen string                       `json:"last_seen"`
+	IsManual bool                         `json:"is_manual"`
+	Source   string                       `json:"source,omitempty"` // beacon=自动发现 inbound=外部UI接入 manual=手动添加
 }
 
 type peerConnection struct {
@@ -54,11 +57,11 @@ type peerConnection struct {
 }
 
 type PeerManager struct {
-	discovery   *discovery.Service
-	hub         *Hub
-	mappings    map[string]*PeerMappingState
-	conns       map[string]*peerConnection
-	mu          sync.RWMutex
+	discovery *discovery.Service
+	hub       *Hub
+	mappings  map[string]*PeerMappingState
+	conns     map[string]*peerConnection
+	mu        sync.RWMutex
 }
 
 func NewPeerManager(disc *discovery.Service, hub *Hub) *PeerManager {
@@ -70,8 +73,21 @@ func NewPeerManager(disc *discovery.Service, hub *Hub) *PeerManager {
 	}
 }
 
+// viewerHost 从 remoteAddr 提取纯 IP（去端口与 IPv6 方括号）。
+func viewerHost(addr string) string {
+	host := addr
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		host = h
+	}
+	return strings.Trim(host, "[]")
+}
+
 // ListPeers returns all discovered peers with their current local mapping settings.
-func (pm *PeerManager) ListPeers() []UnifiedPeer {
+// viewerIP 是发起本次请求的客户端 IP：
+// 手机/另一台电脑打开本 UI 时会被服务端登记为“入站对端”，
+// 若不按查看者过滤，该设备自己的列表里会永远出现一台“自己”
+// （用户报告的“设备列表一直显示自己”的根因），因此这里按 IP 剔除。
+func (pm *PeerManager) ListPeers(viewerIP string) []UnifiedPeer {
 	discPeers := pm.discovery.GetPeers()
 
 	pm.mu.RLock()
@@ -80,6 +96,9 @@ func (pm *PeerManager) ListPeers() []UnifiedPeer {
 	result := make([]UnifiedPeer, 0, len(discPeers))
 	for _, dp := range discPeers {
 		if pm.discovery.IsSelf(dp.ID, dp.IP, dp.Port) || util.IsLocalIP(dp.IP) || util.IsLocalIP(dp.Target) {
+			continue
+		}
+		if viewerIP != "" && viewerIP == viewerHost(dp.IP) {
 			continue
 		}
 
@@ -93,6 +112,7 @@ func (pm *PeerManager) ListPeers() []UnifiedPeer {
 		result = append(result, UnifiedPeer{
 			ID:       dp.ID,
 			Name:     dp.Name,
+			Alias:    dp.Alias,
 			OS:       dp.OS,
 			IP:       dp.IP,
 			Port:     dp.Port,
@@ -102,6 +122,7 @@ func (pm *PeerManager) ListPeers() []UnifiedPeer {
 			Mapping:  *mapping,
 			LastSeen: dp.LastSeen.Format("15:04:05"),
 			IsManual: dp.IsManual,
+			Source:   string(dp.Source),
 		})
 	}
 	return result
@@ -186,9 +207,34 @@ func (pm *PeerManager) SetMapping(peerID string, playSystemAudio, playMicAudio, 
 		pm.ensureConnected(peerID, target)
 	} else {
 		pm.disconnect(peerID)
+		return nil
+	}
+
+	// 连接已建立时同步推送最新订阅声明：中途追加映射（如再开鼠标/键盘）
+	// 无需断开重连，对端 hub 会按声明开关对应流转发。
+	pm.mu.RLock()
+	connObj, connected := pm.conns[peerID]
+	var snap PeerMappingState
+	if connected && pm.mappings[peerID] != nil {
+		snap = *pm.mappings[peerID]
+	}
+	pm.mu.RUnlock()
+	if connected && connObj != nil && connObj.conn != nil {
+		_ = connObj.conn.WriteJSON(mappingHandshake(snap))
 	}
 
 	return nil
+}
+
+// mappingHandshake 依据本地映射决策生成发给对端的订阅声明：
+// 对端 hub 按此决定是否把它的音频/鼠标/键盘流转发给本连接。
+func mappingHandshake(m PeerMappingState) map[string]interface{} {
+	return map[string]interface{}{
+		"action":   "set_mapping",
+		"audio":    m.PlaySystemAudioLocal || m.PlayMicAudioLocal || m.PlayAudioLocal,
+		"mouse":    m.ExecuteMouseLocal,
+		"keyboard": m.ExecuteKeyboardLocal,
+	}
 }
 
 func (pm *PeerManager) ensureConnected(peerID, target string) {
@@ -257,6 +303,10 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 		pm.mu.Unlock()
 		return
 	}
+
+	// 连接建立即声明本端需要的流订阅（此前依赖对端默认全开；
+	// 现在对端把默认订阅收紧后，必须显式握手，否则收不到任何流）
+	_ = conn.WriteJSON(mappingHandshake(*mapping))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	connObj := &peerConnection{

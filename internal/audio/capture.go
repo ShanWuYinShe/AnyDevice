@@ -6,6 +6,7 @@ import (
 	"math"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gen2brain/malgo"
@@ -14,7 +15,7 @@ import (
 const (
 	SampleRate = 48000
 	Channels   = 2
-	BitDepth   = 16 // S16: 2 bytes per sample
+	BitDepth   = 16                        // S16: 2 bytes per sample
 	FrameSize  = Channels * (BitDepth / 8) // 4 bytes per stereo frame
 )
 
@@ -49,9 +50,10 @@ type Engine struct {
 	device    *malgo.Device
 	cancelGen context.CancelFunc
 
-	mu        sync.Mutex
-	isRunning bool
-	devName   string
+	mu          sync.Mutex
+	isRunning   bool
+	devName     string
+	subscribers int64 // 音频订阅数（atomic）：无订阅者时引擎静默，避免空转生成与广播 PCM
 }
 
 func NewEngine(kind AudioKind, mode CaptureMode, deviceIndex int, onChunk func([]byte)) *Engine {
@@ -64,6 +66,11 @@ func NewEngine(kind AudioKind, mode CaptureMode, deviceIndex int, onChunk func([
 		deviceIndex: deviceIndex,
 		onChunk:     onChunk,
 	}
+}
+
+// SetSubscribers 由 hub 在音频订阅数变化时回调更新；<=0 表示当前无人订阅音频。
+func (e *Engine) SetSubscribers(n int64) {
+	atomic.StoreInt64(&e.subscribers, n)
 }
 
 // DeviceName returns the active audio source name.
@@ -188,6 +195,10 @@ func (e *Engine) Start() error {
 
 	callbacks := malgo.DeviceCallbacks{
 		Data: func(pOutputSample, pInputSamples []byte, framecount uint32) {
+			// 无订阅者时静默：直接返回，不分配内存也不调用 onChunk，避免空转
+			if atomic.LoadInt64(&e.subscribers) <= 0 {
+				return
+			}
 			if len(pInputSamples) > 0 && e.onChunk != nil {
 				buf := make([]byte, 4+len(pInputSamples))
 				copy(buf[:4], tag)
@@ -301,6 +312,10 @@ func (e *Engine) startTestTone() {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				// 无订阅者时静默：跳过本 chunk 的生成（不停 ticker，恢复订阅后立即生效）
+				if atomic.LoadInt64(&e.subscribers) <= 0 {
+					continue
+				}
 				for i := 0; i < framesPerChunk; i++ {
 					t := float64(sampleIndex) / float64(SampleRate)
 					amp := 0.15 * (0.8 + 0.2*math.Sin(2*math.Pi*0.5*t))

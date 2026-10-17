@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"runtime"
 	"sync"
+	"time"
 
 	"any_device/internal/audio"
 	"any_device/internal/discovery"
@@ -64,9 +65,23 @@ func NewServer(port int, initialIP string, hub *Hub, systemAudioEngine *audio.En
 	})
 	disc.Start()
 
+	// 恢复持久化的本机名称与对端备注（设备改名重启不再丢失）
+	cfg := util.LoadNodeConfig()
+	if cfg.Name != "" {
+		disc.SetName(cfg.Name)
+	}
+	if len(cfg.Aliases) > 0 {
+		disc.SetAliases(cfg.Aliases)
+	}
+	disc.SetPersistHook(func(c util.NodeConfig) {
+		if err := util.SaveNodeConfig(c); err != nil {
+			fmt.Printf("[Discovery] 配置持久化失败 (可用环境变量 ANY_DEVICE_CONFIG 指定可写路径): %v\n", err)
+		}
+	})
+
 	peerMgr := NewPeerManager(disc, hub)
 
-	return &Server{
+	s := &Server{
 		port:              port,
 		currentIP:         initialIP,
 		hub:               hub,
@@ -79,6 +94,35 @@ func NewServer(port int, initialIP string, hub *Hub, systemAudioEngine *audio.En
 		outboundMgr:       NewOutboundManager(hub),
 		roleMode:          "bidirectional",
 	}
+
+	// 入站设备在线校准：以真实 WebSocket 连接集合为准，
+	// 连接断开后最多 5 秒即在列表中显示离线（此前依赖 7 秒超时且重连会堆积条目）。
+	go s.reconcileInboundLoop()
+
+	return s
+}
+
+// reconcileInboundLoop 周期性把当前连接集合同步给发现服务。
+func (s *Server) reconcileInboundLoop() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		s.reconcileInbound()
+	}
+}
+
+func (s *Server) reconcileInbound() {
+	if s.discovery == nil {
+		return
+	}
+	live := make(map[string]bool)
+	for _, c := range s.hub.GetInboundClients() {
+		ip := viewerHost(c.RemoteIP)
+		if ip != "" && !util.IsLocalIP(ip) {
+			live[ip] = true
+		}
+	}
+	s.discovery.ReconcileInbound(live)
 }
 
 func (s *Server) SetRoleMode(mode string) {
@@ -132,9 +176,13 @@ func (s *Server) SetupRoutes() http.Handler {
 			return
 		}
 
-		client := NewClient(s.hub, conn, r.RemoteAddr, r.UserAgent())
+		// 本机回环/本机 IP 打开的 UI 默认不订阅音频与鼠标/键盘流：
+		// 它们从不消费这类消息，却会驱动本机捕获引擎 60Hz 空转。
+		// 前端会在真正需要时发送 set_mapping 动态开启；远端保持默认全开以兼容旧版。
+		local := util.IsLocalIP(r.RemoteAddr)
+		client := NewClient(s.hub, conn, r.RemoteAddr, r.UserAgent(), local)
 		s.hub.register <- client
-		if s.discovery != nil && !util.IsLocalIP(r.RemoteAddr) {
+		if s.discovery != nil && !local {
 			s.discovery.RegisterInboundClient(client.id, r.RemoteAddr, r.UserAgent())
 		}
 
@@ -198,7 +246,9 @@ func (s *Server) SetupRoutes() http.Handler {
 	// Unified Peer Discovery & Mapping APIs (发现的所有对端与自主映射)
 	mux.HandleFunc("/api/peers", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		peers := s.peerMgr.ListPeers()
+		// 关键修复：按“查看者”过滤。手机/外部浏览器接入后会被登记为入站对端，
+		// 不按请求来源剔除的话，它打开 UI 时会在设备列表里看到自己。
+		peers := s.peerMgr.ListPeers(viewerHost(r.RemoteAddr))
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"peers": peers,
 			"total": len(peers),
@@ -406,7 +456,7 @@ func (s *Server) SetupRoutes() http.Handler {
 			"clients":             s.hub.ClientCount(),
 			"inbound_count":       s.hub.ClientCount(),
 			"outbound_count":      len(s.outboundMgr.ListPeers()),
-			"peers_count":         len(s.peerMgr.ListPeers()),
+			"peers_count":         len(s.peerMgr.ListPeers("")),
 			"role_mode":           s.GetRoleMode(),
 			"bytes_sent":          s.hub.TotalBytesSent(),
 			"sample_rate":         audio.SampleRate,
@@ -416,8 +466,8 @@ func (s *Server) SetupRoutes() http.Handler {
 			"mic_device":          micDev,
 			"current_ip":          s.GetCurrentIP(),
 			"primary_url":         s.GetCurrentURL(),
-			"mouse_active":       true,
-			"keyboard_active":    true,
+			"mouse_active":        true,
+			"keyboard_active":     true,
 		}
 		json.NewEncoder(w).Encode(status)
 	})
