@@ -222,8 +222,8 @@
         /* Quick Stat Metrics Cards */
         .metrics-grid {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 16px;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 14px;
         }
 
         .metric-card {
@@ -489,6 +489,222 @@
             box-shadow: 0 0 10px var(--primary-glow);
         }
 
+        /* Mode Selector Banner */
+        .mode-selector-banner {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-bottom: 4px;
+        }
+
+        .mode-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 12px 14px;
+            cursor: pointer;
+            transition: all 0.22s ease;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            position: relative;
+        }
+
+        .mode-card:hover {
+            border-color: rgba(255, 255, 255, 0.22);
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .mode-card.active {
+            border-color: var(--primary);
+            background: rgba(16, 185, 129, 0.1);
+            box-shadow: 0 0 16px rgba(16, 185, 129, 0.15);
+        }
+
+        .mode-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .mode-badge {
+            font-size: 0.84rem;
+            font-weight: 700;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .mode-tag {
+            font-size: 0.68rem;
+            color: var(--text-muted);
+            background: rgba(0, 0, 0, 0.35);
+            padding: 2px 6px;
+            border-radius: 6px;
+        }
+
+        .mode-card.active .mode-tag {
+            color: var(--primary);
+            background: rgba(16, 185, 129, 0.2);
+            font-weight: 700;
+        }
+
+        .mode-desc {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            line-height: 1.4;
+        }
+
+        /* Peer List & Items */
+        .peer-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .peer-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 10px 14px;
+            transition: all 0.2s ease;
+        }
+
+        .peer-item:hover {
+            border-color: var(--border-hover);
+            background: rgba(0, 0, 0, 0.45);
+        }
+
+        .peer-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .peer-icon {
+            font-size: 1.35rem;
+            width: 38px;
+            height: 38px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .peer-name {
+            font-size: 0.83rem;
+            font-weight: 700;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .peer-meta {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            font-family: monospace;
+            margin-top: 2px;
+        }
+
+        .peer-controls {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .toggle-btn {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.04);
+            color: var(--text-muted);
+            font-size: 0.71rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .toggle-btn.active {
+            border-color: rgba(16, 185, 129, 0.4);
+            background: rgba(16, 185, 129, 0.16);
+            color: #10b981;
+            font-weight: 600;
+        }
+
+        .toggle-btn.active-blue {
+            border-color: rgba(59, 130, 246, 0.4);
+            background: rgba(59, 130, 246, 0.16);
+            color: #60a5fa;
+            font-weight: 600;
+        }
+
+        .toggle-btn.active-purple {
+            border-color: rgba(139, 92, 246, 0.4);
+            background: rgba(139, 92, 246, 0.16);
+            color: #c084fc;
+            font-weight: 600;
+        }
+
+        .disconnect-btn {
+            padding: 4px 8px;
+            border-radius: 6px;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            background: rgba(239, 68, 68, 0.1);
+            color: #f87171;
+            font-size: 0.71rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .disconnect-btn:hover {
+            background: rgba(239, 68, 68, 0.25);
+            border-color: #ef4444;
+        }
+
+        .peer-empty {
+            padding: 20px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.76rem;
+            border: 1px dashed var(--border);
+            border-radius: 12px;
+            background: rgba(0, 0, 0, 0.15);
+            line-height: 1.5;
+        }
+
+        .connect-bar {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+            align-items: center;
+        }
+
+        .connect-input {
+            flex: 1;
+            background: #0f172a;
+            border: 1px solid var(--border);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .connect-input:focus {
+            border-color: var(--primary);
+        }
+
         /* Touchpad Area for Mobile */
         .mobile-only {
             display: none;
@@ -555,6 +771,10 @@
                         <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
                         <span>控制中心概览</span>
                     </div>
+                    <div class="nav-item" data-tab="peers">
+                        <svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+                        <span>设备互联与协同</span>
+                    </div>
                     <div class="nav-item" data-tab="audio">
                         <svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
                         <span>音频映射中心</span>
@@ -587,7 +807,7 @@
             <div class="top-bar">
                 <div>
                     <h1 class="page-title" id="pageTitle">设备协同控制中心</h1>
-                    <div class="page-desc">本机作为广播主机 (Host)，正在将声音与鼠标信号广播至局域网</div>
+                    <div class="page-desc" id="pageDesc">本机作为协同中心，正在实时调度多端虚拟外设与信号流</div>
                 </div>
                 <div style="display: flex; gap: 10px;">
                     <button class="copy-btn" id="startAudioBtn" style="padding: 8px 14px; font-size: 0.8rem; background: linear-gradient(135deg, #10b981, #059669);">
@@ -596,7 +816,7 @@
                 </div>
             </div>
 
-            <!-- Top Stat Metrics Cards -->
+            <!-- Top Stat Metrics Cards (4 Metrics) -->
             <section class="metrics-grid">
                 <div class="metric-card">
                     <div class="metric-icon-box" style="background: rgba(16, 185, 129, 0.15);">
@@ -620,17 +840,99 @@
 
                 <div class="metric-card">
                     <div class="metric-icon-box" style="background: rgba(139, 92, 246, 0.15);">
-                        <svg viewBox="0 0 24 24" style="fill: var(--accent);"><path d="M4 6h16v12H4zM2 4v16h20V4zm10 13a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>
+                        <svg viewBox="0 0 24 24" style="fill: var(--accent);"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
                     </div>
                     <div>
-                        <div class="metric-label">已连接设备</div>
-                        <div class="metric-value" id="metricClientCount" style="color: #c084fc;">1 台在线</div>
+                        <div class="metric-label">谁连接了我 (连入)</div>
+                        <div class="metric-value" id="metricInboundCount" style="color: #c084fc;">0 台在线</div>
+                    </div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-icon-box" style="background: rgba(245, 158, 11, 0.15);">
+                        <svg viewBox="0 0 24 24" style="fill: #f59e0b;"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+                    </div>
+                    <div>
+                        <div class="metric-label">我连接了谁 (连出)</div>
+                        <div class="metric-value" id="metricOutboundCount" style="color: #fbbf24;">0 台主机</div>
                     </div>
                 </div>
             </section>
 
             <!-- TAB 1: OVERVIEW DASHBOARD -->
             <div class="tab-panel active" id="tab-overview">
+                <!-- 1. Mode Selector Banner -->
+                <div class="mode-selector-banner">
+                    <div class="mode-card" data-mode="provider" id="modeCardProvider">
+                        <div class="mode-header">
+                            <span class="mode-badge">📤 把本机映射成别人的虚拟设备</span>
+                            <span class="mode-tag">被映射端 (提供者)</span>
+                        </div>
+                        <div class="mode-desc">向手机或其他电脑广播本机的系统声音与物理鼠标，作为对方的外设使用。</div>
+                    </div>
+                    <div class="mode-card" data-mode="receiver" id="modeCardReceiver">
+                        <div class="mode-header">
+                            <span class="mode-badge">📥 接收别人的虚拟设备到本机</span>
+                            <span class="mode-tag">映射端 (接收者)</span>
+                        </div>
+                        <div class="mode-desc">拉取远端电脑的声音从本机扬声器播放，接收对端光标或用本机触控板反向遥控对方。</div>
+                    </div>
+                    <div class="mode-card active" data-mode="bidirectional" id="modeCardBidi">
+                        <div class="mode-header">
+                            <span class="mode-badge">🔄 双向互通全能协同</span>
+                            <span class="mode-tag">混合模式 (双向)</span>
+                        </div>
+                        <div class="mode-desc">既向外部设备广播本机，也可同时接入多台远端电脑，所有虚拟通道自由组网。</div>
+                    </div>
+                </div>
+
+                <!-- 2. Interactive Inbound & Outbound Device Panels -->
+                <div class="dashboard-grid">
+                    <!-- Left: 谁连接上了我 (Inbound Peers) -->
+                    <div class="content-card" id="inboundCardArea">
+                        <div class="card-header">
+                            <div class="card-title-group">
+                                <svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+                                <span class="card-title">谁连接上了我 (连入本机的访客设备)</span>
+                            </div>
+                            <span id="inboundBadge" style="font-size: 0.72rem; color: var(--primary); font-weight: 700; background: rgba(16, 185, 129, 0.15); padding: 2px 8px; border-radius: 6px;">0 台在线</span>
+                        </div>
+                        <div class="peer-list" id="inboundPeerList">
+                            <div class="peer-empty">
+                                📡 暂无外部设备连入本机<br>
+                                <span style="font-size: 0.7rem; opacity: 0.7;">手机/平板可扫下方二维码，或局域网电脑直接访问本机 IP 地址即刻接入</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right: 自己又连接上了谁 (Outbound Peers) -->
+                    <div class="content-card" id="outboundCardArea">
+                        <div class="card-header">
+                            <div class="card-title-group">
+                                <svg viewBox="0 0 24 24"><path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z"/></svg>
+                                <span class="card-title">自己连接上了谁 (本机连出的远端主机)</span>
+                            </div>
+                            <span id="outboundBadge" style="font-size: 0.72rem; color: #f59e0b; font-weight: 700; background: rgba(245, 158, 11, 0.15); padding: 2px 8px; border-radius: 6px;">0 台主机</span>
+                        </div>
+
+                        <!-- Connect bar -->
+                        <div class="connect-bar">
+                            <input type="text" id="outboundTargetInput" class="connect-input" placeholder="输入远端电脑 IP:端口 (例如 192.168.1.105:8080)">
+                            <button class="copy-btn" id="connectOutboundBtn" style="padding: 8px 14px; font-size: 0.78rem; white-space: nowrap;">
+                                ➕ 连接远端
+                            </button>
+                        </div>
+
+                        <div class="peer-list" id="outboundPeerList">
+                            <div class="peer-empty">
+                                🌐 当前未连接到任何远端主机<br>
+                                <span style="font-size: 0.7rem; opacity: 0.7;">在上方输入其他电脑的 IP 即可接入，将其音频拉取至本机播放或接收光标</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. Pairing QR & Visualizer Grid -->
                 <div class="dashboard-grid">
                     <!-- Column 1: QR & Pairing Card -->
                     <div class="content-card">
@@ -702,6 +1004,45 @@
                         <div style="text-align: center; font-size: 0.75rem; color: var(--text-muted);">
                             👆 单指滑动移光标 · 🎯 轻点左键 · ✌️ 双指右键
                         </div>
+                    </div>
+                </div>
+            <!-- TAB: PEERS & MAPPING MANAGEMENT -->
+            <div class="tab-panel" id="tab-peers">
+                <div class="content-card">
+                    <div class="card-header">
+                        <div class="card-title-group">
+                            <svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+                            <span class="card-title">协同设备拓扑与通道权限控制</span>
+                        </div>
+                    </div>
+                    <div style="font-size: 0.78rem; color: var(--text-muted); line-height: 1.5;">
+                        在下方列表可直观查看当前所有连入本机的访客设备，以及本机连出的远端主机。点击对应按钮可单独为每台设备开启/关闭音频流传输、鼠标轨迹共享或反向操作授权。
+                    </div>
+                </div>
+
+                <div class="dashboard-grid">
+                    <!-- Left: Inbound -->
+                    <div class="content-card">
+                        <div class="card-header">
+                            <span class="card-title">📥 谁连接上了我 (访客列表)</span>
+                            <span id="tabInboundBadge" style="font-size: 0.72rem; color: var(--primary); font-weight: 700;">0 台在线</span>
+                        </div>
+                        <div class="peer-list" id="tabInboundPeerList"></div>
+                    </div>
+
+                    <!-- Right: Outbound -->
+                    <div class="content-card">
+                        <div class="card-header">
+                            <span class="card-title">📤 自己连接上了谁 (远端主机)</span>
+                            <span id="tabOutboundBadge" style="font-size: 0.72rem; color: #f59e0b; font-weight: 700;">0 台主机</span>
+                        </div>
+                        <div class="connect-bar">
+                            <input type="text" id="tabOutboundTargetInput" class="connect-input" placeholder="输入远端电脑 IP:端口 (例如 192.168.1.105:8080)">
+                            <button class="copy-btn" id="tabConnectOutboundBtn" style="padding: 8px 14px; font-size: 0.78rem; white-space: nowrap;">
+                                ➕ 建立连接
+                            </button>
+                        </div>
+                        <div class="peer-list" id="tabOutboundPeerList"></div>
                     </div>
                 </div>
             </div>
@@ -820,6 +1161,7 @@
         // Desktop Navigation Tab Switching
         const tabTitles = {
             overview: '设备协同控制中心',
+            peers: '协同设备与拓扑权限',
             audio: '音频映射与声卡控制',
             mouse: '鼠标跨端交互与遥控',
             network: '通信网卡与路由设置'
@@ -1107,13 +1449,320 @@
             });
         }
 
+        // Mode Selector Switching
+        const modeCards = document.querySelectorAll('.mode-card');
+        let currentMode = 'bidirectional';
+
+        function updateModeUI(mode) {
+            currentMode = mode;
+            modeCards.forEach(c => {
+                if (c.getAttribute('data-mode') === mode) {
+                    c.classList.add('active');
+                } else {
+                    c.classList.remove('active');
+                }
+            });
+
+            const pageDesc = document.getElementById('pageDesc');
+            const inboundCardArea = document.getElementById('inboundCardArea');
+            const outboundCardArea = document.getElementById('outboundCardArea');
+
+            if (pageDesc) {
+                if (mode === 'provider') {
+                    pageDesc.innerText = '当前工作模式：被映射端 (提供者) · 正在将声音与鼠标信号广播给其他设备使用';
+                } else if (mode === 'receiver') {
+                    pageDesc.innerText = '当前工作模式：映射端 (接收者) · 正在接收远端主机的虚拟设备并在本机呈现';
+                } else {
+                    pageDesc.innerText = '当前工作模式：双向互通全能协同 · 正在同时进行设备广播与远端虚拟设备接入';
+                }
+            }
+
+            if (inboundCardArea && outboundCardArea) {
+                if (mode === 'provider') {
+                    inboundCardArea.style.opacity = '1';
+                    inboundCardArea.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+                    outboundCardArea.style.opacity = '0.7';
+                    outboundCardArea.style.borderColor = 'var(--border)';
+                } else if (mode === 'receiver') {
+                    inboundCardArea.style.opacity = '0.7';
+                    inboundCardArea.style.borderColor = 'var(--border)';
+                    outboundCardArea.style.opacity = '1';
+                    outboundCardArea.style.borderColor = 'rgba(59, 130, 246, 0.4)';
+                } else {
+                    inboundCardArea.style.opacity = '1';
+                    inboundCardArea.style.borderColor = 'var(--border)';
+                    outboundCardArea.style.opacity = '1';
+                    outboundCardArea.style.borderColor = 'var(--border)';
+                }
+            }
+        }
+
+        modeCards.forEach(card => {
+            card.addEventListener('click', async () => {
+                const mode = card.getAttribute('data-mode');
+                updateModeUI(mode);
+                try {
+                    await fetch('/api/mapping/mode', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ mode: mode })
+                    });
+                } catch (e) {}
+            });
+        });
+
+        async function fetchMappingMode() {
+            try {
+                const res = await fetch('/api/mapping/mode');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.mode) updateModeUI(data.mode);
+                }
+            } catch (e) {}
+        }
+
+        // Inbound Peers Management (谁连接上了我)
+        async function fetchInboundClients() {
+            try {
+                const res = await fetch('/api/inbound');
+                if (!res.ok) return;
+                const data = await res.json();
+                const clients = data.clients || [];
+
+                const metricInboundCount = document.getElementById('metricInboundCount');
+                const inboundBadge = document.getElementById('inboundBadge');
+                const tabInboundBadge = document.getElementById('tabInboundBadge');
+
+                const countText = `${clients.length} 台在线`;
+                if (metricInboundCount) metricInboundCount.innerText = countText;
+                if (inboundBadge) inboundBadge.innerText = countText;
+                if (tabInboundBadge) tabInboundBadge.innerText = countText;
+
+                renderInboundList('inboundPeerList', clients);
+                renderInboundList('tabInboundPeerList', clients);
+            } catch (e) {}
+        }
+
+        function renderInboundList(containerId, clients) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            if (clients.length === 0) {
+                container.innerHTML = `
+                    <div class="peer-empty">
+                        📡 暂无外部设备连入本机<br>
+                        <span style="font-size: 0.7rem; opacity: 0.7;">手机/平板可扫下方二维码，或局域网电脑直接访问本机 IP 地址即刻接入</span>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = '';
+            clients.forEach(c => {
+                const item = document.createElement('div');
+                item.className = 'peer-item';
+                const icon = c.device_type.includes('手机') || c.device_type.includes('平板') ? '📱' : '💻';
+
+                item.innerHTML = `
+                    <div class="peer-info">
+                        <div class="peer-icon">${icon}</div>
+                        <div>
+                            <div class="peer-name">
+                                ${escapeHTML(c.device_type)}
+                                <span style="font-size:0.75rem; color:var(--text-muted); font-weight:normal;">(${escapeHTML(c.remote_addr)})</span>
+                            </div>
+                            <div class="peer-meta">连入时刻: ${c.connected_at} · 已连入 ${c.duration_sec} 秒</div>
+                        </div>
+                    </div>
+                    <div class="peer-controls">
+                        <button class="toggle-btn ${c.audio_enabled ? 'active' : ''}" data-id="${c.id}" data-action="audio">
+                            ${c.audio_enabled ? '🔊 发送声音: 开' : '🔇 发送声音: 关'}
+                        </button>
+                        <button class="toggle-btn ${c.mouse_enabled ? 'active-blue' : ''}" data-id="${c.id}" data-action="mouse">
+                            ${c.mouse_enabled ? '🖱️ 发送鼠标: 开' : '⏹️ 发送鼠标: 关'}
+                        </button>
+                        <button class="toggle-btn ${c.allow_control ? 'active-purple' : ''}" data-id="${c.id}" data-action="control">
+                            ${c.allow_control ? '🛡️ 允许控本机: 允许' : '⛔ 允许控本机: 禁止'}
+                        </button>
+                        <button class="disconnect-btn" data-id="${c.id}">踢出</button>
+                    </div>
+                `;
+
+                item.querySelectorAll('.toggle-btn').forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        const action = btn.getAttribute('data-action');
+                        const id = btn.getAttribute('data-id');
+                        const payload = { id: id };
+                        if (action === 'audio') payload.audio = !c.audio_enabled;
+                        if (action === 'mouse') payload.mouse = !c.mouse_enabled;
+                        if (action === 'control') payload.allow_control = !c.allow_control;
+                        await fetch('/api/inbound/update', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        fetchInboundClients();
+                    });
+                });
+
+                item.querySelector('.disconnect-btn').addEventListener('click', async () => {
+                    await fetch(`/api/inbound/disconnect?id=${encodeURIComponent(c.id)}`, { method: 'POST' });
+                    fetchInboundClients();
+                });
+
+                container.appendChild(item);
+            });
+        }
+
+        // Outbound Peers Management (自己又连接上了谁)
+        async function fetchOutboundPeers() {
+            try {
+                const res = await fetch('/api/outbound');
+                if (!res.ok) return;
+                const data = await res.json();
+                const peers = data.peers || [];
+
+                const metricOutboundCount = document.getElementById('metricOutboundCount');
+                const outboundBadge = document.getElementById('outboundBadge');
+                const tabOutboundBadge = document.getElementById('tabOutboundBadge');
+
+                const countText = `${peers.length} 台主机`;
+                if (metricOutboundCount) metricOutboundCount.innerText = countText;
+                if (outboundBadge) outboundBadge.innerText = countText;
+                if (tabOutboundBadge) tabOutboundBadge.innerText = countText;
+
+                renderOutboundList('outboundPeerList', peers);
+                renderOutboundList('tabOutboundPeerList', peers);
+            } catch (e) {}
+        }
+
+        function renderOutboundList(containerId, peers) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+
+            if (peers.length === 0) {
+                container.innerHTML = `
+                    <div class="peer-empty">
+                        🌐 当前未连接到任何远端主机<br>
+                        <span style="font-size: 0.7rem; opacity: 0.7;">在上方输入其他电脑的 IP 即可接入，将其音频拉取至本机播放或接收光标</span>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = '';
+            peers.forEach(p => {
+                const item = document.createElement('div');
+                item.className = 'peer-item';
+                const statusDotColor = p.status === 'connected' ? '#10b981' : (p.status === 'connecting' ? '#f59e0b' : '#ef4444');
+                const statusText = p.status === 'connected' ? `● 已连通 (延迟 ${p.latency_ms}ms)` : (p.status === 'connecting' ? '○ 正在连接...' : `× ${p.last_error || '连接失败'}`);
+
+                item.innerHTML = `
+                    <div class="peer-info">
+                        <div class="peer-icon" style="background: rgba(59, 130, 246, 0.1);">💻</div>
+                        <div>
+                            <div class="peer-name">
+                                AnyDevice 远端主机
+                                <span style="font-size:0.75rem; color:var(--text-muted); font-weight:normal;">(${escapeHTML(p.target)})</span>
+                            </div>
+                            <div class="peer-meta" style="color: ${statusDotColor};">${statusText} · 连接于 ${p.connected_at}</div>
+                        </div>
+                    </div>
+                    <div class="peer-controls">
+                        <button class="toggle-btn ${p.receive_audio ? 'active' : ''}" data-id="${p.id}" data-action="audio">
+                            ${p.receive_audio ? '🎧 接收声音: 开' : '🔇 接收声音: 关'}
+                        </button>
+                        <button class="toggle-btn ${p.receive_mouse ? 'active-blue' : ''}" data-id="${p.id}" data-action="mouse">
+                            ${p.receive_mouse ? '🖥️ 接收光标: 开' : '⏹️ 接收光标: 关'}
+                        </button>
+                        <button class="toggle-btn ${p.send_mouse ? 'active-purple' : ''}" data-id="${p.id}" data-action="send_mouse">
+                            ${p.send_mouse ? '🎮 触控遥控它: 开' : '⏹️ 触控遥控它: 关'}
+                        </button>
+                        <button class="disconnect-btn" data-id="${p.id}">断开</button>
+                    </div>
+                `;
+
+                item.querySelectorAll('.toggle-btn').forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        const action = btn.getAttribute('data-action');
+                        const id = btn.getAttribute('data-id');
+                        const payload = { id: id };
+                        if (action === 'audio') payload.receive_audio = !p.receive_audio;
+                        if (action === 'mouse') payload.receive_mouse = !p.receive_mouse;
+                        if (action === 'send_mouse') payload.send_mouse = !p.send_mouse;
+                        await fetch('/api/outbound/update', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        fetchOutboundPeers();
+                    });
+                });
+
+                item.querySelector('.disconnect-btn').addEventListener('click', async () => {
+                    await fetch(`/api/outbound/disconnect?id=${encodeURIComponent(p.id)}`, { method: 'POST' });
+                    fetchOutboundPeers();
+                });
+
+                container.appendChild(item);
+            });
+        }
+
+        // Connect Outbound Handler
+        function setupConnectHandler(inputId, btnId) {
+            const input = document.getElementById(inputId);
+            const btn = document.getElementById(btnId);
+            if (!input || !btn) return;
+
+            btn.addEventListener('click', async () => {
+                const target = input.value.trim();
+                if (!target) {
+                    alert('请输入远端主机的 IP:端口，例如 192.168.1.105:8080');
+                    return;
+                }
+                btn.disabled = true;
+                btn.innerText = '连接中...';
+                try {
+                    const res = await fetch('/api/outbound/connect', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            target: target,
+                            receive_audio: true,
+                            receive_mouse: true,
+                            send_mouse: false
+                        })
+                    });
+                    if (res.ok) {
+                        input.value = '';
+                        fetchOutboundPeers();
+                    } else {
+                        const err = await res.text();
+                        alert('连接远端失败: ' + err);
+                    }
+                } catch (e) {
+                    alert('网络连接错误: ' + e);
+                } finally {
+                    btn.disabled = false;
+                    btn.innerText = '➕ 连接远端';
+                }
+            });
+        }
+
+        function escapeHTML(str) {
+            if (!str) return '';
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // Setup Connect Buttons
+        setupConnectHandler('outboundTargetInput', 'connectOutboundBtn');
+        setupConnectHandler('tabOutboundTargetInput', 'tabConnectOutboundBtn');
+
         // Periodic Status Fetch
         async function fetchStatus() {
             try {
                 const res = await fetch('/api/status');
                 if (res.ok) {
                     const data = await res.json();
-                    if (metricClientCount) metricClientCount.innerText = `${data.clients} 台在线`;
+                    if (data.role_mode) updateModeUI(data.role_mode);
                 }
             } catch (e) {}
         }
@@ -1121,7 +1770,12 @@
         // Init
         loadNetworkInterfaces();
         connectWS();
+        setInterval(fetchInboundClients, 2000);
+        setInterval(fetchOutboundPeers, 2000);
         setInterval(fetchStatus, 3000);
+        fetchInboundClients();
+        fetchOutboundPeers();
+        fetchMappingMode();
         fetchStatus();
     </script>
 </body>

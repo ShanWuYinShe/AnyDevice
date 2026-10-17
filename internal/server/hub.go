@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,16 +18,63 @@ type OutMessage struct {
 	data     []byte
 }
 
+// InboundClientInfo represents public status of a connected client.
+type InboundClientInfo struct {
+	ID           string `json:"id"`
+	RemoteAddr   string `json:"remote_addr"`
+	RemoteIP     string `json:"remote_ip"`
+	UserAgent    string `json:"user_agent"`
+	DeviceType   string `json:"device_type"`
+	ConnectedAt  string `json:"connected_at"`
+	DurationSec  int64  `json:"duration_sec"`
+	AudioEnabled bool   `json:"audio_enabled"`
+	MouseEnabled bool   `json:"mouse_enabled"`
+	AllowControl bool   `json:"allow_control"`
+}
+
 // Client represents a connected browser or receiver client.
 type Client struct {
+	id           string
 	hub          *Hub
 	conn         *websocket.Conn
 	send         chan OutMessage
 	remoteIP     string
+	remoteAddr   string
+	userAgent    string
+	deviceType   string
 	joinedAt     time.Time
 	audioEnabled bool
 	mouseEnabled bool
+	allowControl bool
 	mu           sync.RWMutex
+}
+
+var clientSeq uint64
+
+// ParseDeviceType detects friendly device name from User-Agent string.
+func ParseDeviceType(ua string) string {
+	if ua == "" {
+		return "🌐 网页终端"
+	}
+	if strings.Contains(ua, "iPhone") {
+		return "📱 苹果手机 (iOS)"
+	}
+	if strings.Contains(ua, "iPad") {
+		return "📱 苹果平板 (iPadOS)"
+	}
+	if strings.Contains(ua, "Android") {
+		return "📱 安卓设备 (Android)"
+	}
+	if strings.Contains(ua, "Windows") {
+		return "💻 Windows 电脑"
+	}
+	if strings.Contains(ua, "Macintosh") || strings.Contains(ua, "Mac OS") {
+		return "💻 Mac 电脑"
+	}
+	if strings.Contains(ua, "Linux") {
+		return "💻 Linux 设备"
+	}
+	return "🌐 局域网终端"
 }
 
 // Hub maintains the set of active clients and broadcasts messages to them.
@@ -165,6 +214,98 @@ func (h *Hub) TotalBytesSent() uint64 {
 	return atomic.LoadUint64(&h.totalBytesSent)
 }
 
+// NewClient constructs a new connected client.
+func NewClient(hub *Hub, conn *websocket.Conn, remoteAddr, userAgent string) *Client {
+	remoteIP := remoteAddr
+	if idx := strings.LastIndex(remoteAddr, ":"); idx != -1 {
+		remoteIP = remoteAddr[:idx]
+	}
+	return &Client{
+		id:           fmt.Sprintf("client-%d", atomic.AddUint64(&clientSeq, 1)),
+		hub:          hub,
+		conn:         conn,
+		send:         make(chan OutMessage, 64),
+		remoteIP:     remoteIP,
+		remoteAddr:   remoteAddr,
+		userAgent:    userAgent,
+		deviceType:   ParseDeviceType(userAgent),
+		joinedAt:     time.Now(),
+		audioEnabled: true,
+		mouseEnabled: true,
+		allowControl: true,
+	}
+}
+
+// GetInboundClients returns real-time snapshot of all inbound connected clients.
+func (h *Hub) GetInboundClients() []InboundClientInfo {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	result := make([]InboundClientInfo, 0, len(h.clients))
+	now := time.Now()
+	for c := range h.clients {
+		c.mu.RLock()
+		info := InboundClientInfo{
+			ID:           c.id,
+			RemoteAddr:   c.remoteAddr,
+			RemoteIP:     c.remoteIP,
+			UserAgent:    c.userAgent,
+			DeviceType:   c.deviceType,
+			ConnectedAt:  c.joinedAt.Format("15:04:05"),
+			DurationSec:  int64(now.Sub(c.joinedAt).Seconds()),
+			AudioEnabled: c.audioEnabled,
+			MouseEnabled: c.mouseEnabled,
+			AllowControl: c.allowControl,
+		}
+		c.mu.RUnlock()
+		result = append(result, info)
+	}
+	return result
+}
+
+// UpdateInboundClient updates permissions for a specific client.
+func (h *Hub) UpdateInboundClient(id string, audio *bool, mouse *bool, allowControl *bool) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for c := range h.clients {
+		if c.id == id {
+			c.mu.Lock()
+			if audio != nil {
+				c.audioEnabled = *audio
+			}
+			if mouse != nil {
+				c.mouseEnabled = *mouse
+			}
+			if allowControl != nil {
+				c.allowControl = *allowControl
+			}
+			c.mu.Unlock()
+
+			select {
+			case h.updateSubs <- struct{}{}:
+			default:
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// DisconnectInboundClient kicks a client.
+func (h *Hub) DisconnectInboundClient(id string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for c := range h.clients {
+		if c.id == id {
+			c.conn.Close()
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Client) writePump() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer func() {
@@ -255,6 +396,13 @@ func (c *Client) readPump() {
 				default:
 				}
 			} else if cmd.Action == "remote_input" {
+				c.mu.RLock()
+				allowed := c.allowControl
+				c.mu.RUnlock()
+				if !allowed {
+					continue
+				}
+
 				// Reverse control: client controls host mouse!
 				switch cmd.Type {
 				case "move":
