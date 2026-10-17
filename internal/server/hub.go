@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -8,33 +9,47 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+type OutMessage struct {
+	isBinary bool
+	data     []byte
+}
+
 // Client represents a connected browser or receiver client.
 type Client struct {
-	hub      *Hub
-	conn     *websocket.Conn
-	send     chan []byte
-	remoteIP string
-	joinedAt time.Time
+	hub          *Hub
+	conn         *websocket.Conn
+	send         chan OutMessage
+	remoteIP     string
+	joinedAt     time.Time
+	audioEnabled bool
+	mouseEnabled bool
+	mu           sync.RWMutex
 }
 
 // Hub maintains the set of active clients and broadcasts messages to them.
 type Hub struct {
-	clients    map[*Client]bool
-	broadcast  chan []byte
-	register   chan *Client
-	unregister chan *Client
-	mu         sync.RWMutex
+	clients        map[*Client]bool
+	audioBroadcast chan []byte
+	mouseBroadcast chan []byte
+	register       chan *Client
+	unregister     chan *Client
+	updateSubs     chan struct{}
+	mu             sync.RWMutex
 
 	totalBytesSent uint64
 	clientCount    int64
+	onSubsChanged  func(audioSubs, mouseSubs int)
 }
 
-func NewHub() *Hub {
+func NewHub(onSubsChanged func(audioSubs, mouseSubs int)) *Hub {
 	return &Hub{
-		clients:    make(map[*Client]bool),
-		broadcast:  make(chan []byte, 128),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
+		clients:        make(map[*Client]bool),
+		audioBroadcast: make(chan []byte, 128),
+		mouseBroadcast: make(chan []byte, 64),
+		register:       make(chan *Client),
+		unregister:     make(chan *Client),
+		updateSubs:     make(chan struct{}, 8),
+		onSubsChanged:  onSubsChanged,
 	}
 }
 
@@ -46,6 +61,7 @@ func (h *Hub) Run() {
 			h.clients[client] = true
 			atomic.StoreInt64(&h.clientCount, int64(len(h.clients)))
 			h.mu.Unlock()
+			h.notifySubscribers()
 
 		case client := <-h.unregister:
 			h.mu.Lock()
@@ -55,15 +71,45 @@ func (h *Hub) Run() {
 				atomic.StoreInt64(&h.clientCount, int64(len(h.clients)))
 			}
 			h.mu.Unlock()
+			h.notifySubscribers()
 
-		case message := <-h.broadcast:
+		case <-h.updateSubs:
+			h.notifySubscribers()
+
+		case audioChunk := <-h.audioBroadcast:
+			msg := OutMessage{isBinary: true, data: audioChunk}
 			h.mu.RLock()
 			for client := range h.clients {
-				select {
-				case client.send <- message:
-					atomic.AddUint64(&h.totalBytesSent, uint64(len(message)))
-				default:
-					// If client channel is full (network lag/slow receiver), drop chunk to avoid latency build-up
+				client.mu.RLock()
+				enabled := client.audioEnabled
+				client.mu.RUnlock()
+
+				if enabled {
+					select {
+					case client.send <- msg:
+						atomic.AddUint64(&h.totalBytesSent, uint64(len(audioChunk)))
+					default:
+						// Drop chunk on laggy client to prevent audio latency accumulation
+					}
+				}
+			}
+			h.mu.RUnlock()
+
+		case mouseEvent := <-h.mouseBroadcast:
+			msg := OutMessage{isBinary: false, data: mouseEvent}
+			h.mu.RLock()
+			for client := range h.clients {
+				client.mu.RLock()
+				enabled := client.mouseEnabled
+				client.mu.RUnlock()
+
+				if enabled {
+					select {
+					case client.send <- msg:
+						atomic.AddUint64(&h.totalBytesSent, uint64(len(mouseEvent)))
+					default:
+						// Drop frame if client buffer is backed up
+					}
 				}
 			}
 			h.mu.RUnlock()
@@ -71,12 +117,39 @@ func (h *Hub) Run() {
 	}
 }
 
-// BroadcastChunk pushes an audio chunk to all connected clients.
-func (h *Hub) BroadcastChunk(chunk []byte) {
+func (h *Hub) notifySubscribers() {
+	h.mu.RLock()
+	var audioCount, mouseCount int
+	for client := range h.clients {
+		client.mu.RLock()
+		if client.audioEnabled {
+			audioCount++
+		}
+		if client.mouseEnabled {
+			mouseCount++
+		}
+		client.mu.RUnlock()
+	}
+	h.mu.RUnlock()
+
+	if h.onSubsChanged != nil {
+		h.onSubsChanged(audioCount, mouseCount)
+	}
+}
+
+// BroadcastAudio pushes an audio PCM chunk to subscribed clients.
+func (h *Hub) BroadcastAudio(chunk []byte) {
 	select {
-	case h.broadcast <- chunk:
+	case h.audioBroadcast <- chunk:
 	default:
-		// Hub broadcast buffer full, drop to prevent stalling audio capture thread
+	}
+}
+
+// BroadcastMouse pushes a mouse event JSON to subscribed clients.
+func (h *Hub) BroadcastMouse(event []byte) {
+	select {
+	case h.mouseBroadcast <- event:
+	default:
 	}
 }
 
@@ -99,19 +172,23 @@ func (c *Client) writePump() {
 
 	for {
 		select {
-		case message, ok := <-c.send:
+		case msg, ok := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			if !ok {
-				// The hub closed the channel
 				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
-			w, err := c.conn.NextWriter(websocket.BinaryMessage)
+			msgType := websocket.BinaryMessage
+			if !msg.isBinary {
+				msgType = websocket.TextMessage
+			}
+
+			w, err := c.conn.NextWriter(msgType)
 			if err != nil {
 				return
 			}
-			w.Write(message)
+			w.Write(msg.data)
 
 			if err := w.Close(); err != nil {
 				return
@@ -132,7 +209,7 @@ func (c *Client) readPump() {
 		c.conn.Close()
 	}()
 
-	c.conn.SetReadLimit(512)
+	c.conn.SetReadLimit(2048)
 	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	c.conn.SetPongHandler(func(string) error {
 		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
@@ -140,10 +217,32 @@ func (c *Client) readPump() {
 	})
 
 	for {
-		// Read control messages (e.g. ping/pong or client stats)
-		_, _, err := c.conn.ReadMessage()
+		msgType, p, err := c.conn.ReadMessage()
 		if err != nil {
 			break
+		}
+
+		if msgType == websocket.TextMessage {
+			var cmd struct {
+				Action string `json:"action"` // "set_mapping"
+				Audio  *bool  `json:"audio"`
+				Mouse  *bool  `json:"mouse"`
+			}
+			if err := json.Unmarshal(p, &cmd); err == nil && cmd.Action == "set_mapping" {
+				c.mu.Lock()
+				if cmd.Audio != nil {
+					c.audioEnabled = *cmd.Audio
+				}
+				if cmd.Mouse != nil {
+					c.mouseEnabled = *cmd.Mouse
+				}
+				c.mu.Unlock()
+
+				select {
+				case c.hub.updateSubs <- struct{}{}:
+				default:
+				}
+			}
 		}
 	}
 }

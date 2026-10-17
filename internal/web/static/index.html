@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AnyDevice - 局域网音频无线扬声器</title>
+    <title>AnyDevice - 跨端设备映射中心</title>
     <style>
         :root {
             --bg: #090d16;
@@ -11,6 +11,8 @@
             --border: rgba(255, 255, 255, 0.08);
             --primary: #10b981;
             --primary-glow: rgba(16, 185, 129, 0.35);
+            --secondary: #3b82f6;
+            --secondary-glow: rgba(59, 130, 246, 0.35);
             --text-main: #f8fafc;
             --text-muted: #94a3b8;
             --danger: #ef4444;
@@ -31,23 +33,24 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
+            justify-content: flex-start;
             padding: 16px;
             background-image: 
-                radial-gradient(circle at 50% 20%, rgba(16, 185, 129, 0.08), transparent 45%),
+                radial-gradient(circle at 50% 10%, rgba(16, 185, 129, 0.08), transparent 45%),
                 radial-gradient(circle at 80% 80%, rgba(59, 130, 246, 0.05), transparent 40%);
         }
 
         .container {
             width: 100%;
-            max-width: 440px;
+            max-width: 480px;
             background: var(--card-bg);
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
             border: 1px solid var(--border);
             border-radius: 24px;
-            padding: 24px;
+            padding: 22px;
             box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.6);
+            margin: auto 0;
         }
 
         .header {
@@ -60,23 +63,23 @@
         .logo-area {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 12px;
         }
 
         .logo-badge {
-            width: 36px;
-            height: 36px;
-            border-radius: 10px;
-            background: linear-gradient(135deg, #10b981, #059669);
+            width: 38px;
+            height: 38px;
+            border-radius: 12px;
+            background: linear-gradient(135deg, #10b981, #3b82f6);
             display: flex;
             align-items: center;
             justify-content: center;
-            box-shadow: 0 4px 12px var(--primary-glow);
+            box-shadow: 0 4px 14px var(--primary-glow);
         }
 
         .logo-badge svg {
-            width: 20px;
-            height: 20px;
+            width: 22px;
+            height: 22px;
             fill: #fff;
         }
 
@@ -90,7 +93,7 @@
             display: flex;
             align-items: center;
             gap: 6px;
-            padding: 4px 10px;
+            padding: 5px 12px;
             border-radius: 20px;
             font-size: 0.75rem;
             font-weight: 600;
@@ -111,19 +114,141 @@
             box-shadow: 0 0 8px #10b981;
         }
 
-        .status-dot.error {
-            background: var(--danger);
+        /* Device Mapping Selectors */
+        .section-title {
+            font-size: 0.78rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        .device-selector-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+
+        .device-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 14px;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            position: relative;
+        }
+
+        .device-card:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .device-card.active {
+            background: rgba(16, 185, 129, 0.08);
+            border-color: var(--primary);
+            box-shadow: 0 0 16px rgba(16, 185, 129, 0.15);
+        }
+
+        .device-card.active.mouse-card {
+            background: rgba(59, 130, 246, 0.08);
+            border-color: var(--secondary);
+            box-shadow: 0 0 16px rgba(59, 130, 246, 0.15);
+        }
+
+        .device-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .device-icon-box {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.06);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .device-icon-box svg {
+            width: 18px;
+            height: 18px;
+            fill: var(--text-main);
+        }
+
+        .device-card.active .device-icon-box {
+            background: var(--primary);
+        }
+
+        .device-card.active.mouse-card .device-icon-box {
+            background: var(--secondary);
+        }
+
+        .device-toggle-badge {
+            font-size: 0.72rem;
+            padding: 2px 8px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.06);
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+
+        .device-card.active .device-toggle-badge {
+            background: var(--primary);
+            color: #fff;
+        }
+
+        .device-card.active.mouse-card .device-toggle-badge {
+            background: var(--secondary);
+            color: #fff;
+        }
+
+        .device-info-name {
+            font-size: 0.95rem;
+            font-weight: 700;
+        }
+
+        .device-info-desc {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+        }
+
+        /* Audio Module Area */
+        .module-container {
+            display: none;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 16px;
+            margin-bottom: 16px;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .module-container.visible {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
         }
 
         /* Visualizer Canvas */
         .visualizer-wrapper {
             width: 100%;
-            height: 90px;
-            background: rgba(0, 0, 0, 0.35);
-            border-radius: 16px;
+            height: 80px;
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: 12px;
             border: 1px solid rgba(255, 255, 255, 0.05);
             overflow: hidden;
-            margin-bottom: 24px;
+            margin-bottom: 16px;
             position: relative;
         }
 
@@ -141,65 +266,19 @@
             font-size: 0.75rem;
             color: var(--text-muted);
             pointer-events: none;
-            transition: opacity 0.3s;
         }
 
-        /* Big Play Button */
-        .play-button {
-            width: 100%;
-            padding: 16px;
-            border-radius: 16px;
-            border: none;
-            font-size: 1.05rem;
-            font-weight: 700;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
-            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-            background: linear-gradient(135deg, #10b981, #059669);
-            color: #fff;
-            box-shadow: 0 8px 24px var(--primary-glow);
-            margin-bottom: 20px;
-        }
-
-        .play-button:hover {
-            opacity: 0.95;
-            transform: translateY(-1px);
-        }
-
-        .play-button:active {
-            transform: translateY(1px);
-        }
-
-        .play-button.active {
-            background: linear-gradient(135deg, #ef4444, #dc2626);
-            box-shadow: 0 8px 24px rgba(239, 68, 68, 0.35);
-        }
-
-        .play-button svg {
-            width: 22px;
-            height: 22px;
-            fill: currentColor;
-        }
-
-        /* Controls Section */
+        /* Sliders */
         .control-group {
-            background: rgba(255, 255, 255, 0.02);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-            padding: 16px;
-            margin-bottom: 14px;
+            margin-bottom: 12px;
         }
 
         .control-header {
             display: flex;
             justify-content: space-between;
-            font-size: 0.82rem;
+            font-size: 0.8rem;
             color: var(--text-muted);
-            margin-bottom: 10px;
-            font-weight: 500;
+            margin-bottom: 8px;
         }
 
         .control-val {
@@ -208,14 +287,8 @@
             font-family: monospace;
         }
 
-        .slider-wrapper {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
         input[type="range"] {
-            flex: 1;
+            width: 100%;
             -webkit-appearance: none;
             height: 6px;
             border-radius: 3px;
@@ -233,48 +306,123 @@
             box-shadow: 0 0 10px var(--primary-glow);
         }
 
-        /* Meta tags / Badges */
-        .meta-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            margin-top: 14px;
+        /* Mouse Screen Mirror Canvas */
+        .mouse-screen-box {
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            background: #020617;
+            border-radius: 14px;
+            border: 1px solid rgba(59, 130, 246, 0.25);
+            position: relative;
+            overflow: hidden;
+            box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.8);
         }
 
-        .meta-card {
-            background: rgba(255, 255, 255, 0.02);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 10px;
-            text-align: center;
+        .virtual-cursor {
+            width: 14px;
+            height: 14px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-2px, -2px);
+            pointer-events: none;
+            z-index: 10;
+            transition: transform 0.05s linear;
         }
 
-        .meta-card .label {
-            font-size: 0.72rem;
-            color: var(--text-muted);
-            margin-bottom: 4px;
+        .virtual-cursor svg {
+            width: 100%;
+            height: 100%;
+            fill: #38bdf8;
+            filter: drop-shadow(0 0 6px #38bdf8);
         }
 
-        .meta-card .val {
-            font-size: 0.88rem;
-            font-weight: 600;
-            color: var(--text-main);
+        .click-ripple {
+            position: absolute;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            border: 2px solid #38bdf8;
+            transform: translate(-50%, -50%) scale(0.2);
+            opacity: 1;
+            pointer-events: none;
+            animation: rippleAnim 0.4s ease-out forwards;
         }
 
-        .footer {
-            margin-top: 16px;
+        @keyframes rippleAnim {
+            to {
+                transform: translate(-50%, -50%) scale(2);
+                opacity: 0;
+            }
+        }
+
+        .mouse-info-bar {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            font-size: 0.75rem;
+            margin-top: 10px;
+            font-size: 0.72rem;
             color: var(--text-muted);
         }
 
-        .wakelock-badge {
+        .btn-badge-group {
+            display: flex;
+            gap: 6px;
+        }
+
+        .btn-badge {
+            padding: 2px 6px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            font-size: 0.68rem;
+            font-weight: 700;
+        }
+
+        .btn-badge.active {
+            background: var(--secondary);
+            color: #fff;
+            box-shadow: 0 0 6px var(--secondary-glow);
+        }
+
+        /* Master Connect Button */
+        .main-btn {
+            width: 100%;
+            padding: 15px;
+            border-radius: 16px;
+            border: none;
+            font-size: 1rem;
+            font-weight: 700;
+            cursor: pointer;
             display: flex;
             align-items: center;
-            gap: 4px;
-            color: var(--primary);
+            justify-content: center;
+            gap: 10px;
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: #fff;
+            box-shadow: 0 8px 24px var(--primary-glow);
+            margin-bottom: 16px;
+            transition: all 0.25s ease;
+        }
+
+        .main-btn.active {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            box-shadow: 0 8px 24px rgba(239, 68, 68, 0.35);
+        }
+
+        .main-btn svg {
+            width: 20px;
+            height: 20px;
+            fill: currentColor;
+        }
+
+        .footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            border-top: 1px solid var(--border);
+            padding-top: 14px;
         }
     </style>
 </head>
@@ -284,11 +432,11 @@
         <div class="header">
             <div class="logo-area">
                 <div class="logo-badge">
-                    <svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+                    <svg viewBox="0 0 24 24"><path d="M4 6h16v12H4zM2 4v16h20V4zm10 13a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/></svg>
                 </div>
                 <div>
                     <div class="title">AnyDevice</div>
-                    <div style="font-size: 0.72rem; color: var(--text-muted);">局域网无线扬声器</div>
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">跨端设备映射中心</div>
                 </div>
             </div>
             <div class="status-pill">
@@ -297,91 +445,146 @@
             </div>
         </div>
 
-        <!-- Audio Waveform Visualizer -->
-        <div class="visualizer-wrapper">
-            <canvas id="visualizer"></canvas>
-            <div class="canvas-overlay" id="canvasHint">点击开始播放接收声音</div>
-        </div>
-
-        <!-- Action Button -->
-        <button class="play-button" id="toggleBtn">
-            <svg id="playIcon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-            <span id="btnText">开启扬声器播放</span>
+        <!-- Master Switch / Connect Button -->
+        <button class="main-btn" id="masterBtn">
+            <svg id="masterIcon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            <span id="masterText">开启设备映射</span>
         </button>
 
-        <!-- Volume Controller -->
-        <div class="control-group">
-            <div class="control-header">
-                <span>播放音量</span>
-                <span class="control-val" id="volVal">100%</span>
+        <!-- Device Selector -->
+        <div class="section-title">选择映射到本设备的硬件通道</div>
+        <div class="device-selector-grid">
+            <!-- Audio Card -->
+            <div class="device-card active" id="audioCard">
+                <div class="device-header">
+                    <div class="device-icon-box">
+                        <svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+                    </div>
+                    <span class="device-toggle-badge" id="audioBadge">已选</span>
+                </div>
+                <div>
+                    <div class="device-info-name">🎧 系统音频</div>
+                    <div class="device-info-desc">台式机声音串流到本端</div>
+                </div>
             </div>
-            <div class="slider-wrapper">
+
+            <!-- Mouse Card -->
+            <div class="device-card mouse-card" id="mouseCard">
+                <div class="device-header">
+                    <div class="device-icon-box">
+                        <svg viewBox="0 0 24 24"><path d="M13 2v8h7V7a5 5 0 0 0-5-5h-2zm-2 0H9a5 5 0 0 0-5 5v3h7V2zm9 10h-7v10h2a5 5 0 0 0 5-5v-5zm-9 10V12H4v5a5 5 0 0 0 5 5h2z"/></svg>
+                    </div>
+                    <span class="device-toggle-badge" id="mouseBadge">未选</span>
+                </div>
+                <div>
+                    <div class="device-info-name">🖱️ 本地鼠标</div>
+                    <div class="device-info-desc">台式机光标映射到本端</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Audio Module Controls -->
+        <div class="module-container visible" id="audioModule">
+            <div class="control-header" style="margin-bottom: 6px;">
+                <span style="font-weight: 600; color: var(--text-main);">🎧 音频示波器</span>
+                <span id="audioStatusText" style="font-size: 0.72rem; color: var(--primary);">48kHz 立体声</span>
+            </div>
+            <div class="visualizer-wrapper">
+                <canvas id="visualizer"></canvas>
+                <div class="canvas-overlay" id="canvasHint">声音串流中</div>
+            </div>
+            <div class="control-group">
+                <div class="control-header">
+                    <span>音量调节</span>
+                    <span class="control-val" id="volVal">100%</span>
+                </div>
                 <input type="range" id="volSlider" min="0" max="150" value="100">
             </div>
-        </div>
-
-        <!-- Latency / Buffer Controller -->
-        <div class="control-group">
-            <div class="control-header">
-                <span>缓冲延迟 (毫秒)</span>
-                <span class="control-val" id="bufferVal">40 ms</span>
-            </div>
-            <div class="slider-wrapper">
+            <div class="control-group" style="margin-bottom: 0;">
+                <div class="control-header">
+                    <span>缓冲延迟</span>
+                    <span class="control-val" id="bufferVal">40 ms</span>
+                </div>
                 <input type="range" id="bufferSlider" min="15" max="250" value="40" step="5">
             </div>
-            <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 6px;">
-                💡 调小延迟更低 (适合看视频)，调大抗抖动更稳 (Wi-Fi 弱时防爆音)
-            </div>
         </div>
 
-        <!-- Meta Grid -->
-        <div class="meta-grid">
-            <div class="meta-card">
-                <div class="label">在线设备数</div>
-                <div class="val" id="clientCount">1 台</div>
+        <!-- Mouse Module Controls -->
+        <div class="module-container" id="mouseModule">
+            <div class="control-header" style="margin-bottom: 8px;">
+                <span style="font-weight: 600; color: var(--text-main);">🖱️ 鼠标屏幕映射画布</span>
+                <span id="screenRes" style="font-size: 0.72rem; color: var(--secondary);">1920 × 1080</span>
             </div>
-            <div class="meta-card">
-                <div class="label">采样规格</div>
-                <div class="val">48kHz 立体声</div>
+            <div class="mouse-screen-box" id="mouseScreenBox">
+                <!-- Virtual Cursor -->
+                <div class="virtual-cursor" id="virtualCursor">
+                    <svg viewBox="0 0 24 24"><path d="M3 2l10 17 3-6 6-3L3 2z"/></svg>
+                </div>
+            </div>
+            <div class="mouse-info-bar">
+                <div id="mouseCoords">坐标: X: 0 | Y: 0</div>
+                <div class="btn-badge-group">
+                    <span class="btn-badge" id="btnLeft">左键</span>
+                    <span class="btn-badge" id="btnMiddle">中键</span>
+                    <span class="btn-badge" id="btnRight">右键</span>
+                </div>
             </div>
         </div>
 
         <!-- Footer -->
         <div class="footer">
-            <div class="wakelock-badge" id="wakelockStatus">
-                <span>🛡️ 屏幕常亮保持中</span>
+            <div style="color: var(--primary); display: flex; align-items: center; gap: 4px;">
+                <span>🛡️ 屏幕常亮保护中</span>
             </div>
-            <div id="sourceDevice">台式机音源</div>
+            <div id="clientStatus">在线设备: 1 台</div>
         </div>
     </div>
 
     <script>
-        // Audio & State
+        // State
+        let isConnected = false;
+        let audioEnabled = true;
+        let mouseEnabled = false;
+        let ws = null;
         let audioCtx = null;
         let gainNode = null;
         let analyser = null;
-        let ws = null;
-        let isPlaying = false;
-        let nextStartTime = 0;
+        let nextAudioTime = 0;
         let targetBufferMs = 40;
         let wakeLock = null;
 
-        const toggleBtn = document.getElementById('toggleBtn');
-        const btnText = document.getElementById('btnText');
-        const playIcon = document.getElementById('playIcon');
+        // Elements
+        const masterBtn = document.getElementById('masterBtn');
+        const masterText = document.getElementById('masterText');
+        const masterIcon = document.getElementById('masterIcon');
         const statusDot = document.getElementById('statusDot');
         const statusText = document.getElementById('statusText');
+        const audioCard = document.getElementById('audioCard');
+        const audioBadge = document.getElementById('audioBadge');
+        const mouseCard = document.getElementById('mouseCard');
+        const mouseBadge = document.getElementById('mouseBadge');
+        const audioModule = document.getElementById('audioModule');
+        const mouseModule = document.getElementById('mouseModule');
+
+        // Audio controls
         const volSlider = document.getElementById('volSlider');
         const volVal = document.getElementById('volVal');
         const bufferSlider = document.getElementById('bufferSlider');
         const bufferVal = document.getElementById('bufferVal');
         const canvas = document.getElementById('visualizer');
-        const canvasHint = document.getElementById('canvasHint');
-        const clientCountEl = document.getElementById('clientCount');
-        const sourceDeviceEl = document.getElementById('sourceDevice');
-
-        // Setup Visualizer Canvas
         const canvasCtx = canvas.getContext('2d');
+        const canvasHint = document.getElementById('canvasHint');
+
+        // Mouse controls
+        const mouseScreenBox = document.getElementById('mouseScreenBox');
+        const virtualCursor = document.getElementById('virtualCursor');
+        const mouseCoords = document.getElementById('mouseCoords');
+        const screenRes = document.getElementById('screenRes');
+        const btnLeft = document.getElementById('btnLeft');
+        const btnMiddle = document.getElementById('btnMiddle');
+        const btnRight = document.getElementById('btnRight');
+        const clientStatus = document.getElementById('clientStatus');
+
         function resizeCanvas() {
             canvas.width = canvas.parentElement.clientWidth * window.devicePixelRatio;
             canvas.height = canvas.parentElement.clientHeight * window.devicePixelRatio;
@@ -389,21 +592,59 @@
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
-        // Screen Wake Lock
+        // Screen WakeLock
         async function requestWakeLock() {
             try {
                 if ('wakeLock' in navigator) {
                     wakeLock = await navigator.wakeLock.request('screen');
                 }
-            } catch (err) {
-                console.log('WakeLock error:', err);
+            } catch (e) {}
+        }
+
+        // Toggle Device Selection in UI
+        audioCard.addEventListener('click', () => {
+            audioEnabled = !audioEnabled;
+            updateDeviceUI();
+            syncMappingSettings();
+        });
+
+        mouseCard.addEventListener('click', () => {
+            mouseEnabled = !mouseEnabled;
+            updateDeviceUI();
+            syncMappingSettings();
+        });
+
+        function updateDeviceUI() {
+            // Audio Card
+            if (audioEnabled) {
+                audioCard.classList.add('active');
+                audioBadge.innerText = '已选';
+                audioModule.classList.add('visible');
+            } else {
+                audioCard.classList.remove('active');
+                audioBadge.innerText = '未选';
+                audioModule.classList.remove('visible');
+            }
+
+            // Mouse Card
+            if (mouseEnabled) {
+                mouseCard.classList.add('active');
+                mouseBadge.innerText = '已选';
+                mouseModule.classList.add('visible');
+            } else {
+                mouseCard.classList.remove('active');
+                mouseBadge.innerText = '未选';
+                mouseModule.classList.remove('visible');
             }
         }
 
-        function releaseWakeLock() {
-            if (wakeLock) {
-                wakeLock.release().catch(() => {});
-                wakeLock = null;
+        function syncMappingSettings() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    action: 'set_mapping',
+                    audio: audioEnabled,
+                    mouse: mouseEnabled
+                }));
             }
         }
 
@@ -415,7 +656,6 @@
                 gainNode = audioCtx.createGain();
                 analyser = audioCtx.createAnalyser();
                 analyser.fftSize = 256;
-
                 gainNode.connect(analyser);
                 analyser.connect(audioCtx.destination);
                 gainNode.gain.value = volSlider.value / 100.0;
@@ -425,8 +665,19 @@
             }
         }
 
-        // Connect WebSocket
-        function connectWS() {
+        // Master Connect / Disconnect
+        masterBtn.addEventListener('click', () => {
+            if (isConnected) {
+                disconnect();
+            } else {
+                connect();
+            }
+        });
+
+        function connect() {
+            initAudio();
+            requestWakeLock();
+
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${proto}//${location.host}/ws`;
 
@@ -434,125 +685,141 @@
             ws.binaryType = 'arraybuffer';
 
             ws.onopen = () => {
+                isConnected = true;
                 statusDot.className = 'status-dot connected';
-                statusText.innerText = '正在串流';
+                statusText.innerText = '映射中';
+                masterBtn.classList.add('active');
+                masterText.innerText = '停止映射服务';
+                masterIcon.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
                 canvasHint.style.opacity = '0';
+                syncMappingSettings();
+                drawVisualizer();
             };
 
             ws.onmessage = (event) => {
-                if (!isPlaying || !audioCtx) return;
-
-                // Handle binary audio chunks
+                // 1. Binary message = Audio PCM Chunk
                 if (event.data instanceof ArrayBuffer) {
-                    playAudioChunk(event.data);
+                    if (audioEnabled) {
+                        playAudioChunk(event.data);
+                    }
+                } 
+                // 2. Text message = JSON Mouse Event / Status
+                else if (typeof event.data === 'string') {
+                    try {
+                        const msg = JSON.parse(event.data);
+                        if (msg.type === 'mouse' && mouseEnabled) {
+                            handleMouseEvent(msg);
+                        }
+                    } catch (e) {}
                 }
             };
 
             ws.onclose = () => {
-                statusDot.className = 'status-dot';
-                statusText.innerText = '已断开';
-                canvasHint.innerText = '连接已断开，点击重新连接';
-                canvasHint.style.opacity = '1';
-                if (isPlaying) {
-                    stopPlaying();
-                }
+                disconnect();
             };
 
             ws.onerror = () => {
                 statusDot.className = 'status-dot error';
-                statusText.innerText = '连接失败';
+                statusText.innerText = '连接出错';
             };
         }
 
-        // Schedule & Play Raw PCM Audio Chunk
+        function disconnect() {
+            isConnected = false;
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            if (wakeLock) {
+                wakeLock.release().catch(() => {});
+                wakeLock = null;
+            }
+            statusDot.className = 'status-dot';
+            statusText.innerText = '未连接';
+            masterBtn.classList.remove('active');
+            masterText.innerText = '开启设备映射';
+            masterIcon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+            canvasHint.style.opacity = '1';
+        }
+
+        // Schedule & Play Audio
         function playAudioChunk(arrayBuffer) {
+            if (!audioCtx) return;
             const int16 = new Int16Array(arrayBuffer);
-            const frameCount = int16.length / 2; // Stereo
+            const frameCount = int16.length / 2;
             if (frameCount <= 0) return;
 
             const audioBuffer = audioCtx.createBuffer(2, frameCount, 48000);
-            const leftChannel = audioBuffer.getChannelData(0);
-            const rightChannel = audioBuffer.getChannelData(1);
+            const left = audioBuffer.getChannelData(0);
+            const right = audioBuffer.getChannelData(1);
 
-            // De-interleave and normalize S16 -> Float32 [-1.0, 1.0]
             for (let i = 0; i < frameCount; i++) {
-                leftChannel[i] = int16[i * 2] / 32768.0;
-                rightChannel[i] = int16[i * 2 + 1] / 32768.0;
+                left[i] = int16[i * 2] / 32768.0;
+                right[i] = int16[i * 2 + 1] / 32768.0;
             }
 
             const now = audioCtx.currentTime;
-            const targetBufferSec = targetBufferMs / 1000.0;
+            const targetSec = targetBufferMs / 1000.0;
 
-            // Clock drift handling:
-            if (nextStartTime < now) {
-                // Buffer underrun, re-align with target buffer delay
-                nextStartTime = now + targetBufferSec;
-            } else if (nextStartTime > now + targetBufferSec + 0.15) {
-                // Too far ahead (accumulated lag), catch up
-                nextStartTime = now + targetBufferSec;
+            if (nextAudioTime < now) {
+                nextAudioTime = now + targetSec;
+            } else if (nextAudioTime > now + targetSec + 0.15) {
+                nextAudioTime = now + targetSec;
             }
 
             const source = audioCtx.createBufferSource();
             source.buffer = audioBuffer;
             source.connect(gainNode);
-            source.start(nextStartTime);
+            source.start(nextAudioTime);
 
-            nextStartTime += audioBuffer.duration;
+            nextAudioTime += audioBuffer.duration;
         }
 
-        function startPlaying() {
-            initAudio();
-            requestWakeLock();
-            connectWS();
-            isPlaying = true;
+        // Handle Real-time Mouse Mapping Event
+        function handleMouseEvent(evt) {
+            const boxWidth = mouseScreenBox.clientWidth;
+            const boxHeight = mouseScreenBox.clientHeight;
 
-            toggleBtn.classList.add('active');
-            btnText.innerText = '停止播放';
-            playIcon.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
-            drawVisualizer();
-        }
+            const posX = evt.x * boxWidth;
+            const posY = evt.y * boxHeight;
 
-        function stopPlaying() {
-            isPlaying = false;
-            releaseWakeLock();
-            if (ws) {
-                ws.close();
-                ws = null;
+            virtualCursor.style.transform = `translate(${posX}px, ${posY}px)`;
+
+            mouseCoords.innerText = `坐标: X: ${evt.raw_x} | Y: ${evt.raw_y} (${(evt.x * 100).toFixed(1)}%)`;
+            screenRes.innerText = `${evt.screen_w} × ${evt.screen_h}`;
+
+            // Buttons State
+            btnLeft.classList.toggle('active', evt.left_down);
+            btnMiddle.classList.toggle('active', evt.middle_down);
+            btnRight.classList.toggle('active', evt.right_down);
+
+            // Create click ripple effect
+            if (evt.action === 'down' && evt.left_down) {
+                const ripple = document.createElement('div');
+                ripple.className = 'click-ripple';
+                ripple.style.left = `${posX}px`;
+                ripple.style.top = `${posY}px`;
+                mouseScreenBox.appendChild(ripple);
+                setTimeout(() => ripple.remove(), 400);
             }
-            toggleBtn.classList.remove('active');
-            btnText.innerText = '开启扬声器播放';
-            playIcon.innerHTML = '<path d="M8 5v14l11-7z"/>';
-            statusDot.className = 'status-dot';
-            statusText.innerText = '已暂停';
-            canvasHint.style.opacity = '1';
         }
 
-        toggleBtn.addEventListener('click', () => {
-            if (isPlaying) {
-                stopPlaying();
-            } else {
-                startPlaying();
-            }
-        });
-
-        // Volume control
+        // Volume slider
         volSlider.addEventListener('input', (e) => {
             const val = e.target.value;
             volVal.innerText = val + '%';
-            if (gainNode) {
-                gainNode.gain.value = val / 100.0;
-            }
+            if (gainNode) gainNode.gain.value = val / 100.0;
         });
 
-        // Latency slider
+        // Buffer slider
         bufferSlider.addEventListener('input', (e) => {
             targetBufferMs = parseInt(e.target.value);
             bufferVal.innerText = targetBufferMs + ' ms';
         });
 
-        // Canvas Waveform Animation
+        // Waveform Animation
         function drawVisualizer() {
-            if (!isPlaying) {
+            if (!isConnected || !audioEnabled) {
                 canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
                 return;
             }
@@ -567,7 +834,7 @@
 
             canvasCtx.lineWidth = 2.5 * window.devicePixelRatio;
             canvasCtx.strokeStyle = '#10b981';
-            canvasCtx.shadowBlur = 10;
+            canvasCtx.shadowBlur = 8;
             canvasCtx.shadowColor = '#10b981';
             canvasCtx.beginPath();
 
@@ -577,29 +844,21 @@
             for (let i = 0; i < bufferLength; i++) {
                 const v = dataArray[i] / 128.0;
                 const y = (v * canvas.height) / 2;
-
-                if (i === 0) {
-                    canvasCtx.moveTo(x, y);
-                } else {
-                    canvasCtx.lineTo(x, y);
-                }
+                if (i === 0) canvasCtx.moveTo(x, y);
+                else canvasCtx.lineTo(x, y);
                 x += sliceWidth;
             }
-
             canvasCtx.stroke();
             canvasCtx.shadowBlur = 0;
         }
 
-        // Fetch Server Status
+        // Heartbeat status poll
         async function fetchStatus() {
             try {
                 const res = await fetch('/api/status');
                 if (res.ok) {
                     const data = await res.json();
-                    clientCountEl.innerText = `${data.clients} 台`;
-                    if (data.device_name) {
-                        sourceDeviceEl.innerText = data.device_name;
-                    }
+                    clientStatus.innerText = `在线设备: ${data.clients} 台`;
                 }
             } catch (e) {}
         }

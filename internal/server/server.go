@@ -7,14 +7,15 @@ import (
 	"time"
 
 	"any_device/internal/audio"
+	"any_device/internal/mouse"
 	"any_device/internal/web"
 
 	"github.com/gorilla/websocket"
 )
 
 var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 4096,
+	ReadBufferSize:  2048,
+	WriteBufferSize: 8192,
 	CheckOrigin: func(r *http.Request) bool {
 		// Allow any origin on LAN
 		return true
@@ -22,23 +23,25 @@ var upgrader = websocket.Upgrader{
 }
 
 type Server struct {
-	port   int
-	hub    *Hub
-	engine *audio.Engine
+	port        int
+	hub         *Hub
+	audioEngine *audio.Engine
+	mouseEngine *mouse.Engine
 }
 
-func NewServer(port int, hub *Hub, engine *audio.Engine) *Server {
+func NewServer(port int, hub *Hub, audioEngine *audio.Engine, mouseEngine *mouse.Engine) *Server {
 	return &Server{
-		port:   port,
-		hub:    hub,
-		engine: engine,
+		port:        port,
+		hub:         hub,
+		audioEngine: audioEngine,
+		mouseEngine: mouseEngine,
 	}
 }
 
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
 
-	// WebSocket audio stream endpoint
+	// WebSocket unified stream endpoint (audio binary + mouse JSON text)
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -47,11 +50,13 @@ func (s *Server) Start() error {
 		}
 
 		client := &Client{
-			hub:      s.hub,
-			conn:     conn,
-			send:     make(chan []byte, 32),
-			remoteIP: r.RemoteAddr,
-			joinedAt: time.Now(),
+			hub:          s.hub,
+			conn:         conn,
+			send:         make(chan OutMessage, 64),
+			remoteIP:     r.RemoteAddr,
+			joinedAt:     time.Now(),
+			audioEnabled: true,  // Default: audio enabled
+			mouseEnabled: false, // Default: mouse disabled until user toggles on UI
 		}
 
 		s.hub.register <- client
@@ -64,11 +69,12 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		status := map[string]interface{}{
-			"clients":     s.hub.ClientCount(),
-			"bytes_sent":  s.hub.TotalBytesSent(),
-			"sample_rate": audio.SampleRate,
-			"channels":    audio.Channels,
-			"device_name": s.engine.DeviceName(),
+			"clients":      s.hub.ClientCount(),
+			"bytes_sent":   s.hub.TotalBytesSent(),
+			"sample_rate":  audio.SampleRate,
+			"channels":     audio.Channels,
+			"device_name":  s.audioEngine.DeviceName(),
+			"mouse_active": true,
 		}
 		json.NewEncoder(w).Encode(status)
 	})
