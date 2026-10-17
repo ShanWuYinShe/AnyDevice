@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AnyDevice - 局域网音频无线扬声器</title>
+    <style>
+        :root {
+            --bg: #090d16;
+            --card-bg: rgba(22, 30, 46, 0.85);
+            --border: rgba(255, 255, 255, 0.08);
+            --primary: #10b981;
+            --primary-glow: rgba(16, 185, 129, 0.35);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --danger: #ef4444;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background-color: var(--bg);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            background-image: 
+                radial-gradient(circle at 50% 20%, rgba(16, 185, 129, 0.08), transparent 45%),
+                radial-gradient(circle at 80% 80%, rgba(59, 130, 246, 0.05), transparent 40%);
+        }
+
+        .container {
+            width: 100%;
+            max-width: 440px;
+            background: var(--card-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 24px;
+            box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.6);
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+        }
+
+        .logo-area {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .logo-badge {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #10b981, #059669);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 12px var(--primary-glow);
+        }
+
+        .logo-badge svg {
+            width: 20px;
+            height: 20px;
+            fill: #fff;
+        }
+
+        .title {
+            font-size: 1.15rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        .status-pill {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #64748b;
+            transition: all 0.3s ease;
+        }
+
+        .status-dot.connected {
+            background: #10b981;
+            box-shadow: 0 0 8px #10b981;
+        }
+
+        .status-dot.error {
+            background: var(--danger);
+        }
+
+        /* Visualizer Canvas */
+        .visualizer-wrapper {
+            width: 100%;
+            height: 90px;
+            background: rgba(0, 0, 0, 0.35);
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            overflow: hidden;
+            margin-bottom: 24px;
+            position: relative;
+        }
+
+        canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .canvas-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            pointer-events: none;
+            transition: opacity 0.3s;
+        }
+
+        /* Big Play Button */
+        .play-button {
+            width: 100%;
+            padding: 16px;
+            border-radius: 16px;
+            border: none;
+            font-size: 1.05rem;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: #fff;
+            box-shadow: 0 8px 24px var(--primary-glow);
+            margin-bottom: 20px;
+        }
+
+        .play-button:hover {
+            opacity: 0.95;
+            transform: translateY(-1px);
+        }
+
+        .play-button:active {
+            transform: translateY(1px);
+        }
+
+        .play-button.active {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            box-shadow: 0 8px 24px rgba(239, 68, 68, 0.35);
+        }
+
+        .play-button svg {
+            width: 22px;
+            height: 22px;
+            fill: currentColor;
+        }
+
+        /* Controls Section */
+        .control-group {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 16px;
+            margin-bottom: 14px;
+        }
+
+        .control-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.82rem;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+            font-weight: 500;
+        }
+
+        .control-val {
+            color: var(--text-main);
+            font-weight: 700;
+            font-family: monospace;
+        }
+
+        .slider-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        input[type="range"] {
+            flex: 1;
+            -webkit-appearance: none;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.1);
+            outline: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: var(--primary);
+            cursor: pointer;
+            box-shadow: 0 0 10px var(--primary-glow);
+        }
+
+        /* Meta tags / Badges */
+        .meta-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .meta-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 10px;
+            text-align: center;
+        }
+
+        .meta-card .label {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
+        .meta-card .val {
+            font-size: 0.88rem;
+            font-weight: 600;
+            color: var(--text-main);
+        }
+
+        .footer {
+            margin-top: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .wakelock-badge {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            color: var(--primary);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div class="logo-area">
+                <div class="logo-badge">
+                    <svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+                </div>
+                <div>
+                    <div class="title">AnyDevice</div>
+                    <div style="font-size: 0.72rem; color: var(--text-muted);">局域网无线扬声器</div>
+                </div>
+            </div>
+            <div class="status-pill">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">未连接</span>
+            </div>
+        </div>
+
+        <!-- Audio Waveform Visualizer -->
+        <div class="visualizer-wrapper">
+            <canvas id="visualizer"></canvas>
+            <div class="canvas-overlay" id="canvasHint">点击开始播放接收声音</div>
+        </div>
+
+        <!-- Action Button -->
+        <button class="play-button" id="toggleBtn">
+            <svg id="playIcon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            <span id="btnText">开启扬声器播放</span>
+        </button>
+
+        <!-- Volume Controller -->
+        <div class="control-group">
+            <div class="control-header">
+                <span>播放音量</span>
+                <span class="control-val" id="volVal">100%</span>
+            </div>
+            <div class="slider-wrapper">
+                <input type="range" id="volSlider" min="0" max="150" value="100">
+            </div>
+        </div>
+
+        <!-- Latency / Buffer Controller -->
+        <div class="control-group">
+            <div class="control-header">
+                <span>缓冲延迟 (毫秒)</span>
+                <span class="control-val" id="bufferVal">40 ms</span>
+            </div>
+            <div class="slider-wrapper">
+                <input type="range" id="bufferSlider" min="15" max="250" value="40" step="5">
+            </div>
+            <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 6px;">
+                💡 调小延迟更低 (适合看视频)，调大抗抖动更稳 (Wi-Fi 弱时防爆音)
+            </div>
+        </div>
+
+        <!-- Meta Grid -->
+        <div class="meta-grid">
+            <div class="meta-card">
+                <div class="label">在线设备数</div>
+                <div class="val" id="clientCount">1 台</div>
+            </div>
+            <div class="meta-card">
+                <div class="label">采样规格</div>
+                <div class="val">48kHz 立体声</div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <div class="wakelock-badge" id="wakelockStatus">
+                <span>🛡️ 屏幕常亮保持中</span>
+            </div>
+            <div id="sourceDevice">台式机音源</div>
+        </div>
+    </div>
+
+    <script>
+        // Audio & State
+        let audioCtx = null;
+        let gainNode = null;
+        let analyser = null;
+        let ws = null;
+        let isPlaying = false;
+        let nextStartTime = 0;
+        let targetBufferMs = 40;
+        let wakeLock = null;
+
+        const toggleBtn = document.getElementById('toggleBtn');
+        const btnText = document.getElementById('btnText');
+        const playIcon = document.getElementById('playIcon');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+        const volSlider = document.getElementById('volSlider');
+        const volVal = document.getElementById('volVal');
+        const bufferSlider = document.getElementById('bufferSlider');
+        const bufferVal = document.getElementById('bufferVal');
+        const canvas = document.getElementById('visualizer');
+        const canvasHint = document.getElementById('canvasHint');
+        const clientCountEl = document.getElementById('clientCount');
+        const sourceDeviceEl = document.getElementById('sourceDevice');
+
+        // Setup Visualizer Canvas
+        const canvasCtx = canvas.getContext('2d');
+        function resizeCanvas() {
+            canvas.width = canvas.parentElement.clientWidth * window.devicePixelRatio;
+            canvas.height = canvas.parentElement.clientHeight * window.devicePixelRatio;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        // Screen Wake Lock
+        async function requestWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                }
+            } catch (err) {
+                console.log('WakeLock error:', err);
+            }
+        }
+
+        function releaseWakeLock() {
+            if (wakeLock) {
+                wakeLock.release().catch(() => {});
+                wakeLock = null;
+            }
+        }
+
+        // Initialize Web Audio Engine
+        function initAudio() {
+            if (!audioCtx) {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                audioCtx = new AudioContext({ sampleRate: 48000 });
+                gainNode = audioCtx.createGain();
+                analyser = audioCtx.createAnalyser();
+                analyser.fftSize = 256;
+
+                gainNode.connect(analyser);
+                analyser.connect(audioCtx.destination);
+                gainNode.gain.value = volSlider.value / 100.0;
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        // Connect WebSocket
+        function connectWS() {
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${proto}//${location.host}/ws`;
+
+            ws = new WebSocket(wsUrl);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                statusDot.className = 'status-dot connected';
+                statusText.innerText = '正在串流';
+                canvasHint.style.opacity = '0';
+            };
+
+            ws.onmessage = (event) => {
+                if (!isPlaying || !audioCtx) return;
+
+                // Handle binary audio chunks
+                if (event.data instanceof ArrayBuffer) {
+                    playAudioChunk(event.data);
+                }
+            };
+
+            ws.onclose = () => {
+                statusDot.className = 'status-dot';
+                statusText.innerText = '已断开';
+                canvasHint.innerText = '连接已断开，点击重新连接';
+                canvasHint.style.opacity = '1';
+                if (isPlaying) {
+                    stopPlaying();
+                }
+            };
+
+            ws.onerror = () => {
+                statusDot.className = 'status-dot error';
+                statusText.innerText = '连接失败';
+            };
+        }
+
+        // Schedule & Play Raw PCM Audio Chunk
+        function playAudioChunk(arrayBuffer) {
+            const int16 = new Int16Array(arrayBuffer);
+            const frameCount = int16.length / 2; // Stereo
+            if (frameCount <= 0) return;
+
+            const audioBuffer = audioCtx.createBuffer(2, frameCount, 48000);
+            const leftChannel = audioBuffer.getChannelData(0);
+            const rightChannel = audioBuffer.getChannelData(1);
+
+            // De-interleave and normalize S16 -> Float32 [-1.0, 1.0]
+            for (let i = 0; i < frameCount; i++) {
+                leftChannel[i] = int16[i * 2] / 32768.0;
+                rightChannel[i] = int16[i * 2 + 1] / 32768.0;
+            }
+
+            const now = audioCtx.currentTime;
+            const targetBufferSec = targetBufferMs / 1000.0;
+
+            // Clock drift handling:
+            if (nextStartTime < now) {
+                // Buffer underrun, re-align with target buffer delay
+                nextStartTime = now + targetBufferSec;
+            } else if (nextStartTime > now + targetBufferSec + 0.15) {
+                // Too far ahead (accumulated lag), catch up
+                nextStartTime = now + targetBufferSec;
+            }
+
+            const source = audioCtx.createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(gainNode);
+            source.start(nextStartTime);
+
+            nextStartTime += audioBuffer.duration;
+        }
+
+        function startPlaying() {
+            initAudio();
+            requestWakeLock();
+            connectWS();
+            isPlaying = true;
+
+            toggleBtn.classList.add('active');
+            btnText.innerText = '停止播放';
+            playIcon.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
+            drawVisualizer();
+        }
+
+        function stopPlaying() {
+            isPlaying = false;
+            releaseWakeLock();
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            toggleBtn.classList.remove('active');
+            btnText.innerText = '开启扬声器播放';
+            playIcon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+            statusDot.className = 'status-dot';
+            statusText.innerText = '已暂停';
+            canvasHint.style.opacity = '1';
+        }
+
+        toggleBtn.addEventListener('click', () => {
+            if (isPlaying) {
+                stopPlaying();
+            } else {
+                startPlaying();
+            }
+        });
+
+        // Volume control
+        volSlider.addEventListener('input', (e) => {
+            const val = e.target.value;
+            volVal.innerText = val + '%';
+            if (gainNode) {
+                gainNode.gain.value = val / 100.0;
+            }
+        });
+
+        // Latency slider
+        bufferSlider.addEventListener('input', (e) => {
+            targetBufferMs = parseInt(e.target.value);
+            bufferVal.innerText = targetBufferMs + ' ms';
+        });
+
+        // Canvas Waveform Animation
+        function drawVisualizer() {
+            if (!isPlaying) {
+                canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+                return;
+            }
+            requestAnimationFrame(drawVisualizer);
+
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            analyser.getByteTimeDomainData(dataArray);
+
+            canvasCtx.fillStyle = 'rgba(10, 14, 23, 0.4)';
+            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+            canvasCtx.lineWidth = 2.5 * window.devicePixelRatio;
+            canvasCtx.strokeStyle = '#10b981';
+            canvasCtx.shadowBlur = 10;
+            canvasCtx.shadowColor = '#10b981';
+            canvasCtx.beginPath();
+
+            const sliceWidth = canvas.width / bufferLength;
+            let x = 0;
+
+            for (let i = 0; i < bufferLength; i++) {
+                const v = dataArray[i] / 128.0;
+                const y = (v * canvas.height) / 2;
+
+                if (i === 0) {
+                    canvasCtx.moveTo(x, y);
+                } else {
+                    canvasCtx.lineTo(x, y);
+                }
+                x += sliceWidth;
+            }
+
+            canvasCtx.stroke();
+            canvasCtx.shadowBlur = 0;
+        }
+
+        // Fetch Server Status
+        async function fetchStatus() {
+            try {
+                const res = await fetch('/api/status');
+                if (res.ok) {
+                    const data = await res.json();
+                    clientCountEl.innerText = `${data.clients} 台`;
+                    if (data.device_name) {
+                        sourceDeviceEl.innerText = data.device_name;
+                    }
+                }
+            } catch (e) {}
+        }
+        setInterval(fetchStatus, 3000);
+        fetchStatus();
+    </script>
+</body>
+</html>

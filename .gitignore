@@ -1,0 +1,12 @@
+# Binaries
+bin/
+*.exe
+any_device
+
+# Workwork / Temp
+.workwork/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
