@@ -383,6 +383,9 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 				var evt mouse.MouseEvent
 				if err := json.Unmarshal(data, &evt); err == nil {
 					// Execute remote mouse movements & clicks directly on local OS!
+					if util.DebugKeys() && evt.Action != "move" {
+						fmt.Printf("[鼠标链路] 收到对端鼠标 %s (%.2f, %.2f)\n", evt.Action, evt.X, evt.Y)
+					}
 					mouse.SimulateAbsolute(evt.X, evt.Y)
 					if evt.Action == "down" || evt.Action == "up" {
 						btn := "left"
@@ -409,6 +412,9 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 				var evt keyboard.KeyEvent
 				if err := json.Unmarshal(data, &evt); err == nil {
 					// Execute remote physical keyboard events directly on local OS!
+					if util.DebugKeys() {
+						fmt.Printf("[键盘链路] 收到对端按键 %s %s (键码 %d)\n", evt.Key, evt.Action, evt.KeyCode)
+					}
 					keyboard.SimulateKey(evt.Key, evt.Action == "down")
 				}
 

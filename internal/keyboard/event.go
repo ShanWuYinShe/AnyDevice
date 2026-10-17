@@ -2,9 +2,12 @@ package keyboard
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"any_device/internal/util"
 )
 
 // KeyEvent represents a key press or release event.
@@ -93,6 +96,9 @@ func (e *Engine) loop(ctx context.Context) {
 			for key, code := range currentPressed {
 				if _, existed := e.activeKeys[key]; !existed {
 					e.activeKeys[key] = code
+					if util.DebugKeys() {
+						fmt.Printf("[键盘捕获] 按下 %s (键码 %#x)\n", key, code)
+					}
 					if e.onEvent != nil {
 						e.onEvent(KeyEvent{
 							Type:      "keyboard",
@@ -110,6 +116,9 @@ func (e *Engine) loop(ctx context.Context) {
 			for key, code := range e.activeKeys {
 				if _, stillPressed := currentPressed[key]; !stillPressed {
 					delete(e.activeKeys, key)
+					if util.DebugKeys() {
+						fmt.Printf("[键盘捕获] 抬起 %s\n", key)
+					}
 					if e.onEvent != nil {
 						e.onEvent(KeyEvent{
 							Type:      "keyboard",

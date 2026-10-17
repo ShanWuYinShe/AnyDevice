@@ -145,6 +145,17 @@ func main() {
 		}
 	}()
 
+	// macOS 键鼠映射依赖「辅助功能」授权：未授权时系统会静默丢弃所有
+	// 模拟按键与光标操作（无任何报错），表现为跨端映射完全无反应。
+	// 启动即检测并给出明确指引，避免用户无从排查。
+	if runtime.GOOS == "darwin" && !keyboard.AccessibilityTrusted() {
+		fmt.Println()
+		fmt.Println("⚠️  未授予「辅助功能」权限：键盘与鼠标的跨端映射将无法在本机执行！")
+		fmt.Println("    请打开 系统设置 → 隐私与安全性 → 辅助功能，")
+		fmt.Println("    添加并勾选 any_device（若从终端运行，还需勾选对应终端程序），然后重启本应用。")
+		fmt.Println()
+	}
+
 	// 6. Desktop Window vs Headless Mode
 	if !*noUI {
 		fmt.Println("🖥️  正在打开桌面原生独立应用窗口...")
