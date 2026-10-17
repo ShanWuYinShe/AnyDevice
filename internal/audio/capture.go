@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/gen2brain/malgo"
+
+	"any_device/internal/util"
 )
 
 const (
@@ -18,6 +20,15 @@ const (
 	BitDepth   = 16                        // S16: 2 bytes per sample
 	FrameSize  = Channels * (BitDepth / 8) // 4 bytes per stereo frame
 )
+
+func isAllZero(b []byte) bool {
+	for _, v := range b {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
+}
 
 type AudioKind string
 
@@ -54,6 +65,11 @@ type Engine struct {
 	isRunning   bool
 	devName     string
 	subscribers int64 // 音频订阅数（atomic）：无订阅者时引擎静默，避免空转生成与广播 PCM
+
+	// 诊断统计（ANY_DEVICE_AUDIO_DEBUG=1 时输出）：捕获 chunk 数/字节量/静音标记
+	dbgChunks uint64
+	dbgBytes  int
+	dbgSilent bool
 }
 
 func NewEngine(kind AudioKind, mode CaptureMode, deviceIndex int, onChunk func([]byte)) *Engine {
@@ -193,6 +209,29 @@ func (e *Engine) Start() error {
 		tag = TagMicAudio
 	}
 
+	// 诊断：每 2 秒输出一次捕获统计（ANY_DEVICE_AUDIO_DEBUG=1 时）
+	if util.DebugAudio() {
+		kindName := "系统声"
+		if e.kind == KindMic {
+			kindName = "麦克风"
+		}
+		go func() {
+			var lastChunks, lastBytes uint64
+			for {
+				time.Sleep(2 * time.Second)
+				e.mu.Lock()
+				c, b, silent := e.dbgChunks, uint64(e.dbgBytes), e.dbgSilent
+				e.mu.Unlock()
+				if c == lastChunks && lastBytes != 0 {
+					fmt.Printf("[音频诊断] %s 捕获已停止增长（chunks=%d）\n", kindName, c)
+					continue
+				}
+				fmt.Printf("[音频诊断] %s 捕获: %d chunks/2s, %d KB/2s, 本段全零静音=%v\n", kindName, c-lastChunks, (b-lastBytes)/1024, silent)
+				lastChunks, lastBytes = c, b
+			}
+		}()
+	}
+
 	callbacks := malgo.DeviceCallbacks{
 		Data: func(pOutputSample, pInputSamples []byte, framecount uint32) {
 			// 无订阅者时静默：直接返回，不分配内存也不调用 onChunk，避免空转
@@ -203,6 +242,14 @@ func (e *Engine) Start() error {
 				buf := make([]byte, 4+len(pInputSamples))
 				copy(buf[:4], tag)
 				copy(buf[4:], pInputSamples)
+				// 诊断：统计实际捕获速率与字节量（含全零静音检测线索）
+				if util.DebugAudio() {
+					e.mu.Lock()
+					e.dbgChunks++
+					e.dbgBytes += len(pInputSamples)
+					e.dbgSilent = isAllZero(pInputSamples)
+					e.mu.Unlock()
+				}
 				e.onChunk(buf)
 			}
 		},

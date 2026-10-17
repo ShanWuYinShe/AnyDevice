@@ -110,6 +110,11 @@ export function sendSubscriptions() {
 let ws = null;
 let reconnectTimer = null;
 
+// 音频流接收诊断（URL 带 ?audiodebug 时开启）
+const audioDebug = location.search.includes('audiodebug');
+let audioDbgBytes = 0;
+let audioDbgLastLog = 0;
+
 export function connectWebSocket() {
   // 浏览器访问：同源相对地址；Wails 桌面窗口（location.host 为空）：
   // 用 /api/self 返回的局域网绝对地址直连服务端口
@@ -133,6 +138,16 @@ export function connectWebSocket() {
 
   ws.onmessage = (event) => {
     if (event.data instanceof ArrayBuffer) {
+      // 音频流接收诊断：每 2 秒汇总一次字节率与 AudioContext 状态（?audiodebug 时）
+      if (audioDebug) {
+        audioDbgBytes += event.data.byteLength;
+        const now = performance.now();
+        if (now - audioDbgLastLog > 2000) {
+          console.log('[音频诊断] 收到 ' + Math.round(audioDbgBytes / 1024) + ' KB/2s, ctx=' + (audioCtx ? audioCtx.state : 'null') + ', rate=' + (audioCtx ? audioCtx.sampleRate : '?') + ', playState=' + JSON.stringify(playState()));
+          audioDbgBytes = 0;
+          audioDbgLastLog = now;
+        }
+      }
       if (event.data.byteLength > 4) {
         const tag = String.fromCharCode(...new Uint8Array(event.data, 0, 4));
         if (tag === 'AUDS') {

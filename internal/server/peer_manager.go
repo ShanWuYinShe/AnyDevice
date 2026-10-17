@@ -339,6 +339,11 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 
 	var lastMouseDownBtn string
 
+	// 音频链路诊断计数（ANY_DEVICE_AUDIO_DEBUG=1 时输出）
+	var audioFwdFrames, audioFwdBytes int
+	var audioFwdLastFrames, audioFwdLastBytes int
+	audioFwdLastLog := time.Now()
+
 	defer func() {
 		cancel()
 		_ = conn.Close()
@@ -377,6 +382,20 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 		if msgType == websocket.BinaryMessage {
 			if len(data) >= 4 {
 				tag := string(data[:4])
+				// 音频链路诊断：帧到达/转发统计（ANY_DEVICE_AUDIO_DEBUG=1）
+				if util.DebugAudio() {
+					audioFwdFrames++
+					audioFwdBytes += len(data)
+					now := time.Now()
+					if now.Sub(audioFwdLastLog) >= 2*time.Second {
+						fmt.Printf("[音频诊断] 转发端: 收到对端音频 %d 帧/%d KB（最新 tag=%s, 映射开=%v/%v/%v）\n",
+							audioFwdFrames-audioFwdLastFrames, (audioFwdBytes-audioFwdLastBytes)/1024, tag,
+							curMapping.PlaySystemAudioLocal, curMapping.PlayMicAudioLocal, curMapping.PlayAudioLocal)
+						audioFwdLastFrames = audioFwdFrames
+						audioFwdLastBytes = audioFwdBytes
+						audioFwdLastLog = now
+					}
+				}
 				if tag == "AUDS" {
 					if curMapping.PlaySystemAudioLocal {
 						pm.hub.BroadcastAudio(data)
