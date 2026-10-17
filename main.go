@@ -20,6 +20,7 @@ func main() {
 	mode := flag.String("mode", "auto", "Audio capture mode: 'auto', 'loopback', 'capture', or 'test-tone'")
 	deviceIdx := flag.Int("device", -1, "Select specific audio device index (use -list to view)")
 	listDevices := flag.Bool("list", false, "List all available audio devices and exit")
+	installVirtual := flag.Bool("install-virtual", false, "Force automatic virtual audio device setup and exit")
 	noQR := flag.Bool("no-qr", false, "Disable printing QR code to the terminal")
 	flag.Parse()
 
@@ -28,12 +29,37 @@ func main() {
 		return
 	}
 
+	if *installVirtual {
+		printBanner()
+		if err := util.AutoSetupVirtualDevice(); err != nil {
+			fmt.Printf("自动配置失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("自动配置成功！请重新启动 any_device。")
+		return
+	}
+
 	printBanner()
 
 	// Check devices before starting
 	devices, _ := audio.ListAllDevices()
-	if len(devices) == 0 && *mode != "test-tone" {
-		util.PrintVirtualDeviceGuide()
+	hasPlayback := false
+	for _, d := range devices {
+		if d.Type == "playback" {
+			hasPlayback = true
+			break
+		}
+	}
+
+	if !hasPlayback && *mode != "test-tone" {
+		fmt.Println("\n⚠️  未检测到可用的音频输出设备（台式机无物理音箱/耳机）。")
+		fmt.Println("🤖 正在全自动为您安装并配置虚拟音频驱动...")
+		if err := util.AutoSetupVirtualDevice(); err != nil {
+			fmt.Printf("[AutoSetup] 自动配置未成功: %v\n", err)
+			util.PrintVirtualDeviceGuide()
+		} else {
+			fmt.Println("[AutoSetup] 虚拟声卡已就绪！")
+		}
 	}
 
 	// 1. Initialize WebSocket 1-to-N broadcast hub
