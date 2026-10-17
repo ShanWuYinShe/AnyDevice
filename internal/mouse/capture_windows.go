@@ -102,17 +102,17 @@ func msHookProc(code int32, wParam uintptr, lParam uintptr) uintptr {
 				case 0x0200: // WM_MOUSEMOVE
 					evt.Action = "move"
 				case 0x0201: // WM_LBUTTONDOWN
-					evt.Action, evt.LeftDown = "down", true
+					evt.Action, evt.LeftDown, evt.Button = "down", true, "left"
 				case 0x0202: // WM_LBUTTONUP
-					evt.Action = "up"
+					evt.Action, evt.Button = "up", "left"
 				case 0x0204: // WM_RBUTTONDOWN
-					evt.Action, evt.RightDown = "down", true
+					evt.Action, evt.RightDown, evt.Button = "down", true, "right"
 				case 0x0205: // WM_RBUTTONUP
-					evt.Action = "up"
+					evt.Action, evt.Button = "up", "right"
 				case 0x0206: // WM_MBUTTONDOWN
-					evt.Action, evt.MiddleDown = "down", true
+					evt.Action, evt.MiddleDown, evt.Button = "down", true, "middle"
 				case 0x0207: // WM_MBUTTONUP
-					evt.Action = "up"
+					evt.Action, evt.Button = "up", "middle"
 				case 0x020A: // WM_MOUSEWHEEL
 					evt.Action = "wheel"
 					// mouseData 高 16 位为有符号滚轮增量（正 = 向上）
@@ -298,4 +298,11 @@ func sendMouseButton(flags uint32, dx, dy int32, wheelData uint32) {
 		Dwflags:   flags,
 	}
 	procSendInput.Call(1, uintptr(unsafe.Pointer(&in)), unsafe.Sizeof(in))
+}
+
+// ReleaseAllButtons 保险性抬起全部鼠标按钮（对端连接断开时防卡键）。
+func ReleaseAllButtons() {
+	sendMouseButton(mOUSEEVENTF_LEFTUP, 0, 0, 0)
+	sendMouseButton(mOUSEEVENTF_RIGHTUP, 0, 0, 0)
+	sendMouseButton(mOUSEEVENTF_MIDDLEUP, 0, 0, 0)
 }

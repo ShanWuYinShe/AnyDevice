@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -85,6 +86,25 @@ var windowsKeyMap = map[string]int{
 	Semicolon: 0xBA, Equal: 0xBB, Comma: 0xBC, Minus: 0xBD, Period: 0xBE,
 	Slash: 0xBF, Backquote: 0xC0, BracketLeft: 0xDB, Backslash: 0xDC,
 	BracketRight: 0xDD, Quote: 0xDE,
+
+	// Numpad（数字小键盘）
+	Numpad0:        0x60,
+	Numpad1:        0x61,
+	Numpad2:        0x62,
+	Numpad3:        0x63,
+	Numpad4:        0x64,
+	Numpad5:        0x65,
+	Numpad6:        0x66,
+	Numpad7:        0x67,
+	Numpad8:        0x68,
+	Numpad9:        0x69,
+	NumpadMultiply: 0x6A,
+	NumpadAdd:      0x6B,
+	NumpadSubtract: 0x6D,
+	NumpadDecimal:  0x6E,
+	NumpadDivide:   0x6F,
+	NumpadEnter:    0x0D, // 小键盘回车与主回车同 VK（此处统一为主回车）
+	NumLock:        0x90, // VK_NUMLOCK
 }
 
 // vkToKeyName 平台虚拟键码 → 标准键名（低级钩子反查用，启动时生成）
@@ -133,19 +153,31 @@ func kbHookProc(code int32, wParam uintptr, lParam uintptr) uintptr {
 		kb := (*kbdllhookstruct)(unsafe.Pointer(lParam))
 		// 过滤本应用（或其它程序）注入的按键，防止捕获/注入无限回环
 		if kb.Flags&llkhfInjected == 0 {
-			if keyName, ok := vkToKeyName[int(kb.VkCode)]; ok {
+			vk := int(kb.VkCode)
+			keyName, ok := vkToKeyName[vk]
+			if vk == 0x0D {
+				// 0x0D: 若带 LLKHF_EXTENDED(0x01) 则是小键盘回车，否则为主回车
+				if kb.Flags&1 != 0 {
+					keyName, ok = NumpadEnter, true
+				} else {
+					keyName, ok = Enter, true
+				}
+			}
+			if ok {
 				action := "up"
 				if wParam == wM_KEYDOWN || wParam == wM_SYSKEYDOWN {
 					action = "down"
 				}
 				if kbEventCh != nil {
+					friendly := FriendlyKeyName(keyName)
 					select {
 					case kbEventCh <- KeyEvent{
 						Type:      "keyboard",
 						Action:    action,
 						Key:       keyName,
-						Name:      FriendlyKeyName(keyName),
-						KeyCode:   int(kb.VkCode),
+						Name:      friendly,
+						Friendly:  friendly,
+						KeyCode:   vk,
 						Timestamp: time.Now().UnixMilli(),
 					}:
 					default:
@@ -254,24 +286,36 @@ type sendInputRec struct {
 	Union sendInputUnion
 }
 
+var (
+	simKeyMu   sync.Mutex
+	activeKeys = make(map[string]int) // keyName -> vk
+)
+
 // simulateKeyVK 以虚拟键码注入按键（SendInput）。
-func simulateKeyVK(vk int, down bool) {
+func simulateKeyVK(vk int, down bool, ext bool) {
 	var in sendInputRec
 	in.Type = inputKeyboard
 	in.Union.Ki.Wvk = uint16(vk)
 	if !down {
 		in.Union.Ki.Dwflags = keyeventfKeyup
 	}
-	// 导航/修饰等扩展键需要 EXTENDEDKEY 标记
-	switch vk {
-	case 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E, 0x5B, 0x5C, 0xA1, 0xA3, 0xA5:
+	// 导航/修饰/小键盘回车/除号等扩展键需要 EXTENDEDKEY 标记
+	if ext {
 		in.Union.Ki.Dwflags |= keyeventfExtKey
+	} else {
+		switch vk {
+		case 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E, 0x5B, 0x5C, 0xA1, 0xA3, 0xA5:
+			in.Union.Ki.Dwflags |= keyeventfExtKey
+		}
 	}
 	procSendInput.Call(1, uintptr(unsafe.Pointer(&in)), unsafe.Sizeof(in))
 }
 
 // SimulateKey simulates a key press or release on Windows (SendInput).
 func SimulateKey(keyName string, down bool) {
+	simKeyMu.Lock()
+	defer simKeyMu.Unlock()
+
 	vk, exists := windowsKeyMap[keyName]
 	if !exists {
 		if down {
@@ -279,5 +323,33 @@ func SimulateKey(keyName string, down bool) {
 		}
 		return
 	}
-	simulateKeyVK(vk, down)
+	ext := (keyName == NumpadEnter || keyName == NumpadDivide)
+	if down {
+		activeKeys[keyName] = vk
+	} else {
+		delete(activeKeys, keyName)
+	}
+	simulateKeyVK(vk, down, ext)
+}
+
+// ReleaseAll 释放全部跟踪中的按键与修饰键（对端连接断开时调用防卡键）。
+func ReleaseAll() {
+	simKeyMu.Lock()
+	defer simKeyMu.Unlock()
+
+	for keyName, vk := range activeKeys {
+		ext := (keyName == NumpadEnter || keyName == NumpadDivide)
+		simulateKeyVK(vk, false, ext)
+	}
+	clear(activeKeys)
+
+	// 保险性抬起全部修饰键（左右 Shift, Ctrl, Alt, Win）
+	for _, vk := range []int{0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C} {
+		simulateKeyVK(vk, false, false)
+	}
+}
+
+// ReleaseAllModifiers 兼容旧接口（实际执行全键释放）。
+func ReleaseAllModifiers() {
+	ReleaseAll()
 }

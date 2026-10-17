@@ -26,6 +26,9 @@ static int msTapInstall(void) {
                      | CGEventMaskBit(kCGEventRightMouseUp)
                      | CGEventMaskBit(kCGEventOtherMouseDown)
                      | CGEventMaskBit(kCGEventOtherMouseUp)
+                     | CGEventMaskBit(kCGEventLeftMouseDragged)
+                     | CGEventMaskBit(kCGEventRightMouseDragged)
+                     | CGEventMaskBit(kCGEventOtherMouseDragged)
                      | CGEventMaskBit(kCGEventScrollWheel);
     msTapPort = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap,
                                  kCGEventTapOptionListenOnly, mask, msTapCallback, NULL);
@@ -57,6 +60,12 @@ static void msTapStop(void) {
     }
 }
 
+static void msTapReenable(void) {
+    if (msTapPort) {
+        CGEventTapEnable(msTapPort, true);
+    }
+}
+
 static void get_mouse_info(double* x, double* y, int* lDown, int* rDown, int* mDown) {
     CGEventRef event = CGEventCreate(NULL);
     if (event) {
@@ -84,7 +93,25 @@ static void sim_mouse_move(int dx, int dy) {
 
     pt.x += dx;
     pt.y += dy;
-    CGEventRef move = CGEventCreateMouseEvent(NULL, kCGEventMouseMoved, pt, kCGMouseButtonLeft);
+
+    int lDown = CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState, kCGMouseButtonLeft);
+    int rDown = CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState, kCGMouseButtonRight);
+    int mDown = CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState, kCGMouseButtonCenter);
+
+    CGEventType t = kCGEventMouseMoved;
+    CGMouseButton b = kCGMouseButtonLeft;
+    if (lDown) {
+        t = kCGEventLeftMouseDragged;
+        b = kCGMouseButtonLeft;
+    } else if (rDown) {
+        t = kCGEventRightMouseDragged;
+        b = kCGMouseButtonRight;
+    } else if (mDown) {
+        t = kCGEventOtherMouseDragged;
+        b = kCGMouseButtonCenter;
+    }
+
+    CGEventRef move = CGEventCreateMouseEvent(NULL, t, pt, b);
     if (move) {
         CGEventSetIntegerValueField(move, kCGEventSourceUserData, ANYD_INJECTED_MAGIC);
         CGEventPost(kCGHIDEventTap, move);
@@ -94,7 +121,25 @@ static void sim_mouse_move(int dx, int dy) {
 
 static void sim_mouse_to(double x, double y) {
     CGPoint pt = CGPointMake(x, y);
-    CGEventRef move = CGEventCreateMouseEvent(NULL, kCGEventMouseMoved, pt, kCGMouseButtonLeft);
+
+    int lDown = CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState, kCGMouseButtonLeft);
+    int rDown = CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState, kCGMouseButtonRight);
+    int mDown = CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState, kCGMouseButtonCenter);
+
+    CGEventType t = kCGEventMouseMoved;
+    CGMouseButton b = kCGMouseButtonLeft;
+    if (lDown) {
+        t = kCGEventLeftMouseDragged;
+        b = kCGMouseButtonLeft;
+    } else if (rDown) {
+        t = kCGEventRightMouseDragged;
+        b = kCGMouseButtonRight;
+    } else if (mDown) {
+        t = kCGEventOtherMouseDragged;
+        b = kCGMouseButtonCenter;
+    }
+
+    CGEventRef move = CGEventCreateMouseEvent(NULL, t, pt, b);
     if (move) {
         CGEventSetIntegerValueField(move, kCGEventSourceUserData, ANYD_INJECTED_MAGIC);
         CGEventPost(kCGHIDEventTap, move);
@@ -189,12 +234,25 @@ func SimulateScroll(dy int) {
 	C.sim_mouse_scroll(C.int(dy))
 }
 
+// ReleaseAllButtons 保险性抬起全部鼠标按钮（对端连接断开时防卡键）。
+func ReleaseAllButtons() {
+	SimulateButton("left", false)
+	SimulateButton("right", false)
+	SimulateButton("middle", false)
+}
+
 // —— 事件钩子（CGEventTap）——
 
 var msEventCh chan MouseEvent
 
 //export msTapCallback
 func msTapCallback(proxy C.CGEventTapProxy, etype C.CGEventType, event C.CGEventRef, refcon unsafe.Pointer) C.CGEventRef {
+	// 系统因超时或用户交互临时禁用钩子时自动恢复，防止鼠标捕获静默失效
+	if etype == C.kCGEventTapDisabledByTimeout || etype == C.kCGEventTapDisabledByUserInput {
+		C.msTapReenable()
+		return event
+	}
+
 	// 本应用注入的事件：跳过，防止捕获/注入无限回环
 	if C.CGEventGetIntegerValueField(event, C.kCGEventSourceUserData) == C.int64_t(0x414E5944) {
 		return event
@@ -203,33 +261,31 @@ func msTapCallback(proxy C.CGEventTapProxy, etype C.CGEventType, event C.CGEvent
 		return event
 	}
 
-	const (
-		evMove        = 5 // kCGEventMouseMoved
-		evLeftDown    = 1
-		evLeftUp      = 2
-		evRightDown   = 3
-		evRightUp     = 4
-		evOtherDown   = 25
-		evOtherUp     = 26
-		evScrollWheel = 22
-	)
-
 	var evt MouseEvent
 	evt.Type = "mouse"
 	evt.Timestamp = time.Now().UnixMilli()
 
 	var isMove bool
 	switch etype {
-	case C.kCGEventMouseMoved:
+	case C.kCGEventMouseMoved, C.kCGEventLeftMouseDragged, C.kCGEventRightMouseDragged, C.kCGEventOtherMouseDragged:
 		isMove = true
+		evt.Action = "move"
 	case C.kCGEventScrollWheel:
 		evt.Action = "wheel"
 		// deltaAxis1：正 = 向上
 		evt.WheelDelta = int(C.CGEventGetIntegerValueField(event, C.kCGScrollWheelEventDeltaAxis1))
-	case C.kCGEventLeftMouseDown, C.kCGEventRightMouseDown, C.kCGEventOtherMouseDown:
-		evt.Action = "down"
-	case C.kCGEventLeftMouseUp, C.kCGEventRightMouseUp, C.kCGEventOtherMouseUp:
-		evt.Action = "up"
+	case C.kCGEventLeftMouseDown:
+		evt.Action, evt.Button = "down", "left"
+	case C.kCGEventLeftMouseUp:
+		evt.Action, evt.Button = "up", "left"
+	case C.kCGEventRightMouseDown:
+		evt.Action, evt.Button = "down", "right"
+	case C.kCGEventRightMouseUp:
+		evt.Action, evt.Button = "up", "right"
+	case C.kCGEventOtherMouseDown:
+		evt.Action, evt.Button = "down", "middle"
+	case C.kCGEventOtherMouseUp:
+		evt.Action, evt.Button = "up", "middle"
 	default:
 		return event
 	}

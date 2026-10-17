@@ -12,12 +12,13 @@ import (
 
 // KeyEvent represents a key press or release event.
 type KeyEvent struct {
-	Type      string `json:"type"`      // "keyboard"
-	Action    string `json:"action"`    // "down", "up"
-	Key       string `json:"key"`       // Standard key code (e.g., "KeyA", "Enter")
-	Name      string `json:"name"`      // Friendly name (e.g., "A", "回车 (Enter)")
-	KeyCode   int    `json:"key_code"`  // Platform native key code
-	Timestamp int64  `json:"timestamp"` // Unix millisecond timestamp
+	Type      string `json:"type"`               // "keyboard"
+	Action    string `json:"action"`             // "down", "up"
+	Key       string `json:"key"`                // Standard key code (e.g., "KeyA", "Enter")
+	Name      string `json:"name"`               // Friendly name (e.g., "A", "回车 (Enter)")
+	Friendly  string `json:"friendly,omitempty"` // 友好名称（兼容前端 msg.friendly）
+	KeyCode   int    `json:"key_code"`           // Platform native key code
+	Timestamp int64  `json:"timestamp"`          // Unix millisecond timestamp
 }
 
 // Engine captures local host keyboard events and emits them to a callback.
@@ -119,11 +120,13 @@ func (e *Engine) loop(ctx context.Context) {
 			for key, code := range currentPressed {
 				if _, existed := e.activeKeys[key]; !existed {
 					e.activeKeys[key] = code
+					friendly := FriendlyKeyName(key)
 					emit(KeyEvent{
 						Type:      "keyboard",
 						Action:    "down",
 						Key:       key,
-						Name:      FriendlyKeyName(key),
+						Name:      friendly,
+						Friendly:  friendly,
 						KeyCode:   code,
 						Timestamp: now,
 					})
@@ -134,11 +137,13 @@ func (e *Engine) loop(ctx context.Context) {
 			for key, code := range e.activeKeys {
 				if _, stillPressed := currentPressed[key]; !stillPressed {
 					delete(e.activeKeys, key)
+					friendly := FriendlyKeyName(key)
 					emit(KeyEvent{
 						Type:      "keyboard",
 						Action:    "up",
 						Key:       key,
-						Name:      FriendlyKeyName(key),
+						Name:      friendly,
+						Friendly:  friendly,
 						KeyCode:   code,
 						Timestamp: now,
 					})

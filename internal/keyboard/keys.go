@@ -42,6 +42,26 @@ const (
 	Digit8 = "Digit8"
 	Digit9 = "Digit9"
 
+	// Numpad（数字小键盘；NumLock 开启时输出数字，关闭时行为同导航键）
+	Numpad0        = "Numpad0"
+	Numpad1        = "Numpad1"
+	Numpad2        = "Numpad2"
+	Numpad3        = "Numpad3"
+	Numpad4        = "Numpad4"
+	Numpad5        = "Numpad5"
+	Numpad6        = "Numpad6"
+	Numpad7        = "Numpad7"
+	Numpad8        = "Numpad8"
+	Numpad9        = "Numpad9"
+	NumpadAdd      = "NumpadAdd"
+	NumpadSubtract = "NumpadSubtract"
+	NumpadMultiply = "NumpadMultiply"
+	NumpadDivide   = "NumpadDivide"
+	NumpadDecimal  = "NumpadDecimal"
+	NumpadEnter    = "NumpadEnter"
+	NumpadEqual    = "NumpadEqual"
+	NumLock        = "NumLock"
+
 	// Controls & Editing
 	Enter     = "Enter"
 	Escape    = "Escape"
@@ -129,6 +149,42 @@ func FriendlyKeyName(code string) string {
 		return "← 左箭头"
 	case ArrowRight:
 		return "→ 右箭头"
+	case Numpad0:
+		return "小键盘 0"
+	case Numpad1:
+		return "小键盘 1"
+	case Numpad2:
+		return "小键盘 2"
+	case Numpad3:
+		return "小键盘 3"
+	case Numpad4:
+		return "小键盘 4"
+	case Numpad5:
+		return "小键盘 5"
+	case Numpad6:
+		return "小键盘 6"
+	case Numpad7:
+		return "小键盘 7"
+	case Numpad8:
+		return "小键盘 8"
+	case Numpad9:
+		return "小键盘 9"
+	case NumpadAdd:
+		return "小键盘 +"
+	case NumpadSubtract:
+		return "小键盘 -"
+	case NumpadMultiply:
+		return "小键盘 *"
+	case NumpadDivide:
+		return "小键盘 /"
+	case NumpadDecimal:
+		return "小键盘 ."
+	case NumpadEnter:
+		return "小键盘 回车"
+	case NumpadEqual:
+		return "小键盘 ="
+	case NumLock:
+		return "数字锁定 (NumLock)"
 	default:
 		if len(code) > 3 && code[:3] == "Key" {
 			return code[3:]

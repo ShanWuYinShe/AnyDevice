@@ -35,6 +35,11 @@
   - 音频：Windows WASAPI Loopback / macOS CoreAudio / Linux PipeWire。
   - 鼠标/键盘捕获参照 Deskflow 的事件驱动模型：Windows 低级钩子（`WH_MOUSE_LL`/`WH_KEYBOARD_LL`）、macOS `CGEventTap`（只听模式），实时捕获移动、按键、滚轮，未授权时自动回退轮询模式；
   - 注入采用现代 API：Windows `SendInput`、macOS `CGEventPost`（字符键附带 Unicode 直通、修饰键状态实时跟踪）；注入事件自带标记并在捕获钩子中过滤，杜绝捕获/注入回环。
+  - **输入鲁棒性与防卡键保障**：
+    - **小键盘支持**：覆盖数字小键盘（Numpad 0-9、加减乘除、小数点、小键盘回车与 NumLock），Windows 区分小键盘回车与主回车并带扩展键标志注入；
+    - **按键释放精准识别**：鼠标事件携带具体 `button` 标识，彻底解决右键/中键抬起因状态复位被误当左键抬起处理导致按键永久卡死的问题；
+    - **拖拽与系统钩子自愈**：macOS 捕获完整覆盖鼠标拖拽事件（`LeftMouseDragged` 等）并在模拟端还原拖拽状态；钩子因系统超时/交互暂停时自动重新激活（`kCGEventTapDisabledByTimeout` 自愈）；
+    - **断开与切换防卡键保护**：对端连接断开、本地映射切换关闭或反向控制断开时，自动释放所有被跟踪按下的物理按键、修饰键与鼠标按键，杜绝卡键残留。
 - **全平台零安装接收端**：手机/平板端扫码即用，无需安装额外 App。
 
 ---

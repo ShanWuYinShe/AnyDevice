@@ -53,6 +53,12 @@ static void kbTapStop(void) {
     }
 }
 
+static void kbTapReenable(void) {
+    if (kbTapPort) {
+        CGEventTapEnable(kbTapPort, true);
+    }
+}
+
 static int is_key_down(int k) {
     return CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, (CGKeyCode)k);
 }
@@ -161,6 +167,26 @@ var darwinKeyMap = map[string]int{
 	Slash:        0x2C,
 	Period:       0x2F,
 	Backquote:    0x32,
+
+	// Numpad（数字小键盘；macOS keypad 键码）
+	Numpad0:        0x52,
+	Numpad1:        0x53,
+	Numpad2:        0x54,
+	Numpad3:        0x55,
+	Numpad4:        0x56,
+	Numpad5:        0x57,
+	Numpad6:        0x58,
+	Numpad7:        0x59,
+	Numpad8:        0x5B,
+	Numpad9:        0x5C,
+	NumpadDecimal:  0x41,
+	NumpadMultiply: 0x43,
+	NumpadAdd:      0x45,
+	NumpadDivide:   0x4B,
+	NumpadEnter:    0x4C,
+	NumpadSubtract: 0x4E,
+	NumpadEqual:    0x51,
+	NumLock:        0x47, // kVK_ANSI_KeypadClear / NumLock
 }
 
 // codeToKeyName 平台键码 → 标准键名（事件钩子反查用，启动时生成）
@@ -214,33 +240,50 @@ var macCodeFlag = map[int]uint64{
 var (
 	simMu       sync.Mutex
 	activeFlags uint64
+	activeKeys  = make(map[string]bool)
 )
 
 // keyCharMap 字符型按键在美式布局下的字符（[无 Shift, 有 Shift]）。
 // Space/Tab/Enter 不在字符表内：它们是输入法的提交/候选键，
 // 必须走纯键码让目标输入法按原始语义处理，不能注入字符。
 var keyCharMap = map[string][2]string{
-	Minus:        {"-", "_"},
-	Equal:        {"=", "+"},
-	BracketLeft:  {"[", "{"},
-	BracketRight: {"]", "}"},
-	Backslash:    {"\\", "|"},
-	Semicolon:    {";", ":"},
-	Quote:        {"'", "\""},
-	Comma:        {",", "<"},
-	Period:       {".", ">"},
-	Slash:        {"/", "?"},
-	Backquote:    {"`", "~"},
-	Digit1:       {"1", "!"},
-	Digit2:       {"2", "@"},
-	Digit3:       {"3", "#"},
-	Digit4:       {"4", "$"},
-	Digit5:       {"5", "%"},
-	Digit6:       {"6", "^"},
-	Digit7:       {"7", "&"},
-	Digit8:       {"8", "*"},
-	Digit9:       {"9", "("},
-	Digit0:       {"0", ")"},
+	Minus:          {"-", "_"},
+	Equal:          {"=", "+"},
+	BracketLeft:    {"[", "{"},
+	BracketRight:   {"]", "}"},
+	Backslash:      {"\\", "|"},
+	Semicolon:      {";", ":"},
+	Quote:          {"'", "\""},
+	Comma:          {",", "<"},
+	Period:         {".", ">"},
+	Slash:          {"/", "?"},
+	Backquote:      {"`", "~"},
+	Digit1:         {"1", "!"},
+	Digit2:         {"2", "@"},
+	Digit3:         {"3", "#"},
+	Digit4:         {"4", "$"},
+	Digit5:         {"5", "%"},
+	Digit6:         {"6", "^"},
+	Digit7:         {"7", "&"},
+	Digit8:         {"8", "*"},
+	Digit9:         {"9", "("},
+	Digit0:         {"0", ")"},
+	Numpad0:        {"0", "0"},
+	Numpad1:        {"1", "1"},
+	Numpad2:        {"2", "2"},
+	Numpad3:        {"3", "3"},
+	Numpad4:        {"4", "4"},
+	Numpad5:        {"5", "5"},
+	Numpad6:        {"6", "6"},
+	Numpad7:        {"7", "7"},
+	Numpad8:        {"8", "8"},
+	Numpad9:        {"9", "9"},
+	NumpadDecimal:  {".", "."},
+	NumpadAdd:      {"+", "+"},
+	NumpadSubtract: {"-", "-"},
+	NumpadMultiply: {"*", "*"},
+	NumpadDivide:   {"/", "/"},
+	NumpadEqual:    {"=", "="},
 }
 
 // keyChar 返回字母/数字/标点键对应的字符（Shift 决定上档），非字符键返回 false。
@@ -280,6 +323,12 @@ var kbTimeNow = func() int64 { return time.Now().UnixMilli() }
 
 //export kbTapCallback
 func kbTapCallback(proxy C.CGEventTapProxy, etype C.CGEventType, event C.CGEventRef, refcon unsafe.Pointer) C.CGEventRef {
+	// 系统因超时或用户交互临时禁用钩子时自动恢复，防止键盘捕获静默失效
+	if etype == C.kCGEventTapDisabledByTimeout || etype == C.kCGEventTapDisabledByUserInput {
+		C.kbTapReenable()
+		return event
+	}
+
 	// 本应用注入的事件：跳过，防止捕获/注入无限回环
 	if C.CGEventGetIntegerValueField(event, C.kCGEventSourceUserData) == C.int64_t(0x414E5944) {
 		return event
@@ -321,12 +370,14 @@ func kbTapCallback(proxy C.CGEventTapProxy, etype C.CGEventType, event C.CGEvent
 	}
 
 	// 非阻塞投递（事件钩子回调必须快速返回，否则系统会移除钩子）
+	friendly := FriendlyKeyName(keyName)
 	select {
 	case kbEventCh <- KeyEvent{
 		Type:      "keyboard",
 		Action:    action,
 		Key:       keyName,
-		Name:      FriendlyKeyName(keyName),
+		Name:      friendly,
+		Friendly:  friendly,
 		KeyCode:   code,
 		Timestamp: kbTimeNow(),
 	}:
@@ -379,6 +430,12 @@ func SimulateKey(keyName string, down bool) {
 	simMu.Lock()
 	defer simMu.Unlock()
 
+	if down {
+		activeKeys[keyName] = true
+	} else {
+		delete(activeKeys, keyName)
+	}
+
 	if f, isModifier := modifierFlagByName[keyName]; isModifier {
 		if down {
 			activeFlags |= f
@@ -413,4 +470,40 @@ func boolToInt(b bool) C.int {
 		return 1
 	}
 	return 0
+}
+
+// ReleaseAll 释放全部跟踪中的按键与修饰键（对端连接断开时调用防卡键）。
+func ReleaseAll() {
+	simMu.Lock()
+	defer simMu.Unlock()
+
+	for keyName := range activeKeys {
+		if code, ok := darwinKeyMap[keyName]; ok {
+			C.sim_key_flags(C.int(code), 0, 0)
+		}
+	}
+	clear(activeKeys)
+
+	if activeFlags != 0 {
+		flagToName := map[uint64]string{
+			flagShift:      ShiftLeft,
+			flagControl:    ControlLeft,
+			flagAlt:        AltLeft,
+			flagCommand:    MetaLeft,
+			flagAlphaShift: CapsLock,
+		}
+		for f, name := range flagToName {
+			if activeFlags&f != 0 {
+				if code, ok := darwinKeyMap[name]; ok {
+					C.sim_key_flags(C.int(code), 0, 0)
+				}
+			}
+		}
+		activeFlags = 0
+	}
+}
+
+// ReleaseAllModifiers 兼容旧接口（实际执行全键释放）。
+func ReleaseAllModifiers() {
+	ReleaseAll()
 }

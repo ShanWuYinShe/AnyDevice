@@ -15,6 +15,7 @@ import (
 type MouseEvent struct {
 	Type         string  `json:"type"`                  // "mouse"
 	Action       string  `json:"action"`                // "move", "down", "up", "wheel"
+	Button       string  `json:"button,omitempty"`      // "left", "right", "middle" (仅 down/up 时有效)
 	X            float64 `json:"x"`                     // Normalized X (0.0 ~ 1.0)
 	Y            float64 `json:"y"`                     // Normalized Y (0.0 ~ 1.0)
 	RawX         int     `json:"raw_x"`                 // Host screen pixel X
@@ -142,11 +143,29 @@ func (e *Engine) loop(ctx context.Context) {
 			}
 
 			action := "move"
+			button := ""
 			if btnChanged {
-				if lDown || rDown || mDown {
-					action = "down"
-				} else {
-					action = "up"
+				if lDown != e.lastL {
+					button = "left"
+					if lDown {
+						action = "down"
+					} else {
+						action = "up"
+					}
+				} else if rDown != e.lastR {
+					button = "right"
+					if rDown {
+						action = "down"
+					} else {
+						action = "up"
+					}
+				} else if mDown != e.lastM {
+					button = "middle"
+					if mDown {
+						action = "down"
+					} else {
+						action = "up"
+					}
 				}
 			}
 
@@ -157,6 +176,7 @@ func (e *Engine) loop(ctx context.Context) {
 			evt := MouseEvent{
 				Type:         "mouse",
 				Action:       action,
+				Button:       button,
 				X:            normX,
 				Y:            normY,
 				RawX:         x,

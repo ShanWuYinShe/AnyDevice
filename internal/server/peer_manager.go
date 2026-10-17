@@ -210,6 +210,14 @@ func (pm *PeerManager) SetMapping(peerID string, playSystemAudio, playMicAudio, 
 		return nil
 	}
 
+	// 若本次决策关闭了本地鼠标或键盘执行，立即释放可能卡住的按钮与按键
+	if executeMouse != nil && !*executeMouse {
+		mouse.ReleaseAllButtons()
+	}
+	if executeKeyboard != nil && !*executeKeyboard {
+		keyboard.ReleaseAll()
+	}
+
 	// 连接已建立时同步推送最新订阅声明：中途追加映射（如再开鼠标/键盘）
 	// 无需断开重连，对端 hub 会按声明开关对应流转发。
 	pm.mu.RLock()
@@ -325,6 +333,12 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 	mapping.LastError = ""
 	pm.mu.Unlock()
 
+	// 对端连接断开：释放本机注入的按钮与按键，防止卡在“按住”状态
+	defer mouse.ReleaseAllButtons()
+	defer keyboard.ReleaseAll()
+
+	var lastMouseDownBtn string
+
 	defer func() {
 		cancel()
 		_ = conn.Close()
@@ -397,11 +411,20 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 					} else {
 						mouse.SimulateAbsolute(evt.X, evt.Y)
 						if evt.Action == "down" || evt.Action == "up" {
-							btn := "left"
-							if evt.RightDown {
-								btn = "right"
-							} else if evt.MiddleDown {
-								btn = "middle"
+							btn := evt.Button
+							if btn == "" {
+								// 兼容旧对端：up 时按上一次按下的按钮回退，或按当前 down 状态推断
+								btn = "left"
+								if evt.RightDown {
+									btn = "right"
+								} else if evt.MiddleDown {
+									btn = "middle"
+								} else if evt.Action == "up" && lastMouseDownBtn != "" {
+									btn = lastMouseDownBtn
+								}
+							}
+							if evt.Action == "down" {
+								lastMouseDownBtn = btn
 							}
 							mouse.SimulateButton(btn, evt.Action == "down")
 						}

@@ -45,6 +45,33 @@ func TestFriendlyKeyName(t *testing.T) {
 	if FriendlyKeyName(Digit1) != "1" {
 		t.Fatalf("expected '1', got '%s'", FriendlyKeyName(Digit1))
 	}
+	if FriendlyKeyName(Numpad0) != "小键盘 0" {
+		t.Fatalf("expected '小键盘 0', got '%s'", FriendlyKeyName(Numpad0))
+	}
+	if FriendlyKeyName(NumpadEnter) != "小键盘 回车" {
+		t.Fatalf("expected '小键盘 回车', got '%s'", FriendlyKeyName(NumpadEnter))
+	}
+	if FriendlyKeyName(NumLock) != "数字锁定 (NumLock)" {
+		t.Fatalf("expected '数字锁定 (NumLock)', got '%s'", FriendlyKeyName(NumLock))
+	}
+}
+
+func TestNumpadKeyChar(t *testing.T) {
+	cases := []struct {
+		key  string
+		want string
+	}{
+		{Numpad0, "0"}, {Numpad1, "1"}, {Numpad2, "2"}, {Numpad3, "3"}, {Numpad4, "4"},
+		{Numpad5, "5"}, {Numpad6, "6"}, {Numpad7, "7"}, {Numpad8, "8"}, {Numpad9, "9"},
+		{NumpadDecimal, "."}, {NumpadAdd, "+"}, {NumpadSubtract, "-"},
+		{NumpadMultiply, "*"}, {NumpadDivide, "/"}, {NumpadEqual, "="},
+	}
+	for _, c := range cases {
+		got, ok := keyChar(c.key, false)
+		if !ok || got != c.want {
+			t.Errorf("keyChar(%s, false) = %q, %v; want %q", c.key, got, ok, c.want)
+		}
+	}
 }
 
 func TestKeyboardEngineLifecycle(t *testing.T) {
@@ -59,9 +86,11 @@ func TestKeyboardEngineLifecycle(t *testing.T) {
 	// Ensure engine started without panic
 	time.Sleep(50 * time.Millisecond)
 
-	// SimulateKey call shouldn't panic
+	// SimulateKey and ReleaseAll shouldn't panic
 	SimulateKey(KeyA, true)
-	SimulateKey(KeyA, false)
+	SimulateKey(ShiftLeft, true)
+	ReleaseAll()
+	ReleaseAllModifiers()
 
 	engine.Stop()
 }

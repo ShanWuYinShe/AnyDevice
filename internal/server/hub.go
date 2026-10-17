@@ -449,6 +449,7 @@ func (c *Client) writePump() {
 
 func (c *Client) readPump() {
 	defer func() {
+		mouse.ReleaseAllButtons()
 		c.hub.unregister <- c
 		c.conn.Close()
 	}()
