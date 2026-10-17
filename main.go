@@ -20,6 +20,7 @@ const Version = "1.1.0"
 func main() {
 	port := flag.Int("port", 8080, "Web & WebSocket server port")
 	mode := flag.String("mode", "auto", "Audio capture mode: 'auto', 'loopback', 'capture', or 'test-tone'")
+	customIP := flag.String("ip", "", "Manually specify primary LAN IP (useful when multiple virtual NICs exist)")
 	deviceIdx := flag.Int("device", -1, "Select specific audio device index (use -list to view)")
 	listDevices := flag.Bool("list", false, "List all available audio devices and exit")
 	noQR := flag.Bool("no-qr", false, "Disable printing QR code to the terminal")
@@ -71,17 +72,18 @@ func main() {
 	}
 	defer audioEngine.Stop()
 
-	// 4. Network & URL Information
-	primaryIP := util.GetPrimaryIP()
+	// 4. Network & URL Information (Using OS routing resolution to skip virtual adapters)
+	primaryIP := util.GetPrimaryIP(*customIP)
 	primaryURL := fmt.Sprintf("http://%s:%d", primaryIP, *port)
 	localURL := fmt.Sprintf("http://localhost:%d", *port)
 
-	fmt.Printf("\n🚀 AnyDevice 设备映射服务已就绪！\n")
+	fmt.Printf("\n🚀 AnyDevice 跨端双向设备映射服务已就绪！\n")
 	fmt.Printf("├─ 操作系统: %s (%s)\n", runtime.GOOS, runtime.GOARCH)
 	fmt.Printf("├─ 音频设备: %s\n", audioEngine.DeviceName())
-	fmt.Printf("├─ 鼠标映射: 本地鼠标硬件挂载就绪 (支持实时光标/按键状态)\n")
+	fmt.Printf("├─ 鼠标映射: 双向支持 (正向光标监视 + 反向触控板遥控)\n")
 	fmt.Printf("├─ 本地访问: %s\n", localURL)
 	fmt.Printf("└─ 局域网地址: %s\n", primaryURL)
+	util.PrintNetworkInfo(primaryIP, *port)
 
 	if !*noQR {
 		fmt.Printf("\n📱 手机/平板/电脑 扫码打开控制台 (在 UI 上自由勾选映射音频/鼠标):\n\n")

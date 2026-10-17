@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"any_device/internal/mouse"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -224,11 +226,21 @@ func (c *Client) readPump() {
 
 		if msgType == websocket.TextMessage {
 			var cmd struct {
-				Action string `json:"action"` // "set_mapping"
+				Action string `json:"action"` // "set_mapping" or "remote_input"
 				Audio  *bool  `json:"audio"`
 				Mouse  *bool  `json:"mouse"`
+				// Reverse input control fields
+				Type string `json:"type"` // "move", "click", "button", "scroll"
+				Dx   int    `json:"dx"`
+				Dy   int    `json:"dy"`
+				Btn  string `json:"btn"` // "left", "right", "middle"
+				Down bool   `json:"down"`
 			}
-			if err := json.Unmarshal(p, &cmd); err == nil && cmd.Action == "set_mapping" {
+			if err := json.Unmarshal(p, &cmd); err != nil {
+				continue
+			}
+
+			if cmd.Action == "set_mapping" {
 				c.mu.Lock()
 				if cmd.Audio != nil {
 					c.audioEnabled = *cmd.Audio
@@ -241,6 +253,20 @@ func (c *Client) readPump() {
 				select {
 				case c.hub.updateSubs <- struct{}{}:
 				default:
+				}
+			} else if cmd.Action == "remote_input" {
+				// Reverse control: client controls host mouse!
+				switch cmd.Type {
+				case "move":
+					mouse.SimulateMove(cmd.Dx, cmd.Dy)
+				case "click":
+					mouse.SimulateButton(cmd.Btn, true)
+					time.Sleep(15 * time.Millisecond)
+					mouse.SimulateButton(cmd.Btn, false)
+				case "button":
+					mouse.SimulateButton(cmd.Btn, cmd.Down)
+				case "scroll":
+					mouse.SimulateScroll(cmd.Dy)
 				}
 			}
 		}
