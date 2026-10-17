@@ -369,6 +369,23 @@ func (s *Server) SetupRoutes() http.Handler {
 	})
 
 	// Self node status & capabilities sharing configuration
+	// 前端自检上报：页面内 JS 把 WebSocket 连接状态/错误 POST 回来，
+	// 写入日志（桌面窗口无控制台/DevTools 时排查前端连接问题的唯一通道）
+	mux.HandleFunc("/api/client-report", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var body struct {
+			Event  string `json:"event"`
+			Detail string `json:"detail"`
+			URL    string `json:"url"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		util.Logf("[前端自检] %s %s (ws=%s, ua=%s)", body.Event, body.Detail, body.URL, r.UserAgent())
+		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+	})
+
 	mux.HandleFunc("/api/self", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPost {

@@ -118,24 +118,46 @@ let audioRateLast = 0;
 export const audioPlayState = $state({ text: '未创建' });
 
 export function connectWebSocket() {
-  // 浏览器访问：同源相对地址；Wails 桌面窗口（location.host 为空）：
-  // 用 /api/self 返回的局域网绝对地址直连服务端口
+  // 浏览器访问：同源相对地址。
+  // Wails 桌面窗口（location.host 为空）：必须用 127.0.0.1 回环地址——
+  // WKWebView 的 ATS 安全策略会拦截 wails:// 页面对非 localhost 明文
+  // WebSocket 的连接（此前用局域网 IP 推导导致 ws 永远连不上、音频无数据）。
   let wsBase;
   if (location.host) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     wsBase = proto + '//' + location.host;
-  } else if (selfState.data && selfState.data.primary_url) {
-    wsBase = selfState.data.primary_url.replace(/^http/, 'ws');
   } else {
-    wsBase = 'ws://127.0.0.1:8080';
+    // 从 primary_url 仅提取端口，主机固定回环地址（ATS 豁免）
+    let port = '8080';
+    if (selfState.data && selfState.data.primary_url) {
+      const m = selfState.data.primary_url.match(/:(\d+)$/);
+      if (m) port = m[1];
+    }
+    wsBase = 'ws://127.0.0.1:' + port;
   }
   ws = new WebSocket(wsBase + '/ws');
   ws.binaryType = 'arraybuffer';
 
+  // 前端自检上报：桌面窗口无控制台/DevTools，把连接状态 POST 给服务端日志
+  const report = (event, detail) => {
+    try {
+      fetch('/api/client-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event, detail: String(detail || ''), url: wsBase + '/ws' }),
+      }).catch(() => {});
+    } catch (e) { /* 忽略 */ }
+  };
+
   ws.onopen = () => {
     connState.wsOpen = true;
+    report('ws_open', 'readyState=' + ws.readyState);
     // 连接建立即同步当前订阅（服务端对本机客户端默认不订阅）
     sendSubscriptions();
+  };
+
+  ws.onerror = (e) => {
+    report('ws_error', 'readyState=' + ws.readyState + ' type=' + (e && e.type));
   };
 
   ws.onmessage = (event) => {
@@ -186,8 +208,9 @@ export function connectWebSocket() {
     }
   };
 
-  ws.onclose = () => {
+  ws.onclose = (e) => {
     connState.wsOpen = false;
+    report('ws_close', 'code=' + (e && e.code) + ' reason=' + (e && e.reason) + ' wasClean=' + (e && e.wasClean));
     // 重连后服务端订阅回到默认值：重置已发送标记，onopen 时重新同步
     lastSubs = { audio: null, mouse: null, keyboard: null };
     reconnectTimer = setTimeout(connectWebSocket, 2000);

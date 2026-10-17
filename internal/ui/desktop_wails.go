@@ -1,4 +1,4 @@
-//go:build wails
+//go:build wails && windows
 
 // Wails 桌面壳：用 Wails 原生窗口承载现有 UI 与 API。
 // 设计要点：

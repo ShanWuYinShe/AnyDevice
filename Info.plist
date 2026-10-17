@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>AnyDevice</string>
+    <key>CFBundleIdentifier</key>
+    <string>local.anydevice.app</string>
+    <key>CFBundleExecutable</key>
+    <string>any_device</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <!-- macOS ATS：允许本地网络明文连接。
+         Wails 窗口页面（wails://）连接 ws://127.0.0.1 的 WebSocket
+         需要此例外，否则 WKWebView 会静默拦截（此前音频/遥测无数据的原因）。 -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
+</dict>
+</plist>

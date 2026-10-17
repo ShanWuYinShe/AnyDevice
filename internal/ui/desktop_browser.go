@@ -1,4 +1,4 @@
-//go:build !wails
+//go:build !(wails && windows)
 
 // 浏览器壳回退版：无 Wails 依赖的构建（默认 go build）使用。
 // 打开 Chrome/Edge/Chromium --app 独立窗口（带独立 profile），
