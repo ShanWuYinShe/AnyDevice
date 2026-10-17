@@ -5,13 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "check": "svelte-check --threshold error",
+    "build": "vite build && node -e \"require('fs').writeFileSync('../internal/web/dist/.gitkeep','')\""
   },
   "dependencies": {
     "svelte": "^5.57.2"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "svelte-check": "^4.7.7",
+    "typescript": "~6",
     "vite": "^8.3.4"
   }
 }

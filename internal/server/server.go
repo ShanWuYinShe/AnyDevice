@@ -643,13 +643,24 @@ func (s *Server) SetupRoutes() http.Handler {
 		json.NewEncoder(w).Encode(devices)
 	})
 
-	// Embedded Static UI
+	// Embedded Static UI（禁缓存包装：入口 HTML 引用的 JS 带内容 hash，
+	// 每次发版 hash 变化；若浏览器缓存旧 HTML，会引用已不存在的旧产物导致白屏）
 	staticFS, err := web.GetFileSystem()
 	if err == nil {
-		mux.Handle("/", http.FileServer(staticFS))
+		mux.Handle("/", noCache(http.FileServer(staticFS)))
 	}
 
 	return mux
+}
+
+// noCache 为静态响应附加禁缓存头：局域网服务体量小，正确性优先于缓存收益。
+func noCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) Start() error {

@@ -6,6 +6,7 @@ cd frontend
 if [ ! -d node_modules ]; then
     bun install
 fi
+bun run check
 bun run build
 cd ..
 
