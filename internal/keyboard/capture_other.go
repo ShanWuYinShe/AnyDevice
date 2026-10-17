@@ -2,11 +2,9 @@
 
 package keyboard
 
-func getPressedKeys() map[string]int {
-	return make(map[string]int)
-}
+import "context"
 
-// SimulateKey is a stub for unsupported operating systems.
-func SimulateKey(keyName string, down bool) {
-	// No-op fallback
+// runEventCapture 平台无事件钩子实现，回退轮询模式。
+func runEventCapture(ctx context.Context, emit func(KeyEvent)) bool {
+	return false
 }

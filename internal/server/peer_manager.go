@@ -391,15 +391,20 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 					if util.DebugKeys() && evt.Action != "move" {
 						fmt.Printf("[鼠标链路] 收到对端鼠标 %s (%.2f, %.2f)\n", evt.Action, evt.X, evt.Y)
 					}
-					mouse.SimulateAbsolute(evt.X, evt.Y)
-					if evt.Action == "down" || evt.Action == "up" {
-						btn := "left"
-						if evt.RightDown {
-							btn = "right"
-						} else if evt.MiddleDown {
-							btn = "middle"
+					if evt.Action == "wheel" {
+						// 滚轮同步：正 = 向上
+						mouse.SimulateScroll(evt.WheelDelta)
+					} else {
+						mouse.SimulateAbsolute(evt.X, evt.Y)
+						if evt.Action == "down" || evt.Action == "up" {
+							btn := "left"
+							if evt.RightDown {
+								btn = "right"
+							} else if evt.MiddleDown {
+								btn = "middle"
+							}
+							mouse.SimulateButton(btn, evt.Action == "down")
 						}
-						mouse.SimulateButton(btn, evt.Action == "down")
 					}
 				}
 

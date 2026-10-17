@@ -3,18 +3,65 @@
 package keyboard
 
 /*
-#cgo LDFLAGS: -framework CoreGraphics -framework CoreFoundation
+#cgo LDFLAGS: -framework CoreGraphics -framework CoreFoundation -framework ApplicationServices
 #include <CoreGraphics/CoreGraphics.h>
+#include <ApplicationServices/ApplicationServices.h>
+
+// 本应用注入事件的标记（kCGEventSourceUserData），事件钩子据此过滤，
+// 防止“注入 → 自己捕获 → 再转发 → 再注入”的无限回环。
+#define ANYD_INJECTED_MAGIC 0x414E5944
+
+extern CGEventRef kbTapCallback(CGEventTapProxy proxy, CGEventType type, CGEventRef event, void* refcon);
+
+static CFMachPortRef kbTapPort = NULL;
+static CFRunLoopSourceRef kbTapSource = NULL;
+static CFRunLoopRef kbTapLoop = NULL;
+
+// kbTapInstall 安装会话级只听事件钩子（键盘按下/抬起/修饰键变化）。
+// 未授予「辅助功能」权限时 CGEventTapCreate 返回 NULL（返回 0 → 调用方回退轮询）。
+static int kbTapInstall(void) {
+    CGEventMask mask = CGEventMaskBit(kCGEventKeyDown)
+                     | CGEventMaskBit(kCGEventKeyUp)
+                     | CGEventMaskBit(kCGEventFlagsChanged);
+    kbTapPort = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap,
+                                 kCGEventTapOptionListenOnly, mask, kbTapCallback, NULL);
+    if (!kbTapPort) return 0;
+    kbTapSource = CFMachPortCreateRunLoopSource(NULL, kbTapPort, 0);
+    kbTapLoop = CFRunLoopGetCurrent();
+    CFRunLoopAddSource(kbTapLoop, kbTapSource, kCFRunLoopDefaultMode);
+    CGEventTapEnable(kbTapPort, true);
+    return 1;
+}
+
+static void kbTapRun(void) {
+    CFRunLoopRun();
+}
+
+static void kbTapStop(void) {
+    if (kbTapSource) {
+        CFRunLoopRemoveSource(kbTapLoop, kbTapSource, kCFRunLoopDefaultMode);
+        CFRelease(kbTapSource);
+        kbTapSource = NULL;
+    }
+    if (kbTapPort) {
+        CFRelease(kbTapPort);
+        kbTapPort = NULL;
+    }
+    if (kbTapLoop) {
+        CFRunLoopStop(kbTapLoop);
+        kbTapLoop = NULL;
+    }
+}
 
 static int is_key_down(int k) {
     return CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, (CGKeyCode)k);
 }
 
-// sim_key_flags 按指定修饰键位发送按键事件；
-// 不带修饰位时行为与裸键码一致（受目标输入法/布局解释）。
+// sim_key_flags 按指定修饰键位发送按键事件（带注入标记防回环）。
 static void sim_key_flags(int k, int down, unsigned long flags) {
     CGEventRef ev = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)k, (bool)down);
     if (!ev) return;
+    CGEventSetIntegerValueField(ev, kCGEventSourceUserData, ANYD_INJECTED_MAGIC);
     if (flags != 0) CGEventSetFlags(ev, (CGEventFlags)flags);
     CGEventPost(kCGHIDEventTap, ev);
     CFRelease(ev);
@@ -22,10 +69,11 @@ static void sim_key_flags(int k, int down, unsigned long flags) {
 
 // sim_key_full 额外携带 Unicode 字符串：字符型按键（字母/数字/标点）
 // 直接以文本形式注入，绕开输入法与键盘布局对裸键码的转换，
-// 这是跨端键盘同步（Synergy/Barrier 同类方案）的标准做法。
+// 这是跨端键盘同步（Deskflow/Synergy 同类方案）的标准做法。
 static void sim_key_full(int k, int down, unsigned long flags, const unsigned short* str, int len) {
     CGEventRef ev = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)k, (bool)down);
     if (!ev) return;
+    CGEventSetIntegerValueField(ev, kCGEventSourceUserData, ANYD_INJECTED_MAGIC);
     if (len > 0) {
         CGEventKeyboardSetUnicodeString(ev, (UniCharCount)len, str);
     }
@@ -37,9 +85,11 @@ static void sim_key_full(int k, int down, unsigned long flags, const unsigned sh
 import "C"
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf16"
 	"unsafe"
 
@@ -66,6 +116,7 @@ var darwinKeyMap = map[string]int{
 
 	// Modifiers
 	MetaLeft:     0x37, // Command
+	MetaRight:    0x36, // Command（右）
 	ShiftLeft:    0x38,
 	AltLeft:      0x3A, // Option
 	ControlLeft:  0x3B,
@@ -112,6 +163,17 @@ var darwinKeyMap = map[string]int{
 	Backquote:    0x32,
 }
 
+// codeToKeyName 平台键码 → 标准键名（事件钩子反查用，启动时生成）
+var codeToKeyName = func() map[int]string {
+	m := make(map[int]string, len(darwinKeyMap))
+	for name, code := range darwinKeyMap {
+		if _, exists := m[code]; !exists {
+			m[code] = name
+		}
+	}
+	return m
+}()
+
 // CGEventFlags 修饰键位（kCGEventFlagMask*）
 const (
 	flagAlphaShift = 0x00010000 // 大写锁定
@@ -136,13 +198,25 @@ var modifierFlagByName = map[string]uint64{
 	CapsLock:     flagAlphaShift,
 }
 
+// macCodeFlag 修饰键平台键码 → 修饰位（FlagsChanged 事件判定按下/抬起用）
+var macCodeFlag = map[int]uint64{
+	0x38: flagShift,
+	0x3C: flagShift,
+	0x3B: flagControl,
+	0x3E: flagControl,
+	0x3A: flagAlt,
+	0x3D: flagAlt,
+	0x37: flagCommand,
+	0x36: flagCommand,
+	0x39: flagAlphaShift,
+}
+
 var (
 	simMu       sync.Mutex
 	activeFlags uint64
 )
 
 // keyCharMap 字符型按键在美式布局下的字符（[无 Shift, 有 Shift]）。
-// 方向键、功能键等非字符键不在此表，走纯键码 + 修饰位路径。
 // Space/Tab/Enter 不在字符表内：它们是输入法的提交/候选键，
 // 必须走纯键码让目标输入法按原始语义处理，不能注入字符。
 var keyCharMap = map[string][2]string{
@@ -198,11 +272,106 @@ func getPressedKeys() map[string]int {
 	return pressed
 }
 
+// kbEventCh 事件钩子 → Go 消费循环的事件通道（安装钩子时创建）
+var kbEventCh chan KeyEvent
+
+// kbTimeNow 供钩子回调取时间戳（避免在 //export 里重复 import 逻辑）
+var kbTimeNow = func() int64 { return time.Now().UnixMilli() }
+
+//export kbTapCallback
+func kbTapCallback(proxy C.CGEventTapProxy, etype C.CGEventType, event C.CGEventRef, refcon unsafe.Pointer) C.CGEventRef {
+	// 本应用注入的事件：跳过，防止捕获/注入无限回环
+	if C.CGEventGetIntegerValueField(event, C.kCGEventSourceUserData) == C.int64_t(0x414E5944) {
+		return event
+	}
+	if kbEventCh == nil {
+		return event
+	}
+
+	var action string
+	switch etype {
+	case C.kCGEventKeyDown:
+		action = "down"
+	case C.kCGEventKeyUp:
+		action = "up"
+	case C.kCGEventFlagsChanged:
+		// 修饰键状态变化：按当前修饰位判定按下/抬起
+		code := int(C.CGEventGetIntegerValueField(event, C.kCGKeyboardEventKeycode))
+		f, known := macCodeFlag[code]
+		if !known {
+			return event
+		}
+		if C.CGEventGetFlags(event)&C.CGEventFlags(f) != 0 {
+			action = "down"
+		} else {
+			action = "up"
+		}
+		_ = code
+	default:
+		return event
+	}
+
+	code := int(C.CGEventGetIntegerValueField(event, C.kCGKeyboardEventKeycode))
+	keyName, ok := codeToKeyName[code]
+	if !ok {
+		if util.DebugKeys() {
+			fmt.Printf("[键盘捕获] 收到未映射键码 %#x，已忽略\n", code)
+		}
+		return event
+	}
+
+	// 非阻塞投递（事件钩子回调必须快速返回，否则系统会移除钩子）
+	select {
+	case kbEventCh <- KeyEvent{
+		Type:      "keyboard",
+		Action:    action,
+		Key:       keyName,
+		Name:      FriendlyKeyName(keyName),
+		KeyCode:   code,
+		Timestamp: kbTimeNow(),
+	}:
+	default:
+	}
+	return event
+}
+
+// runEventCapture 以 CGEventTap 事件驱动捕获键盘（参照 Deskflow 的事件模型）。
+// 返回 false 表示未授权或安装失败，调用方回退轮询差分模式。
+func runEventCapture(ctx context.Context, emit func(KeyEvent)) bool {
+	if C.kbTapInstall() == 0 {
+		fmt.Println("[键盘捕获] CGEventTap 安装失败（未授予辅助功能权限），回退轮询模式")
+		return false
+	}
+	events := make(chan KeyEvent, 256)
+	kbEventCh = events
+
+	go func() {
+		// 专用线程运行钩子 runloop（cgo 调用天然绑定 OS 线程）
+		C.kbTapRun()
+		C.kbTapStop()
+	}()
+
+	go func() {
+		<-ctx.Done()
+		C.kbTapStop()
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			C.kbTapStop()
+			return true
+		case evt := <-events:
+			emit(evt)
+		}
+	}
+}
+
 // SimulateKey 在本机模拟对端按键：
 //   - 修饰键（Shift/Ctrl/Option/Cmd/CapsLock）按下与抬起实时更新修饰位；
 //   - 普通键携带当前修饰位发送；字符型键额外携带 Unicode 字符，
 //     解决中文输入法/非美式布局下“字母数字键无反应”的问题；
-//   - 未映射的按键打印留痕，便于定位“某键无反应”类反馈。
+//   - 注入事件带 ANYD 标记，本机事件钩子会过滤，防止捕获回环。
 //
 // 注意：macOS 需要在「系统设置 → 隐私与安全性 → 辅助功能」中授权本应用，
 // 否则 CGEventPost 会被系统静默丢弃（所有按键都无反应）。

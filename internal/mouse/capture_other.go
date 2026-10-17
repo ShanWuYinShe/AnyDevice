@@ -2,15 +2,9 @@
 
 package mouse
 
-func getScreenSize() (int, int) {
-	return 1920, 1080
-}
+import "context"
 
-func getCursor() (int, int, bool, bool, bool) {
-	return 960, 540, false, false, false
+// runEventCapture 平台无事件钩子实现，回退轮询模式。
+func runEventCapture(ctx context.Context, emit func(MouseEvent)) bool {
+	return false
 }
-
-func SimulateMove(dx, dy int)               {}
-func SimulateAbsolute(normX, normY float64) {}
-func SimulateButton(btn string, down bool)  {}
-func SimulateScroll(dy int)                 {}
