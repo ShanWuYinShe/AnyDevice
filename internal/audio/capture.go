@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -131,12 +132,11 @@ func (e *Engine) Start() error {
 		return nil
 	}
 
-	// Windows 系统声音：优先使用自研 WASAPI Loopback 捕获。
-	// miniaudio 的 loopback 有两处已实证缺陷：SILENT 标志未处理（静音段
-	// 输出未定义数据=电流声），以及固定回调周期与设备周期不匹配导致
-	// 20ms 声音/20ms 静音交替（嘟嘟声）。自研实现事件驱动读取音频包、
-	// 严格处理 SILENT 并按设备原生格式转换。
-	if runtime.GOOS == "windows" && e.kind == KindSystem {
+	// Windows 系统声音捕获路径：默认使用 miniaudio loopback（用户实测
+	// 能正确捕获游戏音频），自研 WASAPI 仅在显式设置
+	// ANY_DEVICE_NATIVE_WASAPI=1 时启用（其捕获内容经抓包分析为周期性
+	// 方波噪声，捕不到真实音频，原因待查）。
+	if runtime.GOOS == "windows" && e.kind == KindSystem && os.Getenv("ANY_DEVICE_NATIVE_WASAPI") != "" {
 		captureCtx, cancel := context.WithCancel(context.Background())
 		tag := TagSystemAudio
 		if err := startNativeSystemCapture(captureCtx, func(pcm []byte) { e.emit(tag, pcm) }); err == nil {
