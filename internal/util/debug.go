@@ -15,3 +15,10 @@ func DebugKeys() bool {
 func DebugAudio() bool {
 	return os.Getenv("ANY_DEVICE_AUDIO_DEBUG") != ""
 }
+
+// EnableTestTone 返回是否启用占位测试音（环境变量 ANY_DEVICE_TEST_TONE=1）。
+// 默认关闭：无虚拟声卡时系统声捕获不可用就直接静默并提示，
+// 不生成任何占位声音（避免干扰用户）。仅在调试链路时手动开启。
+func EnableTestTone() bool {
+	return os.Getenv("ANY_DEVICE_TEST_TONE") != ""
+}

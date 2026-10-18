@@ -115,7 +115,7 @@ func (e *Engine) Start() error {
 	}
 
 	if e.mode == ModeTestTone {
-		e.devName = "系统扬声器 (测试音输出)"
+		e.devName = "系统扬声器 (未安装虚拟声卡)"
 		e.startTestTone()
 		e.isRunning = true
 		return nil
@@ -145,7 +145,7 @@ func (e *Engine) Start() error {
 	if err != nil {
 		util.Logf("[Audio] Malgo context init failed for %s: %v\n", e.kind, err)
 		if e.kind == KindSystem {
-			e.devName = "系统扬声器 (驱动回退测试音)"
+			e.devName = "系统扬声器 (音频驱动不可用)"
 			e.startTestTone()
 			e.isRunning = true
 			return nil
@@ -223,7 +223,7 @@ func (e *Engine) Start() error {
 			if e.devName == "" {
 				// No virtual audio driver installed on macOS -> run test tone for system audio
 				// Do NOT capture user microphone!
-				e.devName = "系统扬声器 (测试音 / 安装BlackHole可捕获原声)"
+				e.devName = "系统扬声器 (未安装虚拟声卡，无法捕获原声)"
 				e.startTestTone()
 				e.isRunning = true
 				return nil
@@ -281,7 +281,7 @@ func (e *Engine) Start() error {
 	if err != nil {
 		util.Logf("[Audio] Warning: Failed to init audio device for %s (%v).\n", e.kind, err)
 		if e.kind == KindSystem {
-			e.devName = "系统扬声器 (测试音)"
+			e.devName = "系统扬声器 (未安装虚拟声卡)"
 			e.startTestTone()
 			e.isRunning = true
 			return nil
@@ -294,7 +294,7 @@ func (e *Engine) Start() error {
 		e.device.Uninit()
 		e.device = nil
 		if e.kind == KindSystem {
-			e.devName = "系统扬声器 (测试音)"
+			e.devName = "系统扬声器 (未安装虚拟声卡)"
 			e.startTestTone()
 			e.isRunning = true
 			return nil
@@ -398,8 +398,15 @@ func (e *Engine) IsTestTone() bool {
 	return e.isTestTone
 }
 
-// startTestTone generates smooth 440Hz + 880Hz audio chunks (20ms each, 960 frames) at low volume
+// startTestTone 启动占位测试音（仅调试用，默认关闭）。
+// 没有虚拟声卡时真实系统声无法捕获，此时静默并提示即可——
+// 生成可听见的占位提示音只会干扰用户（映射真实音频时完全不需要）。
 func (e *Engine) startTestTone() {
+	if !util.EnableTestTone() {
+		util.Logf("[音频] 系统声捕获不可用（未安装虚拟声卡/无默认输出设备）。" +
+			"如需链路调试占位音，设置 ANY_DEVICE_TEST_TONE=1")
+		return
+	}
 	e.mu.Lock()
 	e.isTestTone = true
 	e.mu.Unlock()
