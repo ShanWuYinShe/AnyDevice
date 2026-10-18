@@ -100,7 +100,15 @@ func main() {
 	defer keyboardEngine.Stop()
 
 	// 3. Initialize Audio Engines (Independent System Output & Microphone Input)
-	systemAudioEngine = audio.NewEngine(audio.KindSystem, audio.CaptureMode(*mode), *deviceIdx, hub.BroadcastAudio)
+	// 系统声回调：占位测试音只广播给远程订阅端——本机 UI 播放测试音没有意义
+	// （会听到系统提示音般的周期性"滴滴"），远程映射本机系统声时仍需测试音确认链路。
+	systemAudioEngine = audio.NewEngine(audio.KindSystem, audio.CaptureMode(*mode), *deviceIdx, func(data []byte) {
+		if systemAudioEngine != nil && systemAudioEngine.IsTestTone() {
+			hub.BroadcastAudioRemoteOnly(data)
+			return
+		}
+		hub.BroadcastAudio(data)
+	})
 	if err := systemAudioEngine.Start(); err != nil {
 		util.Logf("[Audio] 系统声音捕获初始化警告: %v\n", err)
 	}

@@ -63,6 +63,7 @@ type Engine struct {
 
 	mu          sync.Mutex
 	isRunning   bool
+	isTestTone  bool // 当前来源为占位测试音（无真实虚拟声卡时的回退）
 	devName     string
 	subscribers int64 // 音频订阅数（atomic）：无订阅者时引擎静默，避免空转生成与广播 PCM
 
@@ -389,8 +390,19 @@ func (e *Engine) emit(tag []byte, pcm []byte) {
 	e.onChunk(buf)
 }
 
+// IsTestTone 报告当前系统声来源是否为占位测试音。
+// 测试音仅用于远程接收端确认链路，不应广播给本机 UI 播放。
+func (e *Engine) IsTestTone() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.isTestTone
+}
+
 // startTestTone generates smooth 440Hz + 880Hz audio chunks (20ms each, 960 frames) at low volume
 func (e *Engine) startTestTone() {
+	e.mu.Lock()
+	e.isTestTone = true
+	e.mu.Unlock()
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancelGen = cancel
 

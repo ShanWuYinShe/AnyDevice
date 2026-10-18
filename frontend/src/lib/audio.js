@@ -57,3 +57,20 @@ export function playPCM(arrayBuffer, stream) {
   source.start(next);
   nextAudioTimeByStream[key] = next + audioBuffer.duration;
 }
+
+// skipPCM 为静音段推进播放时间轴但不创建 BufferSource。
+// 静音段若直接丢弃，时间轴会漂移并触发调度重置（周期性爆音）；
+// 推进时间轴可保持音频段之间的真实间隔，且不产生任何声音。
+export function skipPCM(arrayBuffer, stream) {
+  if (!audioCtx) return;
+  const key = stream === 'mic' ? 'mic' : 'sys';
+  const frameCount = new Int16Array(arrayBuffer).length / 2;
+  if (frameCount <= 0) return;
+  const duration = frameCount / 48000;
+  const now = audioCtx.currentTime;
+  let next = nextAudioTimeByStream[key];
+  if (next < now - 0.25 || next > now + 0.35) {
+    next = now + 0.05;
+  }
+  nextAudioTimeByStream[key] = next + duration;
+}

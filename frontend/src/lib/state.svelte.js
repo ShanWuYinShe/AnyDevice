@@ -1,6 +1,6 @@
 // 全局响应式状态（Svelte 5 runes 模块）：数据轮询、WebSocket 流、订阅同步
 import { api } from './api.js';
-import { ensureAudioContext, playPCM, audioContextState } from './audio.js';
+import { ensureAudioContext, playPCM, skipPCM, audioContextState } from './audio.js';
 
 // —— 可变状态（对象属性形式，跨模块保持响应式） ——
 export const selfState = $state({ data: null }); // /api/self：本机信息
@@ -190,15 +190,17 @@ export function connectWebSocket() {
         if (tag === 'AUDS') {
           if (playState().system) {
             const pcm = event.data.slice(4);
-            // 丢弃全零静音段（采集端的 SILENT 补丁段）：静音 chunk 若照常插入
-            // 播放队列，会形成 20ms 声音/20ms 静音的交替，听感为"嘟嘟"断续
-            if (!isAllZeroPCM(pcm)) playPCM(pcm, 'sys');
+            // 静音段推进时间轴但不发声：直接丢弃会造成时间轴漂移与调度重置
+            // 爆音，播放静音段又浪费资源——推进时间轴是最优处理
+            if (isAllZeroPCM(pcm)) skipPCM(pcm, 'sys');
+            else playPCM(pcm, 'sys');
           }
           return;
         } else if (tag === 'AUDM') {
           if (playState().mic) {
             const pcm = event.data.slice(4);
-            if (!isAllZeroPCM(pcm)) playPCM(pcm, 'mic');
+            if (isAllZeroPCM(pcm)) skipPCM(pcm, 'mic');
+            else playPCM(pcm, 'mic');
           }
           return;
         }

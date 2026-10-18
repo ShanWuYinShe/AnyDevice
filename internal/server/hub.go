@@ -48,6 +48,7 @@ type Client struct {
 	mouseEnabled    bool
 	keyboardEnabled bool
 	allowControl    bool
+	isLocal         bool // 本机回环 UI 客户端（127.0.0.1 / 本机网卡地址发起）
 	mu              sync.RWMutex
 }
 
@@ -82,7 +83,7 @@ func ParseDeviceType(ua string) string {
 // Hub maintains the set of active clients and broadcasts messages to them.
 type Hub struct {
 	clients           map[*Client]bool
-	audioBroadcast    chan []byte
+	audioBroadcast    chan audioPacket
 	mouseBroadcast    chan []byte
 	keyboardBroadcast chan []byte
 	register          chan *Client
@@ -107,7 +108,7 @@ func (h *Hub) SetNodeIdentityHandler(fn func(remoteIP, nodeID, nodeName string))
 func NewHub(onSubsChanged func(audioSubs, mouseSubs, keyboardSubs int)) *Hub {
 	return &Hub{
 		clients:           make(map[*Client]bool),
-		audioBroadcast:    make(chan []byte, 128),
+		audioBroadcast:    make(chan audioPacket, 128),
 		mouseBroadcast:    make(chan []byte, 64),
 		keyboardBroadcast: make(chan []byte, 64),
 		register:          make(chan *Client),
@@ -140,18 +141,25 @@ func (h *Hub) Run() {
 		case <-h.updateSubs:
 			h.notifySubscribers()
 
-		case audioChunk := <-h.audioBroadcast:
-			msg := OutMessage{isBinary: true, data: audioChunk}
+		case pkt := <-h.audioBroadcast:
+			msg := OutMessage{isBinary: true, data: pkt.chunk}
 			h.mu.RLock()
 			for client := range h.clients {
 				client.mu.RLock()
 				enabled := client.audioEnabled
+				local := client.isLocal
 				client.mu.RUnlock()
 
+				// 占位测试音只发给远程订阅端：本机 UI 播放测试音没有意义
+				// （会听到与真实音频无关的周期性提示音），远程端映射本机
+				// 系统声时仍可收到测试音以确认链路。
+				if pkt.remoteOnly && local {
+					continue
+				}
 				if enabled {
 					select {
 					case client.send <- msg:
-						atomic.AddUint64(&h.totalBytesSent, uint64(len(audioChunk)))
+						atomic.AddUint64(&h.totalBytesSent, uint64(len(pkt.chunk)))
 					default:
 						// Drop chunk on laggy client to prevent audio latency accumulation
 					}
@@ -243,10 +251,25 @@ func (h *Hub) SubscriberCounts() (audio, mouse, keyboard int) {
 	return
 }
 
+// audioPacket 一次音频广播：数据 + 是否只发远程客户端。
+type audioPacket struct {
+	chunk      []byte
+	remoteOnly bool
+}
+
 // BroadcastAudio pushes an audio PCM chunk to subscribed clients.
 func (h *Hub) BroadcastAudio(chunk []byte) {
 	select {
-	case h.audioBroadcast <- chunk:
+	case h.audioBroadcast <- audioPacket{chunk: chunk}:
+	default:
+	}
+}
+
+// BroadcastAudioRemoteOnly 广播 PCM 但跳过本机 UI 客户端。
+// 用于占位测试音等「仅对远程接收端有意义」的音频流。
+func (h *Hub) BroadcastAudioRemoteOnly(chunk []byte) {
+	select {
+	case h.audioBroadcast <- audioPacket{chunk: chunk, remoteOnly: true}:
 	default:
 	}
 }
@@ -304,6 +327,7 @@ func NewClient(hub *Hub, conn *websocket.Conn, remoteAddr, userAgent string, loc
 		userAgent:       userAgent,
 		deviceType:      ParseDeviceType(userAgent),
 		joinedAt:        time.Now(),
+		isLocal:         local,
 		audioEnabled:    audioEnabled,
 		mouseEnabled:    mouseEnabled,
 		keyboardEnabled: keyboardEnabled,
