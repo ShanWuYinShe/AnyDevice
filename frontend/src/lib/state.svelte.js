@@ -184,6 +184,8 @@ export function connectWebSocket() {
         audioRate.mic = kb('AUDM');
         audioRateBytes = { AUDS: 0, AUDM: 0 };
         audioRateLast = nowMs;
+        // 同步刷新播放器状态（缓冲水位/欠载次数实时可见）
+        audioPlayState.text = 'ctx=' + audioContextState();
       }
       if (event.data.byteLength > 4) {
         const tag = String.fromCharCode(...new Uint8Array(event.data, 0, 4));

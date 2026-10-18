@@ -1,76 +1,220 @@
-// Web Audio 播放器：接收服务端 PCM（16bit 交错立体声 48kHz）并调度播放。
-// 调度策略（保守）：仅当播放位置与到达速率严重偏离（断流/积压）时重置对齐；
-// 不做 playbackRate 微调——微调会与目标系统的音频时钟交互产生不确定性。
+// Web Audio 播放器（AudioWorklet 环形缓冲版）。
 //
-// 重要：系统声（AUDS）与麦克风（AUDM）各自维护独立播放时间轴——
-// 共用一条时间轴会让两个流在播放时刻度上互相推挤（交替插入/重叠），
-// 同时映射两个音频源时产生杂音。
-let audioCtx = null;
-let gainNode = null;
-const nextAudioTimeByStream = { sys: 0, mic: 0 };
+// 为什么改：此前每个 PCM chunk 创建一个 BufferSource（每秒 100 个），
+// 网络突发/抖动时调度会重置并造成多个 source 重叠播放（音量叠加=爆音"炸"）
+// 与跳变（断续）。AudioWorklet + 环形缓冲是流媒体/VoIP 的标准做法：
+//   - 主线程把 PCM 连续写入 worklet 的环形缓冲区；
+//   - worklet 音频线程按采样时钟连续读取输出，天然无缝；
+//   - 保留约 100ms 抖动缓冲吸收网络抖动；
+//   - 缓冲溢出时丢弃最旧数据（延迟不累积），欠载时输出静音（不爆音）。
+//
+// 系统声（sys）与麦克风（mic）各持有一个独立的 ring 实例，互不干扰。
 
-// 诊断快照：供 UI 显示播放链路状态（收到速率由 state 模块统计）
+// AudioWorklet 处理器源码（内联加载，无需额外文件）
+const WORKLET_SOURCE = `
+class PCMRingPlayer extends AudioWorkletProcessor {
+  constructor(options) {
+    super();
+    const cap = (options && options.processorOptions && options.processorOptions.capacityFrames) || 96000;
+    this.cap = cap;
+    this.ringL = new Float32Array(cap);
+    this.ringR = new Float32Array(cap);
+    this.writeIdx = 0;
+    this.readIdx = 0;
+    this.filled = 0;
+    this.underflows = 0;
+    this.overflows = 0;
+    this.reportTimer = 0;
+    // 预缓冲：积攒到 100ms 才开始出声（吸收网络抖动，避免开头碎裂）
+    this.prebufferFrames = 4800;
+    this.priming = true;
+    this.port.onmessage = (e) => {
+      const msg = e.data;
+      if (!msg || msg.type !== 'pcm') return;
+      const left = msg.left, right = msg.right;
+      const n = left.length;
+      // 溢出处理：丢弃最旧数据，保持延迟恒定
+      if (this.filled + n > this.cap) {
+        const drop = this.filled + n - this.cap;
+        this.readIdx = (this.readIdx + drop) % this.cap;
+        this.filled -= drop;
+        this.overflows++;
+      }
+      for (let i = 0; i < n; i++) {
+        this.ringL[this.writeIdx] = left[i];
+        this.ringR[this.writeIdx] = right[i];
+        this.writeIdx = (this.writeIdx + 1) % this.cap;
+      }
+      this.filled += n;
+    };
+  }
+  process(inputs, outputs) {
+    const out = outputs[0];
+    const ch0 = out[0], ch1 = out[1];
+    const n = ch0.length;
+    // 预缓冲策略：缓冲不足时静音等待；发生欠载后重新积攒，避免碎音
+    if (this.priming) {
+      if (this.filled >= this.prebufferFrames) {
+        this.priming = false;
+      } else {
+        for (let i = 0; i < n; i++) { ch0[i] = 0; ch1[i] = 0; }
+        this.reportTimer++;
+        if (this.reportTimer >= 187) {
+          this.reportTimer = 0;
+          this.port.postMessage({ type: 'stats', filled: this.filled, cap: this.cap, underflows: this.underflows, overflows: this.overflows });
+        }
+        return true;
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      if (this.filled > 0) {
+        ch0[i] = this.ringL[this.readIdx];
+        ch1[i] = this.ringR[this.readIdx];
+        this.readIdx = (this.readIdx + 1) % this.cap;
+        this.filled--;
+      } else {
+        ch0[i] = 0;
+        ch1[i] = 0;
+      }
+    }
+    if (this.filled === 0) {
+      this.underflows++;
+      this.priming = true; // 断流后重新预缓冲，恢复时无碎音
+    }
+    // 每约 0.5 秒上报一次水位（128 帧/process → 约 187 次）
+    this.reportTimer++;
+    if (this.reportTimer >= 187) {
+      this.reportTimer = 0;
+      this.port.postMessage({ type: 'stats', filled: this.filled, cap: this.cap, underflows: this.underflows, overflows: this.overflows });
+    }
+    return true;
+  }
+}
+registerProcessor('pcm-ring-player', PCMRingPlayer);
+`;
+
+let audioCtx = null;
+let workletReady = false;
+const nodes = { sys: null, mic: null };
+const pending = { sys: [], mic: [] }; // worklet 就绪前的缓存
+const streamStats = {
+  sys: { filled: 0, cap: 0, underflows: 0, overflows: 0 },
+  mic: { filled: 0, cap: 0, underflows: 0, overflows: 0 },
+};
+let workletError = '';
+
+// 诊断快照：播放链路状态（UI 卡片显示）
 export function audioContextState() {
   if (!audioCtx) return '未创建（未点击过播放）';
-  return audioCtx.state + ' @ ' + audioCtx.sampleRate + 'Hz';
+  let text = audioCtx.state + ' @ ' + audioCtx.sampleRate + 'Hz';
+  if (workletError) return text + ' | AudioWorklet 加载失败: ' + workletError;
+  const s = streamStats.sys;
+  if (s.cap > 0) {
+    const bufferMs = Math.round((s.filled / 48000) * 1000);
+    text += ' | 缓冲 ' + bufferMs + 'ms | 欠载 ' + s.underflows + ' 次';
+  }
+  return text;
+}
+
+// AudioWorklet 不可用时的错误信息（前端自检上报用）
+export function audioWorkletError() {
+  return workletError;
 }
 
 export function ensureAudioContext() {
-  if (!audioCtx) {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    audioCtx = new Ctx({ sampleRate: 48000 });
-    gainNode = audioCtx.createGain();
-    gainNode.gain.value = 1.0;
-    gainNode.connect(audioCtx.destination);
+  if (audioCtx) {
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+    return;
   }
-  if (audioCtx.state === 'suspended') {
-    audioCtx.resume();
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  audioCtx = new Ctx({ sampleRate: 48000 });
+  if (!audioCtx.audioWorklet) {
+    workletError = '浏览器不支持 AudioWorklet';
+    return;
+  }
+  const blob = new Blob([WORKLET_SOURCE], { type: 'application/javascript' });
+  const url = URL.createObjectURL(blob);
+  audioCtx.audioWorklet
+    .addModule(url)
+    .then(() => {
+      URL.revokeObjectURL(url);
+      for (const key of ['sys', 'mic']) {
+        const node = new AudioWorkletNode(audioCtx, 'pcm-ring-player', {
+          numberOfOutputs: 1,
+          outputChannelCount: [2],
+          processorOptions: { capacityFrames: 96000 },
+        });
+        node.port.onmessage = (e) => {
+          const m = e.data;
+          if (m && m.type === 'stats') {
+            streamStats[key].filled = m.filled;
+            streamStats[key].cap = m.cap;
+            streamStats[key].underflows = m.underflows;
+            streamStats[key].overflows = m.overflows;
+          }
+        };
+        node.connect(audioCtx.destination);
+        nodes[key] = node;
+        for (const msg of pending[key]) node.port.postMessage(msg);
+        pending[key] = [];
+      }
+      workletReady = true;
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+    })
+    .catch((e) => {
+      workletError = String((e && e.message) || e);
+    });
+}
+
+// pushPCMFloats 把立体声 float 帧写入对应 ring
+function pushPCMFloats(key, left, right) {
+  const msg = { type: 'pcm', left, right };
+  const node = nodes[key];
+  if (node && workletReady) {
+    node.port.postMessage(msg);
+  } else if (pending[key].length < 200) {
+    pending[key].push(msg);
   }
 }
 
-// playPCM 播放一个 PCM chunk。stream: 'sys' | 'mic'（独立时间轴）
+// playPCM 播放一个 PCM chunk（16bit 交错立体声 48kHz）。
+// stream: 'sys' | 'mic'
 export function playPCM(arrayBuffer, stream) {
   if (!audioCtx) return;
   const key = stream === 'mic' ? 'mic' : 'sys';
   const int16 = new Int16Array(arrayBuffer);
-  const frameCount = int16.length / 2;
-  if (frameCount <= 0) return;
-
-  const audioBuffer = audioCtx.createBuffer(2, frameCount, 48000);
-  const left = audioBuffer.getChannelData(0);
-  const right = audioBuffer.getChannelData(1);
-  for (let i = 0; i < frameCount; i++) {
+  const frames = int16.length / 2;
+  if (frames <= 0) return;
+  const left = new Float32Array(frames);
+  const right = new Float32Array(frames);
+  for (let i = 0; i < frames; i++) {
     left[i] = int16[i * 2] / 32768.0;
     right[i] = int16[i * 2 + 1] / 32768.0;
   }
-
-  const now = audioCtx.currentTime;
-  let next = nextAudioTimeByStream[key];
-  // 保守调度：仅当严重落后（断流积压）或异常领先时重置对齐
-  if (next < now - 0.25 || next > now + 0.35) {
-    next = now + 0.05;
-  }
-
-  const source = audioCtx.createBufferSource();
-  source.buffer = audioBuffer;
-  source.connect(gainNode);
-  source.start(next);
-  nextAudioTimeByStream[key] = next + audioBuffer.duration;
+  pushPCMFloats(key, left, right);
 }
 
-// skipPCM 为静音段推进播放时间轴但不创建 BufferSource。
-// 静音段若直接丢弃，时间轴会漂移并触发调度重置（周期性爆音）；
-// 推进时间轴可保持音频段之间的真实间隔，且不产生任何声音。
+// skipPCM 为静音段写入静音帧：保持环形缓冲的时间轴连续。
+// （不写入会让后续音频紧接，导致时间轴缩短、播放速度异常）
 export function skipPCM(arrayBuffer, stream) {
   if (!audioCtx) return;
   const key = stream === 'mic' ? 'mic' : 'sys';
-  const frameCount = new Int16Array(arrayBuffer).length / 2;
-  if (frameCount <= 0) return;
-  const duration = frameCount / 48000;
-  const now = audioCtx.currentTime;
-  let next = nextAudioTimeByStream[key];
-  if (next < now - 0.25 || next > now + 0.35) {
-    next = now + 0.05;
-  }
-  nextAudioTimeByStream[key] = next + duration;
+  const frames = new Int16Array(arrayBuffer).length / 2;
+  if (frames <= 0) return;
+  pushPCMFloats(key, new Float32Array(frames), new Float32Array(frames));
 }
+
+// 调试快照（排查播放链路用，控制台/Debug 工具可查）
+window.__audioDebug = () => ({
+  hasCtx: !!audioCtx,
+  ctxState: audioCtx ? audioCtx.state : null,
+  workletReady,
+  workletError,
+  nodes: { sys: !!nodes.sys, mic: !!nodes.mic },
+  pending: { sys: pending.sys.length, mic: pending.mic.length },
+  stats: JSON.parse(JSON.stringify(streamStats)),
+});
