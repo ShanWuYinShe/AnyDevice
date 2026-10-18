@@ -38,8 +38,6 @@ type Server struct {
 	keyboardEngine    *keyboard.Engine
 	discovery         *discovery.Service
 	peerMgr           *PeerManager
-	outboundMgr       *OutboundManager
-	roleMode          string // "provider", "receiver", "bidirectional"
 	mu                sync.RWMutex
 }
 
@@ -61,7 +59,7 @@ func NewServer(port int, initialIP string, hub *Hub, systemAudioEngine *audio.En
 		Control:     true,
 		AudioDevice: sysDev,
 		MicDevice:   micDev,
-		AudioFormat: "f32le-48000-stereo",
+		AudioFormat: audio.ProtocolFormatOpus,
 		Audio:       systemAudioEngine != nil,
 	})
 	disc.Start()
@@ -92,8 +90,6 @@ func NewServer(port int, initialIP string, hub *Hub, systemAudioEngine *audio.En
 		keyboardEngine:    keyboardEngine,
 		discovery:         disc,
 		peerMgr:           peerMgr,
-		outboundMgr:       NewOutboundManager(hub),
-		roleMode:          "bidirectional",
 	}
 
 	// 入站设备在线校准：以真实 WebSocket 连接集合为准，
@@ -131,20 +127,6 @@ func (s *Server) reconcileInbound() {
 		}
 	}
 	s.discovery.ReconcileInbound(live)
-}
-
-func (s *Server) SetRoleMode(mode string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if mode == "provider" || mode == "receiver" || mode == "bidirectional" {
-		s.roleMode = mode
-	}
-}
-
-func (s *Server) GetRoleMode() string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.roleMode
 }
 
 func (s *Server) SetCurrentIP(ip string) {
@@ -341,34 +323,6 @@ func (s *Server) SetupRoutes() http.Handler {
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 	})
 
-	mux.HandleFunc("/api/peers/control", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		var body struct {
-			PeerID string `json:"peer_id"`
-			Action string `json:"action"`
-			Type   string `json:"type"`
-			Dx     int    `json:"dx"`
-			Dy     int    `json:"dy"`
-			Btn    string `json:"btn"`
-			Down   bool   `json:"down"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if body.PeerID == "" {
-			http.Error(w, "缺少 peer_id", http.StatusBadRequest)
-			return
-		}
-		body.Action = "remote_input"
-		err := s.peerMgr.SendRemoteControl(body.PeerID, body)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
-	})
-
 	// Self node status & capabilities sharing configuration
 	// 前端自检上报：页面内 JS 把 WebSocket 连接状态/错误 POST 回来，
 	// 写入日志（桌面窗口无控制台/DevTools 时排查前端连接问题的唯一通道）
@@ -437,7 +391,7 @@ func (s *Server) SetupRoutes() http.Handler {
 			if s.micAudioEngine != nil {
 				micDev = s.micAudioEngine.DeviceName()
 			}
-			s.discovery.UpdateProvides(sysAudioVal, micAudioVal, mouseVal, keyboardVal, ctrlVal, sysDev, micDev)
+			s.discovery.UpdateProvides(sysAudioVal, micAudioVal, mouseVal, keyboardVal, ctrlVal, sysDev, micDev, audioFormatOf())
 			json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 			return
 		}
@@ -454,7 +408,7 @@ func (s *Server) SetupRoutes() http.Handler {
 			"id":                  s.discovery.ID(),
 			"name":                s.discovery.Name(),
 			"os":                  runtime.GOOS,
-			"audio_format":        audioFormatOf(s.systemAudioEngine),
+			"audio_format":        audioFormatOf(),
 			"current_ip":          s.GetCurrentIP(),
 			"port":                s.port,
 			"primary_url":         s.GetCurrentURL(),
@@ -487,9 +441,7 @@ func (s *Server) SetupRoutes() http.Handler {
 			"keyboard_subs":       keyboardSubs,
 			"clients":             s.hub.ClientCount(),
 			"inbound_count":       s.hub.ClientCount(),
-			"outbound_count":      len(s.outboundMgr.ListPeers()),
 			"peers_count":         len(s.peerMgr.ListPeers("")),
-			"role_mode":           s.GetRoleMode(),
 			"bytes_sent":          s.hub.TotalBytesSent(),
 			"sample_rate":         audio.SampleRate,
 			"channels":            audio.Channels,
@@ -502,166 +454,6 @@ func (s *Server) SetupRoutes() http.Handler {
 			"keyboard_active":     true,
 		}
 		json.NewEncoder(w).Encode(status)
-	})
-
-	// Inbound Clients APIs (谁连接上了我)
-	mux.HandleFunc("/api/inbound", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		clients := s.hub.GetInboundClients()
-		resp := map[string]interface{}{
-			"clients": clients,
-			"total":   len(clients),
-		}
-		json.NewEncoder(w).Encode(resp)
-	})
-
-	mux.HandleFunc("/api/inbound/update", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		var body struct {
-			ID           string `json:"id"`
-			Audio        *bool  `json:"audio"`
-			Mouse        *bool  `json:"mouse"`
-			Keyboard     *bool  `json:"keyboard"`
-			AllowControl *bool  `json:"allow_control"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		ok := s.hub.UpdateInboundClient(body.ID, body.Audio, body.Mouse, body.Keyboard, body.AllowControl)
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": ok})
-	})
-
-	mux.HandleFunc("/api/inbound/disconnect", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		id := r.URL.Query().Get("id")
-		if id == "" {
-			var body struct {
-				ID string `json:"id"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			id = body.ID
-		}
-		ok := s.hub.DisconnectInboundClient(id)
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": ok})
-	})
-
-	// Outbound Peers APIs (我连接上了谁)
-	mux.HandleFunc("/api/outbound", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		peers := s.outboundMgr.ListPeers()
-		resp := map[string]interface{}{
-			"peers": peers,
-			"total": len(peers),
-		}
-		json.NewEncoder(w).Encode(resp)
-	})
-
-	mux.HandleFunc("/api/outbound/connect", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		var body struct {
-			Target       string `json:"target"`
-			ReceiveAudio bool   `json:"receive_audio"`
-			ReceiveMouse bool   `json:"receive_mouse"`
-			SendMouse    bool   `json:"send_mouse"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		peer, err := s.outboundMgr.Connect(body.Target, body.ReceiveAudio, body.ReceiveMouse, body.SendMouse)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "peer": peer})
-	})
-
-	mux.HandleFunc("/api/outbound/update", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		var body struct {
-			ID           string `json:"id"`
-			ReceiveAudio *bool  `json:"receive_audio"`
-			ReceiveMouse *bool  `json:"receive_mouse"`
-			SendMouse    *bool  `json:"send_mouse"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		ok := s.outboundMgr.Update(body.ID, body.ReceiveAudio, body.ReceiveMouse, body.SendMouse)
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": ok})
-	})
-
-	mux.HandleFunc("/api/outbound/disconnect", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		id := r.URL.Query().Get("id")
-		if id == "" {
-			var body struct {
-				ID string `json:"id"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			id = body.ID
-		}
-		ok := s.outboundMgr.Disconnect(id)
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": ok})
-	})
-
-	mux.HandleFunc("/api/inbound/batch", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		var body struct {
-			Audio        *bool `json:"audio"`
-			Mouse        *bool `json:"mouse"`
-			Keyboard     *bool `json:"keyboard"`
-			AllowControl *bool `json:"allow_control"`
-			Disconnect   bool  `json:"disconnect"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if body.Disconnect {
-			s.hub.DisconnectAllInboundClients()
-		} else {
-			s.hub.UpdateAllInboundClients(body.Audio, body.Mouse, body.Keyboard, body.AllowControl)
-		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
-	})
-
-	mux.HandleFunc("/api/outbound/batch", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		var body struct {
-			ReceiveAudio *bool `json:"receive_audio"`
-			ReceiveMouse *bool `json:"receive_mouse"`
-			SendMouse    *bool `json:"send_mouse"`
-			Disconnect   bool  `json:"disconnect"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		if body.Disconnect {
-			s.outboundMgr.DisconnectAll()
-		} else {
-			s.outboundMgr.UpdateAll(body.ReceiveAudio, body.ReceiveMouse, body.SendMouse)
-		}
-		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
-	})
-
-	// Mapping Role Mode API (接收别人的虚拟设备 / 把自己的设备映射成别人的虚拟设备)
-	mux.HandleFunc("/api/mapping/mode", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if r.Method == http.MethodPost {
-			var body struct {
-				Mode string `json:"mode"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err == nil && body.Mode != "" {
-				s.SetRoleMode(body.Mode)
-			}
-		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"mode": s.GetRoleMode(),
-		})
 	})
 
 	// Device List API
@@ -700,10 +492,8 @@ func (s *Server) Start() error {
 	return http.ListenAndServe(addr, s.SetupRoutes())
 }
 
-// audioFormatOf nil 安全读取系统声引擎的音频协议描述。
-func audioFormatOf(e *audio.Engine) string {
-	if e == nil {
-		return "f32le-48000-stereo"
-	}
-	return e.AudioFormat()
+// audioFormatOf 返回本机音频链路的协议标识（唯一事实来源在 internal/audio）。
+// 捕获链路统一输出 Opus，与引擎是否已创建无关，故不再依赖引擎实例。
+func audioFormatOf() string {
+	return audio.ProtocolFormatOpus
 }

@@ -23,6 +23,15 @@ static int ctl_bitrate(void *enc, int bitrate) {
 static int ctl_complexity(void *enc, int complexity) {
 	return opus_encoder_ctl((OpusEncoder *)enc, OPUS_SET_COMPLEXITY_REQUEST, complexity);
 }
+
+// 捕获链路的采样是 float32（[-1,1]），必须走 opus_encode_float。
+// 注意：opus_encode（int16 入口）与 opus_encode_float 是两套独立入口，
+// 位模式不可互转——把 float32 缓冲按 opus_int16* 传入会让每个采样的位
+// 被当成两个 int16 读取，编码出来是严重失真（听感"破音/电流声"）。
+static int encode_float(void *enc, const float *pcm, int frame_size,
+                        unsigned char *data, int max_data_bytes) {
+	return opus_encode_float((OpusEncoder *)enc, pcm, frame_size, data, max_data_bytes);
+}
 */
 import "C"
 
@@ -93,13 +102,14 @@ func (e *OpusEncoder) Feed(samples []float32) error {
 	return nil
 }
 
-// encodeFrame 编码一个 20ms 帧（float 输入，opus_encode 内部转 int16）。
+// encodeFrame 编码一个 20ms 帧。
+// 输入 frame 是 float32 采样（[-1,1] 交错立体声），走 opus_encode_float；
+// float 与 int16 是两套不同入口，位模式不可互转（曾因此产生破音）。
 func (e *OpusEncoder) encodeFrame(frame []float32) error {
-	pcm := (*C.opus_int16)(unsafe.Pointer(&frame[0]))
-	n := C.opus_encode(e.enc, pcm, opusFrameSize,
+	n := C.encode_float(unsafe.Pointer(e.enc), (*C.float)(unsafe.Pointer(&frame[0])), opusFrameSize,
 		(*C.uchar)(unsafe.Pointer(&e.packet[0])), C.opus_int32(len(e.packet)))
 	if n < 0 {
-		return fmt.Errorf("opus_encode 失败: %d", int(n))
+		return fmt.Errorf("opus_encode_float 失败: %d", int(n))
 	}
 	if e.onPacket != nil {
 		e.onPacket(e.packet[:int(n)])

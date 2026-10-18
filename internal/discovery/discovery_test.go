@@ -89,13 +89,18 @@ func TestDiscoveryService(t *testing.T) {
 	}
 
 	// Test UpdateProvides
-	s1.UpdateProvides(false, true, true, true, false, "扬声器", "USB 麦克风")
+	// 回归：协议标识必须由调用方传入并原样广播，不得在这里被硬编码覆盖
+	// （曾硬编码为 f32le，导致广播与真实 Opus 链路不一致）
+	s1.UpdateProvides(false, true, true, true, false, "扬声器", "USB 麦克风", "opus-48000-stereo")
 	caps := s1.GetProvides()
 	if caps.SystemAudio || !caps.MicAudio || !caps.Mouse || !caps.Keyboard || caps.Control {
 		t.Fatalf("unexpected capabilities: %+v", caps)
 	}
 	if caps.MicDevice != "USB 麦克风" {
 		t.Fatalf("expected mic device 'USB 麦克风', got %s", caps.MicDevice)
+	}
+	if caps.AudioFormat != "opus-48000-stereo" {
+		t.Fatalf("expected audio format 'opus-48000-stereo', got %q", caps.AudioFormat)
 	}
 }
 

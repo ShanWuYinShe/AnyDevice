@@ -54,8 +54,8 @@ type DeviceCapabilities struct {
 	Control     bool   `json:"control"`
 	AudioDevice string `json:"audio_device,omitempty"`
 	MicDevice   string `json:"mic_device,omitempty"`
-	AudioFormat string `json:"audio_format,omitempty"` // 音频 PCM 协议（f32le-48000-stereo）；空=旧版 int16
-	Audio       bool   `json:"audio"` // Backward compatibility
+	AudioFormat string `json:"audio_format,omitempty"` // 音频编码协议（opus-48000-stereo / f32le-48000-stereo）；空=更早的 int16 协议
+	Audio       bool   `json:"audio"`                  // Backward compatibility
 }
 
 // Beacon is the broadcast announcement packet.
@@ -259,7 +259,10 @@ func (s *Service) IsSelf(id, ip string, port int) bool {
 	return s.isSelfUnlocked(id, ip, port)
 }
 
-func (s *Service) UpdateProvides(systemAudio, micAudio, mouse, keyboard, control bool, sysDev, micDev string) {
+// UpdateProvides 更新本机对外广播的能力集合。
+// audioFormat 由调用方传入（唯一事实来源在 internal/audio），
+// 避免这里再硬编码协议标识导致广播与真实链路不一致。
+func (s *Service) UpdateProvides(systemAudio, micAudio, mouse, keyboard, control bool, sysDev, micDev, audioFormat string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.provides = DeviceCapabilities{
@@ -270,7 +273,7 @@ func (s *Service) UpdateProvides(systemAudio, micAudio, mouse, keyboard, control
 		Control:     control,
 		AudioDevice: sysDev,
 		MicDevice:   micDev,
-		AudioFormat: "f32le-48000-stereo",
+		AudioFormat: audioFormat,
 		Audio:       systemAudio,
 	}
 }

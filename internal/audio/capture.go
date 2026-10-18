@@ -46,6 +46,12 @@ var (
 	TagMicAudioOpus    = []byte("AUPM")
 )
 
+// 音频协议标识：随发现广播给对端，对端前端据此判断能否解码。
+// 当前捕获链路统一输出 Opus（AUPS/AUPM）；float32 PCM（AUDS/AUDM，
+// 标识为 f32le-48000-stereo）是历史格式，旧版对端仍可能使用；
+// 该字段为空 = 更早的 int16 协议（前端禁止映射）。
+const ProtocolFormatOpus = "opus-48000-stereo"
+
 type CaptureMode string
 
 const (
@@ -426,10 +432,11 @@ func (e *Engine) emitPCM(pcm []byte) {
 	}
 }
 
-// AudioFormat 返回当前广播的音频协议描述。
+// AudioFormat 返回本机音频链路对外广播的协议描述。
+// 编码器在首次输出时才惰性创建，但输出格式与是否已创建无关：
+// 捕获链路统一编码为 Opus，故这里返回固定标识（唯一事实来源）。
 func (e *Engine) AudioFormat() string {
-	// 新协议下所有引擎输出统一为 Opus（编码器在首次输出时惰性创建）
-	return "opus-48000-stereo"
+	return ProtocolFormatOpus
 }
 
 // IsTestTone 报告当前系统声来源是否为占位测试音。
