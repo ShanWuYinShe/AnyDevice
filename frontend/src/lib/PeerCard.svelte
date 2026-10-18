@@ -150,7 +150,7 @@
             <span class="status-dot" class:is-live={!audioSuspended} class:is-warn={audioSuspended} aria-hidden="true"></span>
             <span title={audioPlayState.text}>{audioSuspended ? '播放器被系统挂起' : '正在播放'}</span>
             <span class="meta-dot" aria-hidden="true"></span>
-            <span class="mono" title="实时接收码率">{audioRate.sys} KB/s</span>
+            <span class="mono" title="实时接收码率（对端编码后的实际字节数：Opus 约 10–40 KB/s，历史 PCM 约 350 KB/s）">{audioRate.sys} KB/s</span>
             {#if connectionText}
               <span class="meta-dot" aria-hidden="true"></span>
               <span>{connectionText}</span>
@@ -196,7 +196,7 @@
             <span class="status-dot is-live" aria-hidden="true"></span>
             <span title={audioPlayState.text}>正在收听</span>
             <span class="meta-dot" aria-hidden="true"></span>
-            <span class="mono" title="实时接收码率">{audioRate.mic} KB/s</span>
+            <span class="mono" title="实时接收码率（对端编码后的实际字节数：Opus 约 10–40 KB/s，历史 PCM 约 350 KB/s）">{audioRate.mic} KB/s</span>
           {:else}
             <span>把对端的麦克风拾音映射到本机播放</span>
           {/if}

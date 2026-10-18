@@ -127,9 +127,12 @@ function isAllZeroPCM(pcm) {
   return true;
 }
 
-// 音频接收实时统计（卡片上可见）：按 tag 分类字节率（每 2 秒刷新一次）
+// 音频接收实时统计（卡片上可见）：按流分类字节率（每 2 秒刷新一次）
+// 必须同时覆盖两种协议，否则新协议下卡片恒显示 0 KB/s：
+//   AUPS/AUPM = Opus（当前协议）· AUDS/AUDM = float32 PCM（历史协议）
+const AUDIO_RATE_TAGS = { AUPS: 'sys', AUDS: 'sys', AUPM: 'mic', AUDM: 'mic' };
 export const audioRate = $state({ sys: 0, mic: 0 });
-let audioRateBytes = { AUDS: 0, AUDM: 0 };
+let audioRateBytes = { sys: 0, mic: 0 };
 let audioRateLast = 0;
 // 播放链路状态描述（AudioContext 是否被系统挂起等）
 export const audioPlayState = $state({ text: '未创建' });
@@ -183,13 +186,14 @@ export function connectWebSocket() {
       const nowMs = performance.now();
       if (event.data.byteLength > 4) {
         const t = String.fromCharCode(...new Uint8Array(event.data, 0, 4));
-        if (t === 'AUDS' || t === 'AUDM') audioRateBytes[t] = (audioRateBytes[t] || 0) + event.data.byteLength;
+        const rateStream = AUDIO_RATE_TAGS[t];
+        if (rateStream) audioRateBytes[rateStream] += event.data.byteLength;
       }
       if (nowMs - audioRateLast >= 2000) {
         const kb = (n) => Math.round((audioRateBytes[n] || 0) / 2 / 1024);
-        audioRate.sys = kb('AUDS');
-        audioRate.mic = kb('AUDM');
-        audioRateBytes = { AUDS: 0, AUDM: 0 };
+        audioRate.sys = kb('sys');
+        audioRate.mic = kb('mic');
+        audioRateBytes = { sys: 0, mic: 0 };
         audioRateLast = nowMs;
         // 同步刷新播放器状态（缓冲水位/欠载次数实时可见）
         audioPlayState.text = 'ctx=' + audioContextState();
