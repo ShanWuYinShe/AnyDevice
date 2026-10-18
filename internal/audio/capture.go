@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/gen2brain/malgo"
 
@@ -39,8 +40,10 @@ const (
 )
 
 var (
-	TagSystemAudio = []byte("AUDS")
-	TagMicAudio    = []byte("AUDM")
+	TagSystemAudio     = []byte("AUDS") // float32 PCM（回退协议）
+	TagMicAudio        = []byte("AUDM")
+	TagSystemAudioOpus = []byte("AUPS") // Opus 包（新协议）
+	TagMicAudioOpus    = []byte("AUPM")
 )
 
 type CaptureMode string
@@ -61,6 +64,7 @@ type Engine struct {
 	ctx       *malgo.AllocatedContext
 	device    *malgo.Device
 	cancelGen context.CancelFunc
+	opus      *OpusEncoder // float32 PCM → Opus（新协议 AUPS/AUPM）；nil=输出 float32 PCM（AUDS/AUDM 旧协议）
 
 	mu          sync.Mutex
 	isRunning   atomic.Bool
@@ -138,8 +142,7 @@ func (e *Engine) Start() error {
 	// 方波噪声，捕不到真实音频，原因待查）。
 	if runtime.GOOS == "windows" && e.kind == KindSystem && os.Getenv("ANY_DEVICE_NATIVE_WASAPI") != "" {
 		captureCtx, cancel := context.WithCancel(context.Background())
-		tag := TagSystemAudio
-		if err := startNativeSystemCapture(captureCtx, func(pcm []byte) { e.emit(tag, pcm) }); err == nil {
+		if err := startNativeSystemCapture(captureCtx, func(pcm []byte) { e.emitPCM(pcm) }); err == nil {
 			e.cancelGen = cancel
 			e.setDevName("系统声音输出 (WASAPI 原生 Loopback)")
 
@@ -241,11 +244,6 @@ func (e *Engine) Start() error {
 		}
 	}
 
-	tag := TagSystemAudio
-	if e.kind == KindMic {
-		tag = TagMicAudio
-	}
-
 	// 诊断：每 2 秒输出一次捕获统计（ANY_DEVICE_AUDIO_DEBUG=1 时）
 	if util.DebugAudio() {
 		kindName := "系统声"
@@ -284,7 +282,7 @@ func (e *Engine) Start() error {
 	callbacks := malgo.DeviceCallbacks{
 		Data: func(_ []byte, pInputSamples []byte, _ uint32) {
 			// 订阅门控 + tag 前缀 + 诊断统计统一由 emit 处理（与自研 WASAPI 路径一致）
-			e.emit(tag, pInputSamples)
+			e.emitPCM(pInputSamples)
 		},
 	}
 
@@ -358,6 +356,11 @@ func (e *Engine) Stop() {
 		e.cancelGen = nil
 	}
 
+	if e.opus != nil {
+		e.opus.Destroy()
+		e.opus = nil
+	}
+
 	if e.device != nil {
 		_ = e.device.Stop()
 		e.device.Uninit()
@@ -375,7 +378,10 @@ func (e *Engine) Stop() {
 
 // emit 把 PCM 交付给订阅者：订阅门控、tag 前缀与诊断统计统一在此处理。
 // 供 miniaudio 回调与自研 WASAPI 捕获共用，保证两条路径行为一致。
-func (e *Engine) emit(tag []byte, pcm []byte) {
+// emitPCM 把捕获到的 float32 PCM（交错立体声 48kHz）编码为 Opus 并交付
+// 给订阅者：订阅门控、诊断统计、Opus 编码与 tag 前缀统一在此处理。
+// miniaudio 回调、自研 WASAPI 捕获与测试音三条路径共用。
+func (e *Engine) emitPCM(pcm []byte) {
 	if len(pcm) == 0 || e.onChunk == nil {
 		return
 	}
@@ -383,17 +389,47 @@ func (e *Engine) emit(tag []byte, pcm []byte) {
 		return
 	}
 	if util.DebugAudio() {
+		zero := isAllZero(pcm)
 		e.dbgChunks.Add(1)
-		if isAllZero(pcm) {
+		if zero {
 			e.dbgZeroChunks.Add(1)
 		}
 		e.dbgBytes.Add(int64(len(pcm)))
 		e.dbgFrames.Add(uint64(len(pcm) / 8))
 	}
-	buf := make([]byte, 4+len(pcm))
-	copy(buf[:4], tag)
-	copy(buf[4:], pcm)
-	e.onChunk(buf)
+	var tag []byte
+	if e.kind == KindMic {
+		tag = TagMicAudioOpus
+	} else {
+		tag = TagSystemAudioOpus
+	}
+	if e.opus == nil {
+		opus, err := NewOpusEncoder(func(packet []byte) {
+			buf := make([]byte, 4+len(packet))
+			copy(buf[:4], tag)
+			copy(buf[4:], packet)
+			e.onChunk(buf)
+		})
+		if err != nil {
+			util.Logf("[音频] Opus 编码器创建失败: %v", err)
+			return
+		}
+		e.opus = opus
+	}
+	// float32 字节流 → 样本 → Opus 编码（opus_encode 内部转 int16 工作格式）
+	f32 := make([]float32, len(pcm)/4)
+	for i := range f32 {
+		f32[i] = float32(math.Float32frombits(*(*uint32)(unsafe.Pointer(&pcm[i*4]))))
+	}
+	if err := e.opus.Feed(f32); err != nil {
+		util.Logf("[音频] Opus 编码失败: %v", err)
+	}
+}
+
+// AudioFormat 返回当前广播的音频协议描述。
+func (e *Engine) AudioFormat() string {
+	// 新协议下所有引擎输出统一为 Opus（编码器在首次输出时惰性创建）
+	return "opus-48000-stereo"
 }
 
 // IsTestTone 报告当前系统声来源是否为占位测试音。

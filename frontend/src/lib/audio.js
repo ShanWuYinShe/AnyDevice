@@ -229,3 +229,53 @@ window.__audioDebug = () => ({
   pending: { sys: pending.sys.length, mic: pending.mic.length },
   stats: JSON.parse(JSON.stringify(streamStats)),
 });
+
+
+// —— Opus 解码（WebCodecs 原生）——
+// 服务端推送 Opus 包（AUPS/AUPM tag 的 payload），此处解码为 float32
+// 交错帧后送入对应环形缓冲。
+const opusDecoders = { sys: null, mic: null };
+let opusTsUs = 0;
+
+function ensureOpusDecoder(key) {
+  if (opusDecoders[key]) return;
+  if (typeof AudioDecoder === 'undefined') {
+    workletError = '浏览器不支持 WebCodecs AudioDecoder';
+    return;
+  }
+  const decoder = new AudioDecoder({
+    output: (audioData) => {
+      const frames = audioData.numberOfFrames;
+      const l = new Float32Array(frames);
+      const r = new Float32Array(frames);
+      audioData.copyTo(l, { planeIndex: 0, format: 'f32-planar' });
+      audioData.copyTo(r, { planeIndex: 1, format: 'f32-planar' });
+      audioData.close();
+      const interleaved = new Float32Array(frames * 2);
+      for (let i = 0; i < frames; i++) {
+        interleaved[i * 2] = l[i];
+        interleaved[i * 2 + 1] = r[i];
+      }
+      pushPCMFloats(key, interleaved);
+    },
+    error: (e) => {
+      workletError = 'Opus 解码: ' + String((e && e.message) || e);
+    },
+  });
+  decoder.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 2 });
+  opusDecoders[key] = decoder;
+}
+
+// decodeOpus 解码一个 Opus 包并送入对应流缓冲。
+export function decodeOpus(packet, stream) {
+  const key = stream === 'mic' ? 'mic' : 'sys';
+  ensureOpusDecoder(key);
+  const d = opusDecoders[key];
+  if (!d) return;
+  opusTsUs += 20000; // 每包 20ms，时间戳仅用于顺序标记
+  d.decode(new EncodedAudioChunk({
+    type: 'delta',
+    timestamp: opusTsUs,
+    data: new Uint8Array(packet),
+  }));
+}

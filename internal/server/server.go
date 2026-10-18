@@ -454,7 +454,7 @@ func (s *Server) SetupRoutes() http.Handler {
 			"id":                  s.discovery.ID(),
 			"name":                s.discovery.Name(),
 			"os":                  runtime.GOOS,
-			"audio_format":        "f32le-48000-stereo",
+			"audio_format":        audioFormatOf(s.systemAudioEngine),
 			"current_ip":          s.GetCurrentIP(),
 			"port":                s.port,
 			"primary_url":         s.GetCurrentURL(),
@@ -698,4 +698,12 @@ func noCache(next http.Handler) http.Handler {
 func (s *Server) Start() error {
 	addr := fmt.Sprintf(":%d", s.port)
 	return http.ListenAndServe(addr, s.SetupRoutes())
+}
+
+// audioFormatOf nil 安全读取系统声引擎的音频协议描述。
+func audioFormatOf(e *audio.Engine) string {
+	if e == nil {
+		return "f32le-48000-stereo"
+	}
+	return e.AudioFormat()
 }

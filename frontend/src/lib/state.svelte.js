@@ -1,6 +1,6 @@
 // 全局响应式状态（Svelte 5 runes 模块）：数据轮询、WebSocket 流、订阅同步
 import { api } from './api.js';
-import { ensureAudioContext, playPCM, skipPCM, audioContextState } from './audio.js';
+import { ensureAudioContext, playPCM, skipPCM, decodeOpus, audioContextState } from './audio.js';
 
 // —— 可变状态（对象属性形式，跨模块保持响应式） ——
 export const selfState = $state({ data: null }); // /api/self：本机信息
@@ -204,6 +204,12 @@ export function connectWebSocket() {
             if (isAllZeroPCM(pcm)) skipPCM(pcm, 'mic');
             else playPCM(pcm, 'mic');
           }
+          return;
+        } else if (tag === 'AUPS') {
+          if (playState().system) decodeOpus(event.data.slice(4), 'sys');
+          return;
+        } else if (tag === 'AUPM') {
+          if (playState().mic) decodeOpus(event.data.slice(4), 'mic');
           return;
         }
       }
