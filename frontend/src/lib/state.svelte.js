@@ -5,15 +5,21 @@ import { ensureAudioContext, playPCM, skipPCM, decodeOpus, audioContextState } f
 // —— 可变状态（对象属性形式，跨模块保持响应式） ——
 export const selfState = $state({ data: null }); // /api/self：本机信息
 export const peerState = $state({ list: [] });   // /api/peers：已发现对端（服务端已过滤查看者自己）
-export const uiState = $state({ toast: '', modal: '' }); // modal: '' | 'qr' | 'add' | 'self'
+// modal: '' | 'qr' | 'add' | 'self' | 'rename'
+// rename: null | { kind: 'self' | 'peer', id, currentName, value }
+export const uiState = $state({ toast: '', toastType: 'info', modal: '', rename: null });
 export const connState = $state({ wsOpen: false });
 export const telemetry = $state({ cursor: {}, keyboard: {} }); // peerId -> 遥测文本
 
 let toastTimer = null;
-export function showToast(msg) {
+export function showToast(msg, type = 'info') {
   uiState.toast = msg;
+  uiState.toastType = type;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { uiState.toast = ''; }, 2500);
+  toastTimer = setTimeout(() => {
+    uiState.toast = '';
+    uiState.toastType = 'info';
+  }, 2800);
 }
 
 // —— 派生状态 ——
@@ -42,6 +48,7 @@ export function openModal(id) {
 }
 export function closeModal() {
   uiState.modal = '';
+  uiState.rename = null;
 }
 
 // isSelfPeer：服务端已按查看者过滤，这里是前端兜底
@@ -263,39 +270,52 @@ export function primeAudio() {
 export async function toggleMapping(peer, field, nextState, toastOn, toastOff) {
   try {
     await api.updateMapping(peer.id, { [field]: nextState });
-    showToast(nextState ? toastOn : toastOff);
+    showToast(nextState ? toastOn : toastOff, nextState ? 'success' : 'info');
     await fetchPeers();
   } catch (e) {
-    showToast('映射设置失败: ' + e);
+    showToast('映射设置失败: ' + ((e && e.message) || e), 'error');
   }
 }
 
-export async function renamePeer(peer, curName) {
-  const newName = prompt('为设备 "' + curName + '" 设置备注名称:', curName);
-  if (newName === null) return;
-  const trimmed = newName.trim();
-  if (trimmed === '' || trimmed === curName) return;
-  try {
-    await api.renamePeer(peer.id, trimmed);
-    showToast('对端已备注为: ' + trimmed + ' ✏️');
-    await fetchPeers();
-  } catch (e) {
-    showToast('修改备注失败: ' + e.message);
-  }
+// 改名走应用内弹窗：window.prompt/alert 无法随深色主题定制，
+// 在原生窗口（Wails/WKWebView）中还会脱离页面视觉与焦点链路。
+export function openRenameSelf() {
+  const name = selfState.data ? selfState.data.name : '';
+  uiState.rename = { kind: 'self', id: '', currentName: name, value: name };
+  uiState.modal = 'rename';
 }
 
-export async function renameSelf() {
-  const curName = selfState.data ? selfState.data.name : '';
-  const newName = prompt('请输入新的本机设备名称 (在局域网中显示的名称):', curName);
-  if (newName === null) return;
-  const trimmed = newName.trim();
-  if (trimmed === '' || trimmed === curName) return;
+export function openRenamePeer(peer) {
+  const name = (peer && peer.name) || '';
+  uiState.rename = { kind: 'peer', id: peer.id, currentName: name, value: name };
+  uiState.modal = 'rename';
+}
+
+export async function submitRename() {
+  const r = uiState.rename;
+  if (!r) return;
+  const trimmed = String(r.value || '').trim();
+  if (!trimmed) {
+    showToast('名称不能为空', 'error');
+    return;
+  }
+  if (trimmed === r.currentName) {
+    closeModal();
+    return;
+  }
   try {
-    await api.renameSelf(trimmed);
-    showToast('本机名称已更新为: ' + trimmed + ' ✏️');
-    await fetchSelf();
-  } catch {
-    showToast('修改本机名称失败');
+    if (r.kind === 'self') {
+      await api.renameSelf(trimmed);
+      await fetchSelf();
+      showToast('本机名称已更新为 ' + trimmed, 'success');
+    } else {
+      await api.renamePeer(r.id, trimmed);
+      await fetchPeers();
+      showToast('对端备注已更新为 ' + trimmed, 'success');
+    }
+    closeModal();
+  } catch (e) {
+    showToast('修改名称失败: ' + ((e && e.message) || e), 'error');
   }
 }
 
@@ -303,27 +323,25 @@ export async function switchNic(ip) {
   if (!ip) return;
   try {
     await api.selectNic(ip);
-    showToast('已切换通信网卡 IP 至: ' + ip);
+    showToast('已切换通信网卡至 ' + ip, 'success');
     await fetchSelf();
   } catch (e) {
-    showToast('切换网卡失败: ' + e);
+    showToast('切换网卡失败: ' + ((e && e.message) || e), 'error');
   }
 }
 
+// 添加对端：返回结果对象由弹窗内联展示错误（不再用 alert 阻塞浏览器）
 export async function addPeer(target, name) {
   if (!target) {
-    alert('请输入对端的 IP:端口，例如 192.168.1.100:8080');
-    return false;
+    return { ok: false, error: '请输入对端的 IP:端口，例如 192.168.1.100:8080' };
   }
   try {
     await api.addPeer(target, name);
-    closeModal();
     await fetchPeers();
-    showToast('已添加对端 ' + target);
-    return true;
+    showToast('已添加对端 ' + target, 'success');
+    return { ok: true };
   } catch (e) {
-    alert('添加失败: ' + e.message);
-    return false;
+    return { ok: false, error: String((e && e.message) || e) };
   }
 }
 
@@ -331,7 +349,7 @@ export async function saveSelfSettings(payload) {
   await api.updateSelfProvides(payload);
   closeModal();
   await fetchSelf();
-  showToast('本机共享设置已更新');
+  showToast('本机共享设置已更新', 'success');
 }
 
 // —— 生命周期：轮询定时器（供组件 onMount/onDestroy 调用） ——

@@ -1,12 +1,22 @@
 <script>
   import { onMount } from 'svelte';
   import {
-    selfState, peerState, uiState, targetSubs,
+    selfState, peerState, uiState, connState, targetSubs,
     openModal, closeModal, startPolling, sendSubscriptions,
-    fetchPeers, renameSelf, switchNic, addPeer, saveSelfSettings, showToast,
+    fetchPeers, openRenameSelf, submitRename, switchNic,
+    addPeer, saveSelfSettings, showToast,
   } from './lib/state.svelte.js';
   import PeerCard from './lib/PeerCard.svelte';
   import Modal from './lib/Modal.svelte';
+  import Icon from './lib/Icon.svelte';
+
+  const self = $derived(selfState.data || {});
+  const selfOs = $derived(
+    self.os === 'darwin' ? 'macOS'
+      : self.os === 'windows' ? 'Windows'
+      : self.os === 'linux' ? 'Linux'
+      : self.os || '未知系统'
+  );
 
   // 网卡下拉当前选中值：本机信息载入后对齐 current_ip
   let selectedNic = $state('');
@@ -55,14 +65,19 @@
   let manualTarget = $state('');
   let manualName = $state('');
   let addingPeer = $state(false);
+  let addError = $state('');
 
   async function submitAddPeer() {
+    addError = '';
     addingPeer = true;
     try {
-      const ok = await addPeer(manualTarget.trim(), manualName.trim());
-      if (ok) {
+      const res = await addPeer(manualTarget.trim(), manualName.trim());
+      if (res.ok) {
         manualTarget = '';
         manualName = '';
+        closeModal();
+      } else {
+        addError = res.error;
       }
     } finally {
       addingPeer = false;
@@ -74,68 +89,156 @@
     if (img) img.src = '/api/qrcode?t=' + Date.now();
   }
 
-  function copyUrl() {
-    if (selfState.data && selfState.data.primary_url) {
-      navigator.clipboard.writeText(selfState.data.primary_url);
-      showToast('已复制访问地址到剪贴板 📋');
+  async function copyUrl() {
+    const url = self.primary_url;
+    if (!url) {
+      showToast('尚未获取到局域网访问地址', 'error');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      showToast('已复制访问地址', 'success');
+      return;
+    } catch {
+      // 原生窗口/无剪贴板权限时的回退路径
+      const el = document.createElement('textarea');
+      el.value = url;
+      el.setAttribute('readonly', '');
+      el.style.position = 'fixed';
+      el.style.opacity = '0';
+      document.body.appendChild(el);
+      el.select();
+      try {
+        document.execCommand('copy');
+        showToast('已复制访问地址', 'success');
+      } catch {
+        showToast('复制失败，请手动选择地址复制', 'error');
+      }
+      el.remove();
     }
   }
 
   onMount(() => startPolling());
 </script>
 
-<header>
-  <div class="header-left">
-    <div class="logo"><span>🔄 AnyDevice</span></div>
-    <div class="host-badge">
-      <span class="dot"></span>
-      <span>{selfState.data ? selfState.data.name + ' (' + selfState.data.current_ip + ')' : '本机设备'}</span>
-      <button class="rename-trigger-btn" title="修改本机名称" onclick={renameSelf}>✏️ 改名</button>
+<header class="app-header">
+  <div class="brand">
+    <div class="brand-mark"><Icon name="sync" size={19} /></div>
+    <div class="brand-text">
+      <span class="brand-name">AnyDevice</span>
+      <span class="brand-sub">跨端设备映射中枢</span>
     </div>
-    <select class="nic-select" title="切换通信网卡" bind:value={selectedNic} onchange={() => switchNic(selectedNic)}>
-      {#if selfState.data && selfState.data.interfaces}
-        {#each selfState.data.interfaces as iface (iface.name + '|' + iface.ip)}
-          <option value={iface.ip}>{iface.name} - {iface.ip}</option>
-        {/each}
-      {:else}
-        <option value="">载入网卡中...</option>
-      {/if}
-    </select>
   </div>
-  <div class="header-right">
-    <button class="nav-btn" onclick={() => { refreshQR(); openModal('qr'); }}>📱 手机扫码接入</button>
-    <button class="nav-btn" onclick={() => openModal('add')}>➕ 手动添加对端</button>
-    <button class="nav-btn primary" onclick={openSelfSettings}>⚙️ 本机共享功能</button>
+  <div class="header-actions">
+    <button
+      class="btn"
+      title="手机扫码接入"
+      aria-label="手机扫码接入"
+      onclick={() => { refreshQR(); openModal('qr'); }}
+    >
+      <Icon name="qr" size={17} /><span class="btn-label">扫码接入</span>
+    </button>
+    <button
+      class="btn"
+      title="手动添加对端设备"
+      aria-label="手动添加对端设备"
+      onclick={() => openModal('add')}
+    >
+      <Icon name="plus" size={17} /><span class="btn-label">添加设备</span>
+    </button>
+    <button
+      class="btn btn-primary"
+      title="本机共享功能设置"
+      aria-label="本机共享功能设置"
+      onclick={openSelfSettings}
+    >
+      <Icon name="sliders" size={17} /><span class="btn-label">本机共享</span>
+    </button>
   </div>
 </header>
 
 <main>
-  <div class="discovery-header">
-    <div class="discovery-title">
-      <h1>发现的对端设备</h1>
-      <div class="discovery-status-tag">
-        <span class="pulse-dot"></span>
-        <span>发现 {peerState.list.length} 台对端设备</span>
+  <section class="overview" aria-label="本机与通道状态">
+    <div class="ov-cell">
+      <div class="ov-icon"><Icon name="laptop" size={19} /></div>
+      <div class="ov-body">
+        <div class="ov-label">本机设备</div>
+        <div class="ov-value-row">
+          <span class="ov-value" title={self.name || '本机设备'}>{self.name || '本机设备'}</span>
+          <button class="icon-btn icon-btn-xs" title="修改本机名称" aria-label="修改本机名称" onclick={openRenameSelf}>
+            <Icon name="pencil" size={13} />
+          </button>
+        </div>
+        <div class="ov-meta mono">{selfOs} · {self.current_ip || '未获取 IP'}</div>
       </div>
     </div>
-    <button class="nav-btn" onclick={fetchPeers}>🔄 刷新设备列表</button>
-  </div>
 
-  <p class="discovery-hint">
-    每个端点设备会提供各自的声音输出、麦克风录音、鼠标光标或物理键盘。您可以在下方决定是否将对端的功能映射为本地播放或操作。
-  </p>
+    <div class="ov-cell">
+      <div class="ov-icon"><Icon name="wifi" size={19} /></div>
+      <div class="ov-body">
+        <label class="ov-label" for="nicSelect">网络通道</label>
+        <select
+          id="nicSelect"
+          class="select"
+          title="切换对外广播与服务的网卡"
+          bind:value={selectedNic}
+          onchange={() => switchNic(selectedNic)}
+        >
+          {#if self.interfaces && self.interfaces.length}
+            {#each self.interfaces as iface (iface.name + '|' + iface.ip)}
+              <option value={iface.ip}>{iface.name} · {iface.ip}{iface.is_virtual ? '（虚拟）' : ''}</option>
+            {/each}
+          {:else}
+            <option value="">载入网卡中…</option>
+          {/if}
+        </select>
+      </div>
+    </div>
+
+    <div class="ov-cell">
+      <div class="ov-icon"><Icon name="link" size={19} /></div>
+      <div class="ov-body">
+        <div class="ov-label">实时通道</div>
+        <div class="ov-value-row">
+          <span class="status-dot" class:is-live={connState.wsOpen} class:is-warn={!connState.wsOpen} aria-hidden="true"></span>
+          <span class="ov-value">{connState.wsOpen ? '已连接' : '重连中…'}</span>
+        </div>
+        <div class="ov-meta">音频与遥测数据链路</div>
+      </div>
+    </div>
+  </section>
+
+  <div class="section-head">
+    <div class="section-title">
+      <h1>对端设备</h1>
+      <span class="count-pill">{peerState.list.length} 台</span>
+    </div>
+    <button class="icon-btn" title="立即刷新设备列表" aria-label="立即刷新设备列表" onclick={fetchPeers}>
+      <Icon name="refresh" size={17} />
+    </button>
+  </div>
+  <p class="section-hint">下面是局域网中发现的对端。逐项选择要把对端的哪种能力映射到本机，高亮表示该能力正在本机生效。</p>
 
   <div class="peer-grid">
     {#if peerState.list.length === 0}
       <div class="empty-state">
-        <div class="empty-icon">📡</div>
-        <h3>正在自动搜索局域网中的 AnyDevice 对端...</h3>
-        <p>
-          请在同一局域网下的其他电脑打开 AnyDevice，或者点击右上角「📱 手机扫码接入」。设备发现后将即刻呈现在这里。
+        <div class="radar" aria-hidden="true">
+          <span class="radar-ring"></span>
+          <span class="radar-ring"></span>
+          <Icon name="wifi" size={26} />
+        </div>
+        <h2 class="empty-title">正在搜索局域网设备</h2>
+        <p class="empty-text">
+          请确认另一台设备已打开 AnyDevice，并与本机连接到同一网络。设备上线后会立即出现在这里；
+          若所在网络禁用了广播发现，可手动输入对端 IP 连接。
         </p>
         <div class="empty-actions">
-          <button class="nav-btn primary" onclick={() => openModal('add')}>➕ 手动输入 IP 连接</button>
-          <button class="nav-btn" onclick={() => { refreshQR(); openModal('qr'); }}>📱 扫码连接</button>
+          <button class="btn btn-primary" onclick={() => { refreshQR(); openModal('qr'); }}>
+            <Icon name="qr" size={16} /><span>扫码接入</span>
+          </button>
+          <button class="btn" onclick={() => openModal('add')}>
+            <Icon name="plus" size={16} /><span>手动输入 IP</span>
+          </button>
         </div>
       </div>
     {:else}
@@ -146,106 +249,165 @@
   </div>
 </main>
 
-<!-- 页脚：构建版本与日志路径（确认运行的是哪个版本、日志去哪找） -->
-<footer style="padding: 14px 20px 22px; text-align: center; font-size: 0.72rem; color: var(--text-sub); border-top: 1px solid var(--border); margin-top: 8px;">
-  <div>
-    构建: {selfState.data && selfState.data.build_time ? selfState.data.build_time : 'unknown（旧版本）'}
-    {#if selfState.data && selfState.data.build_time && selfState.data.build_time !== 'dev'}
-      ✓ 最新版
-    {/if}
-  </div>
-  {#if selfState.data && selfState.data.log_path}
-    <div style="margin-top: 4px; word-break: break-all;">
-      日志文件: <span style="color: #60a5fa;">{selfState.data.log_path}</span>
-    </div>
+<footer class="app-footer">
+  <span class="footer-item">
+    <Icon name="checkCircle" size={13} />
+    运行版本 {self.build_time || 'unknown（旧版本）'}
+  </span>
+  {#if self.log_path}
+    <span class="footer-item">
+      日志
+      <span class="footer-mono" title={self.log_path}>{self.log_path}</span>
+    </span>
   {/if}
 </footer>
 
 <!-- 弹窗：本机共享功能设置 -->
-<Modal open={uiState.modal === 'self'} title="⚙️ 本机功能共享设置" onClose={closeModal}>
-  <p style="font-size: 0.82rem; color: var(--text-muted); line-height: 1.4;">
-    配置本机向局域网其他设备开放提供的功能与虚拟设备。对端发现本机后，可选择是否映射使用。
-  </p>
+<Modal open={uiState.modal === 'self'} title="本机共享设置" onClose={closeModal}>
+  <p class="modal-desc">配置本机向局域网其他设备开放的能力。对端发现本机后，可自行选择是否映射使用。</p>
   <div class="form-group">
-    <label for="selfNameInput">本机设备名称 (局域网显示名称)</label>
-    <input class="form-input" id="selfNameInput" type="text" bind:value={selfNameInput} placeholder="例如: 我的 MacBook Pro" />
+    <label class="form-label" for="selfNameInput">本机设备名称</label>
+    <input
+      class="form-input"
+      id="selfNameInput"
+      type="text"
+      bind:value={selfNameInput}
+      placeholder="例如：我的 MacBook Pro"
+      data-autofocus
+    />
   </div>
-  <div class="switch-row">
-    <div class="switch-label">
-      <span class="switch-title">🎵 共享本机系统声音输出</span>
-      <span class="switch-desc">允许对端在他们电脑上收听播放本机的系统声音 (扬声器输出)</span>
+  <div class="switch-list">
+    <div class="switch-row">
+      <div class="switch-info">
+        <div class="switch-icon"><Icon name="speaker" size={18} /></div>
+        <div>
+          <div class="switch-title">共享系统声音输出</div>
+          <div class="switch-desc">允许对端收听本机扬声器输出的原声</div>
+        </div>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" bind:checked={selfSystemAudio} aria-label="共享本机系统声音输出" />
+        <span class="slider"></span>
+      </label>
     </div>
-    <label class="toggle-switch">
-      <input type="checkbox" bind:checked={selfSystemAudio} />
-      <span class="slider"></span>
-    </label>
-  </div>
-  <div class="switch-row">
-    <div class="switch-label">
-      <span class="switch-title">🎙️ 共享本机麦克风音频输入</span>
-      <span class="switch-desc">允许对端在他们电脑上收听本机的麦克风录音</span>
+    <div class="switch-row">
+      <div class="switch-info">
+        <div class="switch-icon"><Icon name="mic" size={18} /></div>
+        <div>
+          <div class="switch-title">共享麦克风音频输入</div>
+          <div class="switch-desc">允许对端收听本机的麦克风录音</div>
+        </div>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" bind:checked={selfMicAudio} aria-label="共享本机麦克风音频输入" />
+        <span class="slider"></span>
+      </label>
     </div>
-    <label class="toggle-switch">
-      <input type="checkbox" bind:checked={selfMicAudio} />
-      <span class="slider"></span>
-    </label>
-  </div>
-  <div class="switch-row">
-    <div class="switch-label">
-      <span class="switch-title">🖱️ 共享本机物理鼠标操作</span>
-      <span class="switch-desc">允许对端在他们电脑上实时同步执行本机的鼠标光标与按键</span>
+    <div class="switch-row">
+      <div class="switch-info">
+        <div class="switch-icon"><Icon name="mouse" size={18} /></div>
+        <div>
+          <div class="switch-title">共享物理鼠标操作</div>
+          <div class="switch-desc">允许对端同步执行本机的光标移动与按键</div>
+        </div>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" bind:checked={selfMouse} aria-label="共享本机物理鼠标操作" />
+        <span class="slider"></span>
+      </label>
     </div>
-    <label class="toggle-switch">
-      <input type="checkbox" bind:checked={selfMouse} />
-      <span class="slider"></span>
-    </label>
-  </div>
-  <div class="switch-row">
-    <div class="switch-label">
-      <span class="switch-title">⌨️ 共享本机物理键盘操作</span>
-      <span class="switch-desc">允许对端在他们电脑上实时同步执行本机的键盘按键 (无弹窗直通)</span>
+    <div class="switch-row">
+      <div class="switch-info">
+        <div class="switch-icon"><Icon name="keyboard" size={18} /></div>
+        <div>
+          <div class="switch-title">共享物理键盘操作</div>
+          <div class="switch-desc">允许对端同步执行本机的键盘按键</div>
+        </div>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" bind:checked={selfKeyboard} aria-label="共享本机物理键盘操作" />
+        <span class="slider"></span>
+      </label>
     </div>
-    <label class="toggle-switch">
-      <input type="checkbox" bind:checked={selfKeyboard} />
-      <span class="slider"></span>
-    </label>
   </div>
-  <button class="nav-btn primary" style="padding: 10px; justify-content: center;" onclick={submitSelfSettings}>
-    保存设置
-  </button>
+  <button class="btn btn-primary btn-block" onclick={submitSelfSettings}>保存设置</button>
 </Modal>
 
 <!-- 弹窗：扫码接入 -->
-<Modal open={uiState.modal === 'qr'} title="📱 手机 / 平板扫码接入" onClose={closeModal}>
-  <p style="font-size: 0.82rem; color: var(--text-muted); line-height: 1.4;">
-    用手机相机或微信扫码打开下方链接，手机即可作为对端自动加入列表。
-  </p>
-  <div class="qr-wrapper">
-    <img id="qrCodeImg" src="/api/qrcode" alt="二维码" />
-    <div class="qr-url-box">{selfState.data ? selfState.data.primary_url : 'http://...'}</div>
+<Modal open={uiState.modal === 'qr'} title="手机 / 平板扫码接入" onClose={closeModal}>
+  <p class="modal-desc">用手机相机扫码打开链接，手机即作为对端自动加入设备列表。</p>
+  <div class="qr-box">
+    <img class="qr-image" id="qrCodeImg" src="/api/qrcode" alt="接入地址二维码" />
+    <div class="qr-url mono">{self.primary_url || '未获取到局域网地址'}</div>
   </div>
-  <button class="nav-btn primary" style="padding: 10px; justify-content: center;" onclick={copyUrl}>
-    📋 复制访问地址
+  <button class="btn btn-primary btn-block" onclick={copyUrl}>
+    <Icon name="copy" size={16} /><span>复制访问地址</span>
   </button>
 </Modal>
 
 <!-- 弹窗：手动添加对端 -->
-<Modal open={uiState.modal === 'add'} title="➕ 手动添加对端设备" onClose={closeModal}>
-  <p style="font-size: 0.82rem; color: var(--text-muted); line-height: 1.4;">
-    如果局域网禁用了广播自动发现，可以直接输入其他电脑的 IP:端口进行连接。
-  </p>
+<Modal open={uiState.modal === 'add'} title="手动添加对端设备" onClose={closeModal}>
+  <p class="modal-desc">局域网禁用广播自动发现时，可直接输入对端 IP:端口 建立连接。</p>
   <div class="form-group">
-    <label for="manualTargetInput">对端 IP 地址与端口</label>
-    <input class="form-input" id="manualTargetInput" type="text" bind:value={manualTarget} placeholder="例如 192.168.1.100:8080" />
+    <label class="form-label" for="manualTargetInput">对端 IP 与端口</label>
+    <input
+      class="form-input"
+      id="manualTargetInput"
+      type="text"
+      bind:value={manualTarget}
+      placeholder="例如 192.168.1.100:8080"
+      data-autofocus
+    />
   </div>
   <div class="form-group">
-    <label for="manualNameInput">设备备注名称 (可选)</label>
-    <input class="form-input" id="manualNameInput" type="text" bind:value={manualName} placeholder="例如: 办公室台式机" />
+    <label class="form-label" for="manualNameInput">设备备注名称（可选）</label>
+    <input class="form-input" id="manualNameInput" type="text" bind:value={manualName} placeholder="例如：办公室台式机" />
   </div>
-  <button class="nav-btn primary" style="padding: 10px; justify-content: center;" disabled={addingPeer} onclick={submitAddPeer}>
-    {addingPeer ? '连接中...' : '确认添加并搜索设备'}
+  {#if addError}
+    <div class="form-error" role="alert">{addError}</div>
+  {/if}
+  <button class="btn btn-primary btn-block" disabled={addingPeer} onclick={submitAddPeer}>
+    {addingPeer ? '连接中…' : '确认添加'}
   </button>
 </Modal>
 
+<!-- 弹窗：改名 / 备注 -->
+<Modal
+  open={uiState.modal === 'rename'}
+  title={uiState.rename && uiState.rename.kind === 'self' ? '修改本机名称' : '修改对端备注'}
+  onClose={closeModal}
+>
+  {#if uiState.rename}
+    <p class="modal-desc">
+      {uiState.rename.kind === 'self'
+        ? '本机名称会保存到配置文件，并显示在局域网内其他设备的列表中。'
+        : '备注名称只在本机显示，优先于对端广播的名称，不会被后续发现心跳覆盖。'}
+    </p>
+    <div class="form-group">
+      <label class="form-label" for="renameInput">{uiState.rename.kind === 'self' ? '本机名称' : '备注名称'}</label>
+      <input
+        class="form-input"
+        id="renameInput"
+        type="text"
+        bind:value={uiState.rename.value}
+        placeholder={uiState.rename.kind === 'self' ? '例如：我的 MacBook Pro' : '例如：办公室台式机'}
+        data-autofocus
+        onkeydown={(e) => { if (e.key === 'Enter') submitRename(); }}
+      />
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick={closeModal}>取消</button>
+      <button class="btn btn-primary" onclick={submitRename}>
+        <Icon name="check" size={16} /><span>保存</span>
+      </button>
+    </div>
+  {/if}
+</Modal>
+
 <!-- Toast 提示 -->
-<div class="toast" class:show={uiState.toast !== ''}>{uiState.toast}</div>
+{#if uiState.toast}
+  <div class="toast" class:is-error={uiState.toastType === 'error'} role="status" aria-live="polite">
+    <Icon name={uiState.toastType === 'error' ? 'alert' : 'checkCircle'} size={16} />
+    <span>{uiState.toast}</span>
+  </div>
+{/if}
