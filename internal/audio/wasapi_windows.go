@@ -31,6 +31,12 @@ var (
 	procCoCreateInstance = ole32.NewProc("CoCreateInstance")
 	procCoTaskMemFree    = ole32.NewProc("CoTaskMemFree")
 	procCloseHandle      = kernel32.NewProc("CloseHandle")
+
+	// avrt.dll：MMCSS 多媒体调度服务——捕获线程注册为 "Audio" 任务后
+	// 系统优先调度（游戏高负载下不被饿死，避免缓冲溢出撕裂）
+	avrt                                = syscall.NewLazyDLL("avrt.dll")
+	procAvSetMmThreadCharacteristicsW   = avrt.NewProc("AvSetMmThreadCharacteristicsW")
+	procAvRevertMmThreadCharacteristics = avrt.NewProc("AvRevertMmThreadCharacteristics")
 )
 
 const (
@@ -40,9 +46,10 @@ const (
 	// AUDCLNT_STREAMFLAGS_LOOPBACK：loopback 捕获（轮询读取，不支持事件驱动）
 	audclntStreamFlagsLoopback = 0x00020000
 	// AUDCLNT_BUFFERFLAGS_SILENT：本段静音（数据未定义，必须按静音处理）
-	audclntBufferFlagsSilent = 0x2
-	waveFormatExtensible     = 0xFFFE
-	waveFormatIEEEFloat      = 0x0003
+	audclntBufferFlagsSilent        = 0x2
+	audclntBufferFlagsDiscontinuity = 0x1 // 数据流断点：有包被丢弃/覆盖（撕裂）
+	waveFormatExtensible            = 0xFFFE
+	waveFormatIEEEFloat             = 0x0003
 
 	// 统一输出格式
 	outSampleRate = 48000
@@ -216,7 +223,11 @@ func startNativeSystemCapture(ctx context.Context, onPCM func([]byte)) error {
 	// 事件在该模式下不会按音频周期可靠触发，实测会造成约一半数据包被当作
 	// SILENT 空包、以及数据重复读取（宽带翻倍、20ms 声音/20ms 静音交替）。
 	// 正确做法是轮询（见 loop 中的 sleep + GetNextPacketSize 循环）。
-	const hnsBufferDuration = 100000 // 10ms（100ns 单位）
+	//
+	// 缓冲给足 200ms：捕获 goroutine 与游戏等高负载应用共享 CPU，调度
+	// 停顿一旦超过缓冲时长，WASAPI 会覆盖未读取的包（数据撕裂=破音）。
+	// 200ms 缓冲 + 5ms 轮询可扛住数百毫秒级的调度停顿；延迟代价仅 200ms。
+	const hnsBufferDuration = 2000000 // 200ms（100ns 单位）
 	hr = callCom(w.audioClient, 3,
 		audclntShareModeShared,
 		uintptr(audclntStreamFlagsLoopback),
@@ -251,6 +262,16 @@ func startNativeSystemCapture(ctx context.Context, onPCM func([]byte)) error {
 				procCoUninitialize.Call()
 			}
 		}()
+
+		// 注册 MMCSS "Audio" 任务：游戏等高负载下系统优先调度本线程，
+		// 避免 WASAPI 缓冲溢出造成数据撕裂（破音）
+		if err := procAvSetMmThreadCharacteristicsW.Find(); err == nil {
+			var idx uint32
+			namePtr, _ := syscall.UTF16PtrFromString("Audio")
+			if hTask, _, _ := procAvSetMmThreadCharacteristicsW.Call(uintptr(unsafe.Pointer(namePtr)), uintptr(unsafe.Pointer(&idx))); hTask != 0 {
+				defer procAvRevertMmThreadCharacteristics.Call(hTask)
+			}
+		}
 		w.loop(ctx, onPCM)
 	}()
 	return nil
@@ -311,7 +332,12 @@ func (w *wasapiCapture) loop(ctx context.Context, onPCM func([]byte)) {
 			}
 
 			var pcm []byte
-			if flags&audclntBufferFlagsSilent != 0 {
+			if flags&audclntBufferFlagsDiscontinuity != 0 {
+				// 撕裂包（缓冲溢出/流断点）：包内数据不可信，丢弃并以静音
+				// 维持时间轴——输出撕裂数据才是可闻"破音"的来源
+				util.Logf("[音频] 检测到数据流断点（DISCONTINUITY），丢弃 %d 帧撕裂数据", nframes)
+				pcm = w.renderSilence(int(nframes))
+			} else if flags&audclntBufferFlagsSilent != 0 {
 				// 静音段：缓冲区数据未定义，按静音输出（miniaudio 缺失的关键处理）
 				pcm = w.renderSilence(int(nframes))
 			} else {
