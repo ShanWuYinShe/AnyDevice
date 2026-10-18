@@ -120,6 +120,25 @@ func (e *Engine) Start() error {
 		return nil
 	}
 
+	// Windows 系统声音：优先使用自研 WASAPI Loopback 捕获。
+	// miniaudio 的 loopback 有两处已实证缺陷：SILENT 标志未处理（静音段
+	// 输出未定义数据=电流声），以及固定回调周期与设备周期不匹配导致
+	// 20ms 声音/20ms 静音交替（嘟嘟声）。自研实现事件驱动读取音频包、
+	// 严格处理 SILENT 并按设备原生格式转换。
+	if runtime.GOOS == "windows" && e.kind == KindSystem {
+		captureCtx, cancel := context.WithCancel(context.Background())
+		tag := TagSystemAudio
+		if err := startNativeSystemCapture(captureCtx, func(pcm []byte) { e.emit(tag, pcm) }); err == nil {
+			e.cancelGen = cancel
+			e.devName = "系统声音输出 (WASAPI 原生 Loopback)"
+			e.isRunning = true
+			return nil
+		} else {
+			cancel()
+			util.Logf("[音频] 自研 WASAPI Loopback 启动失败，回退 miniaudio：%v", err)
+		}
+	}
+
 	// Try hardware capture via malgo
 	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
@@ -251,30 +270,9 @@ func (e *Engine) Start() error {
 	}
 
 	callbacks := malgo.DeviceCallbacks{
-		Data: func(pOutputSample, pInputSamples []byte, framecount uint32) {
-			// 无订阅者时静默：直接返回，不分配内存也不调用 onChunk，避免空转
-			if atomic.LoadInt64(&e.subscribers) <= 0 {
-				return
-			}
-			if len(pInputSamples) > 0 && e.onChunk != nil {
-				buf := make([]byte, 4+len(pInputSamples))
-				copy(buf[:4], tag)
-				copy(buf[4:], pInputSamples)
-				// 诊断：统计实际捕获速率与字节量（含全零静音检测线索）
-				if util.DebugAudio() {
-					zero := isAllZero(pInputSamples)
-					e.mu.Lock()
-					e.dbgChunks++
-					if zero {
-						e.dbgZeroChunks++
-					}
-					e.dbgBytes += len(pInputSamples)
-					e.dbgFrames += uint64(framecount)
-					e.dbgSilent = zero
-					e.mu.Unlock()
-				}
-				e.onChunk(buf)
-			}
+		Data: func(_ []byte, pInputSamples []byte, _ uint32) {
+			// 订阅门控 + tag 前缀 + 诊断统计统一由 emit 处理（与自研 WASAPI 路径一致）
+			e.emit(tag, pInputSamples)
 		},
 	}
 
@@ -362,6 +360,33 @@ func (e *Engine) Stop() {
 	}
 
 	e.isRunning = false
+}
+
+// emit 把 PCM 交付给订阅者：订阅门控、tag 前缀与诊断统计统一在此处理。
+// 供 miniaudio 回调与自研 WASAPI 捕获共用，保证两条路径行为一致。
+func (e *Engine) emit(tag []byte, pcm []byte) {
+	if len(pcm) == 0 || e.onChunk == nil {
+		return
+	}
+	if atomic.LoadInt64(&e.subscribers) <= 0 {
+		return
+	}
+	if util.DebugAudio() {
+		zero := isAllZero(pcm)
+		e.mu.Lock()
+		e.dbgChunks++
+		if zero {
+			e.dbgZeroChunks++
+		}
+		e.dbgBytes += len(pcm)
+		e.dbgFrames += uint64(len(pcm) / FrameSize)
+		e.dbgSilent = zero
+		e.mu.Unlock()
+	}
+	buf := make([]byte, 4+len(pcm))
+	copy(buf[:4], tag)
+	copy(buf[4:], pcm)
+	e.onChunk(buf)
 }
 
 // startTestTone generates smooth 440Hz + 880Hz audio chunks (20ms each, 960 frames) at low volume
