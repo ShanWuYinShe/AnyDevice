@@ -110,6 +110,16 @@ export function sendSubscriptions() {
 let ws = null;
 let reconnectTimer = null;
 
+// isAllZeroPCM 判断 16bit 交错 PCM 是否全零（静音段）。
+// 全扫描 1920 个样本/50 帧每秒开销可忽略，避免误伤真实音频开头的静音采样。
+function isAllZeroPCM(pcm) {
+  const i16 = new Int16Array(pcm);
+  for (let i = 0; i < i16.length; i++) {
+    if (i16[i] !== 0) return false;
+  }
+  return true;
+}
+
 // 音频接收实时统计（卡片上可见）：按 tag 分类字节率（每 2 秒刷新一次）
 export const audioRate = $state({ sys: 0, mic: 0 });
 let audioRateBytes = { AUDS: 0, AUDM: 0 };
@@ -178,10 +188,18 @@ export function connectWebSocket() {
       if (event.data.byteLength > 4) {
         const tag = String.fromCharCode(...new Uint8Array(event.data, 0, 4));
         if (tag === 'AUDS') {
-          if (playState().system) playPCM(event.data.slice(4), 'sys');
+          if (playState().system) {
+            const pcm = event.data.slice(4);
+            // 丢弃全零静音段（采集端的 SILENT 补丁段）：静音 chunk 若照常插入
+            // 播放队列，会形成 20ms 声音/20ms 静音的交替，听感为"嘟嘟"断续
+            if (!isAllZeroPCM(pcm)) playPCM(pcm, 'sys');
+          }
           return;
         } else if (tag === 'AUDM') {
-          if (playState().mic) playPCM(event.data.slice(4), 'mic');
+          if (playState().mic) {
+            const pcm = event.data.slice(4);
+            if (!isAllZeroPCM(pcm)) playPCM(pcm, 'mic');
+          }
           return;
         }
       }

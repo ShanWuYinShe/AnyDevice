@@ -66,10 +66,13 @@ type Engine struct {
 	devName     string
 	subscribers int64 // 音频订阅数（atomic）：无订阅者时引擎静默，避免空转生成与广播 PCM
 
-	// 诊断统计（ANY_DEVICE_AUDIO_DEBUG=1 时输出）：捕获 chunk 数/字节量/静音标记
-	dbgChunks uint64
-	dbgBytes  int
-	dbgSilent bool
+	// 诊断统计（ANY_DEVICE_AUDIO_DEBUG=1 时输出）：捕获 chunk 数/字节量/
+	// 全零 chunk 数（SILENT 补丁后静音段表现为全零）/累计帧数
+	dbgChunks     uint64
+	dbgZeroChunks uint64
+	dbgBytes      int
+	dbgFrames     uint64
+	dbgSilent     bool
 }
 
 func NewEngine(kind AudioKind, mode CaptureMode, deviceIndex int, onChunk func([]byte)) *Engine {
@@ -150,7 +153,11 @@ func (e *Engine) Start() error {
 	deviceConfig.Capture.Format = malgo.FormatS16
 	deviceConfig.Capture.Channels = Channels
 	deviceConfig.SampleRate = SampleRate
-	deviceConfig.PeriodSizeInMilliseconds = 20 // 20ms chunks
+	// 周期使用设备默认值（不手动指定毫秒周期）：
+	// WASAPI Loopback 下手动设 20ms 周期与设备实际周期（通常 10ms）不匹配，
+	// 会导致约一半回调拿到 SILENT 空数据（表现为 20ms 声音/20ms 静音交替，
+	// 听感为"嘟嘟"断续与电流声）。让 miniaudio 按设备周期驱动回调，
+	// 配合 miniaudio 的 SILENT 清零补丁可获得连续音频流。
 
 	if e.kind == KindMic {
 		devices, err := e.ctx.Devices(malgo.Capture)
@@ -216,18 +223,29 @@ func (e *Engine) Start() error {
 			kindName = "麦克风"
 		}
 		go func() {
-			var lastChunks, lastBytes uint64
+			var lastChunks, lastZero, lastBytes, lastFrames uint64
 			for {
 				time.Sleep(2 * time.Second)
 				e.mu.Lock()
-				c, b, silent := e.dbgChunks, uint64(e.dbgBytes), e.dbgSilent
+				e.mu.Lock()
+				c, z, b, f, silent := e.dbgChunks, e.dbgZeroChunks, uint64(e.dbgBytes), e.dbgFrames, e.dbgSilent
 				e.mu.Unlock()
 				if c == lastChunks && lastBytes != 0 {
-					util.Logf("[音频诊断] %s 捕获已停止增长（chunks=%d）\n", kindName, c)
+					util.Logf("[音频诊断] %s 捕获已停止增长（chunks=%d）", kindName, c)
 					continue
 				}
-				util.Logf("[音频诊断] %s 捕获: %d chunks/2s, %d KB/2s, 本段全零静音=%v\n", kindName, c-lastChunks, (b-lastBytes)/1024, silent)
-				lastChunks, lastBytes = c, b
+				nChunks := c - lastChunks
+				avgFrames := 0
+				if nChunks > 0 {
+					avgFrames = int((f - lastFrames) / nChunks)
+				}
+				zeroRatio := 0.0
+				if nChunks > 0 {
+					zeroRatio = float64(z-lastZero) / float64(nChunks) * 100
+				}
+				util.Logf("[音频诊断] %s 捕获: %d chunks/2s, %d KB/2s, 平均 %d 帧/chunk, 全零 chunk %.0f%%, 本段全零=%v",
+					kindName, nChunks, (b-lastBytes)/1024, avgFrames, zeroRatio, silent)
+				lastChunks, lastZero, lastBytes, lastFrames = c, z, b, f
 			}
 		}()
 	}
@@ -244,10 +262,15 @@ func (e *Engine) Start() error {
 				copy(buf[4:], pInputSamples)
 				// 诊断：统计实际捕获速率与字节量（含全零静音检测线索）
 				if util.DebugAudio() {
+					zero := isAllZero(pInputSamples)
 					e.mu.Lock()
 					e.dbgChunks++
+					if zero {
+						e.dbgZeroChunks++
+					}
 					e.dbgBytes += len(pInputSamples)
-					e.dbgSilent = isAllZero(pInputSamples)
+					e.dbgFrames += uint64(framecount)
+					e.dbgSilent = zero
 					e.mu.Unlock()
 				}
 				e.onChunk(buf)
