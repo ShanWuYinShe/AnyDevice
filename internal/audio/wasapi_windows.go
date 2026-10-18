@@ -113,8 +113,14 @@ type wasapiCapture struct {
 	// 流式重采样状态（原生采样率 → 48kHz）
 	resampleRatio float64 // srcRate / 48000
 	resampleFrac  float64 // 下一输出点在包内的浮点起始位置（可为负，跨包保留小数部分）
-	lastL, lastR  float64 // 上一包最后一帧（跨包插值用）
-	haveLast      bool
+
+	// DC 高通滤波状态（一阶 IIR，20Hz 截止，去除设备直流偏移）。
+	// 部分音频端点（如 HDMI）在无音频播放时 loopback 数据含巨大直流偏移，
+	// 直接播放会造成低频"爆炸"声；高通去除 <20Hz 能量，对音频内容无损。
+	hpX1L, hpY1L float64
+	hpX1R, hpY1R float64
+	lastL, lastR float64 // 上一包最后一帧（跨包插值用）
+	haveLast     bool
 }
 
 // Close 释放全部 COM 资源与事件句柄。
@@ -398,7 +404,7 @@ func (w *wasapiCapture) convert(data []byte, nframes int) []byte {
 			if w.srcChannels > 1 {
 				r = w.readChannel(data, i, 1)
 			}
-			out = appendS16Pair(out, l, r)
+			out = w.appendFrame(out, l, r)
 		}
 		if nframes > 0 {
 			w.lastL = w.readChannel(data, nframes-1, 0)
@@ -447,7 +453,7 @@ func (w *wasapiCapture) convert(data []byte, nframes int) []byte {
 				r1 = w.readChannel(data, i+1, 1)
 			}
 		}
-		out = appendS16Pair(out,
+		out = w.appendFrame(out,
 			l0+(l1-l0)*a,
 			r0+(r1-r0)*a)
 		pos += w.resampleRatio
@@ -478,8 +484,21 @@ func (w *wasapiCapture) renderSilence(nframes int) []byte {
 	return make([]byte, outFrames*4)
 }
 
-// appendS16Pair 追加一帧立体声 S16。
-func appendS16Pair(buf []byte, l, r float64) []byte {
+// dcHighPass 一阶 IIR 高通（20Hz 截止 @48kHz），去除设备直流偏移。
+// 无音频播放时部分端点（HDMI 等）的 loopback 数据带巨大 DC 分量，
+// 直出会造成低频爆炸声；高通对正常音频内容无影响。
+func (w *wasapiCapture) dcHighPass(x float64, x1, y1 *float64) float64 {
+	const alpha = 0.99739 // 1/(1+2π·20/48000)
+	y := alpha * (*y1 + x - *x1)
+	*x1 = x
+	*y1 = y
+	return y
+}
+
+// appendFrame 应用 DC 高通后追加一帧立体声 S16。
+func (w *wasapiCapture) appendFrame(buf []byte, l, r float64) []byte {
+	l = w.dcHighPass(l, &w.hpX1L, &w.hpY1L)
+	r = w.dcHighPass(r, &w.hpX1R, &w.hpY1R)
 	li, ri := toS16(l), toS16(r)
 	return append(buf, byte(li), byte(li>>8), byte(ri), byte(ri>>8))
 }
