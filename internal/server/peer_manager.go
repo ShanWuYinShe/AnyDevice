@@ -484,21 +484,3 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 		}
 	}
 }
-
-// SendRemoteControl sends a control command to a remote peer.
-func (pm *PeerManager) SendRemoteControl(peerID string, cmd interface{}) error {
-	pm.mu.RLock()
-	connObj, exists := pm.conns[peerID]
-	pm.mu.RUnlock()
-
-	if !exists || connObj == nil || connObj.conn == nil {
-		return fmt.Errorf("尚未与该对端建立控制连接")
-	}
-
-	data, err := json.Marshal(cmd)
-	if err != nil {
-		return err
-	}
-
-	return connObj.conn.WriteMessage(websocket.TextMessage, data)
-}

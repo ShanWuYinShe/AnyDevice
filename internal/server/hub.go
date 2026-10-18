@@ -30,7 +30,6 @@ type InboundClientInfo struct {
 	AudioEnabled    bool   `json:"audio_enabled"`
 	MouseEnabled    bool   `json:"mouse_enabled"`
 	KeyboardEnabled bool   `json:"keyboard_enabled"`
-	AllowControl    bool   `json:"allow_control"`
 }
 
 // Client represents a connected browser or receiver client.
@@ -47,7 +46,6 @@ type Client struct {
 	audioEnabled    bool
 	mouseEnabled    bool
 	keyboardEnabled bool
-	allowControl    bool
 	isLocal         bool // 本机回环 UI 客户端（127.0.0.1 / 本机网卡地址发起）
 	mu              sync.RWMutex
 }
@@ -331,7 +329,6 @@ func NewClient(hub *Hub, conn *websocket.Conn, remoteAddr, userAgent string, loc
 		audioEnabled:    audioEnabled,
 		mouseEnabled:    mouseEnabled,
 		keyboardEnabled: keyboardEnabled,
-		allowControl:    true,
 	}
 }
 
@@ -355,100 +352,11 @@ func (h *Hub) GetInboundClients() []InboundClientInfo {
 			AudioEnabled:    c.audioEnabled,
 			MouseEnabled:    c.mouseEnabled,
 			KeyboardEnabled: c.keyboardEnabled,
-			AllowControl:    c.allowControl,
 		}
 		c.mu.RUnlock()
 		result = append(result, info)
 	}
 	return result
-}
-
-// UpdateInboundClient updates permissions for a specific client.
-func (h *Hub) UpdateInboundClient(id string, audio *bool, mouse *bool, keyboard *bool, allowControl *bool) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	for c := range h.clients {
-		if c.id == id {
-			c.mu.Lock()
-			if audio != nil {
-				c.audioEnabled = *audio
-			}
-			if mouse != nil {
-				c.mouseEnabled = *mouse
-			}
-			if keyboard != nil {
-				c.keyboardEnabled = *keyboard
-			}
-			if allowControl != nil {
-				c.allowControl = *allowControl
-			}
-			c.mu.Unlock()
-
-			select {
-			case h.updateSubs <- struct{}{}:
-			default:
-			}
-			return true
-		}
-	}
-	return false
-}
-
-// DisconnectInboundClient kicks a client.
-func (h *Hub) DisconnectInboundClient(id string) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	for c := range h.clients {
-		if c.id == id {
-			if c.conn != nil {
-				c.conn.Close()
-			}
-			return true
-		}
-	}
-	return false
-}
-
-// UpdateAllInboundClients updates permissions across all connected inbound clients.
-func (h *Hub) UpdateAllInboundClients(audio *bool, mouse *bool, keyboard *bool, allowControl *bool) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	for c := range h.clients {
-		c.mu.Lock()
-		if audio != nil {
-			c.audioEnabled = *audio
-		}
-		if mouse != nil {
-			c.mouseEnabled = *mouse
-		}
-		if keyboard != nil {
-			c.keyboardEnabled = *keyboard
-		}
-		if allowControl != nil {
-			c.allowControl = *allowControl
-		}
-		c.mu.Unlock()
-	}
-
-	select {
-	case h.updateSubs <- struct{}{}:
-	default:
-	}
-}
-
-// DisconnectAllInboundClients disconnects all connected inbound clients.
-func (h *Hub) DisconnectAllInboundClients() {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-
-	for c := range h.clients {
-		if c.conn != nil {
-			c.conn.Close()
-		}
-	}
 }
 
 func (c *Client) writePump() {
@@ -513,19 +421,13 @@ func (c *Client) readPump() {
 
 		if msgType == websocket.TextMessage {
 			var cmd struct {
-				Action   string `json:"action"` // "set_mapping" or "remote_input"
+				Action   string `json:"action"` // "set_mapping"
 				Audio    *bool  `json:"audio"`
 				Mouse    *bool  `json:"mouse"`
 				Keyboard *bool  `json:"keyboard"`
 				// 对端节点身份（新版实例握手时上报，用于设备档案归并）
 				NodeID   string `json:"node_id"`
 				NodeName string `json:"node_name"`
-				// Reverse input control fields
-				Type string `json:"type"` // "move", "click", "button", "scroll"
-				Dx   int    `json:"dx"`
-				Dy   int    `json:"dy"`
-				Btn  string `json:"btn"` // "left", "right", "middle"
-				Down bool   `json:"down"`
 			}
 			if err := json.Unmarshal(p, &cmd); err != nil {
 				continue
@@ -550,27 +452,6 @@ func (c *Client) readPump() {
 				select {
 				case c.hub.updateSubs <- struct{}{}:
 				default:
-				}
-			} else if cmd.Action == "remote_input" {
-				c.mu.RLock()
-				allowed := c.allowControl
-				c.mu.RUnlock()
-				if !allowed {
-					continue
-				}
-
-				// Reverse control: client controls host mouse!
-				switch cmd.Type {
-				case "move":
-					mouse.SimulateMove(cmd.Dx, cmd.Dy)
-				case "click":
-					mouse.SimulateButton(cmd.Btn, true)
-					time.Sleep(15 * time.Millisecond)
-					mouse.SimulateButton(cmd.Btn, false)
-				case "button":
-					mouse.SimulateButton(cmd.Btn, cmd.Down)
-				case "scroll":
-					mouse.SimulateScroll(cmd.Dy)
 				}
 			}
 		}
