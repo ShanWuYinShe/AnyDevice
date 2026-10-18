@@ -19,6 +19,11 @@
   const hasMicAudio = $derived(!!provides.mic_audio);
   const hasMouse = $derived(!!provides.mouse);
   const hasKeyboard = $derived(!!provides.keyboard);
+  // 协议版本防呆：对端未广播 audio_format（旧版 int16 协议）或格式不一致时，
+  // float32 解码会产生纯噪声——明确提示两端必须同一版本
+  const audioFormatMismatch = $derived(
+    peer.provides && peer.provides.audio_format !== 'f32le-48000-stereo'
+  );
   const sysAudioMapped = $derived(!!(mapping.play_system_audio_local || mapping.play_audio_local));
   const micAudioMapped = $derived(!!mapping.play_mic_audio_local);
   const mouseMapped = $derived(!!mapping.execute_mouse_local);
@@ -90,8 +95,10 @@
           {/if}
         </span>
       </div>
-      <button class="map-btn" class:active-emerald={sysAudioMapped} disabled={!hasSystemAudio} onclick={onToggleSystemAudio}>
-        {sysAudioMapped ? '🔊 正在本地播放对端系统声音 (点击关闭)' : '🔈 映射并在本地播放系统声音'}
+      <button class="map-btn" class:active-emerald={sysAudioMapped} disabled={!hasSystemAudio || audioFormatMismatch} onclick={onToggleSystemAudio}>
+        {audioFormatMismatch
+          ? '⚠️ 对端为旧版本（音频协议不一致，禁止映射以免噪音）——请两端都更新到最新版'
+          : sysAudioMapped ? '🔊 正在本地播放对端系统声音 (点击关闭)' : '🔈 映射并在本地播放系统声音'}
       </button>
       {#if sysAudioMapped && audioPlayState.text.includes('suspended')}
         <button class="nav-btn" style="padding: 8px; justify-content: center;" onclick={resumeAudio}>

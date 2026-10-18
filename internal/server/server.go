@@ -61,6 +61,7 @@ func NewServer(port int, initialIP string, hub *Hub, systemAudioEngine *audio.En
 		Control:     true,
 		AudioDevice: sysDev,
 		MicDevice:   micDev,
+		AudioFormat: "f32le-48000-stereo",
 		Audio:       systemAudioEngine != nil,
 	})
 	disc.Start()
@@ -453,6 +454,7 @@ func (s *Server) SetupRoutes() http.Handler {
 			"id":                  s.discovery.ID(),
 			"name":                s.discovery.Name(),
 			"os":                  runtime.GOOS,
+			"audio_format":        "f32le-48000-stereo",
 			"current_ip":          s.GetCurrentIP(),
 			"port":                s.port,
 			"primary_url":         s.GetCurrentURL(),

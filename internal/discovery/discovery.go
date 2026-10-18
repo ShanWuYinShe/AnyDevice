@@ -54,6 +54,7 @@ type DeviceCapabilities struct {
 	Control     bool   `json:"control"`
 	AudioDevice string `json:"audio_device,omitempty"`
 	MicDevice   string `json:"mic_device,omitempty"`
+	AudioFormat string `json:"audio_format,omitempty"` // 音频 PCM 协议（f32le-48000-stereo）；空=旧版 int16
 	Audio       bool   `json:"audio"` // Backward compatibility
 }
 
@@ -269,6 +270,7 @@ func (s *Service) UpdateProvides(systemAudio, micAudio, mouse, keyboard, control
 		Control:     control,
 		AudioDevice: sysDev,
 		MicDevice:   micDev,
+		AudioFormat: "f32le-48000-stereo",
 		Audio:       systemAudio,
 	}
 }
