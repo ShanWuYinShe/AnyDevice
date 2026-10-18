@@ -28,6 +28,9 @@ class PCMRingPlayer extends AudioWorkletProcessor {
     // 预缓冲：积攒到 100ms 才开始出声（吸收网络抖动，避免开头碎裂）
     this.prebufferFrames = 4800;
     this.priming = true;
+    // 软限幅器（专业音频链标准配置）：任何峰值过载平滑压缩，
+    // 防止突发音量/叠加峰值造成削波爆音（"炸"）
+    this.limiterGain = 1.0;
     this.port.onmessage = (e) => {
       const msg = e.data;
       if (!msg || msg.type !== 'pcm') return;
@@ -67,15 +70,22 @@ class PCMRingPlayer extends AudioWorkletProcessor {
       }
     }
     for (let i = 0; i < n; i++) {
+      let l = 0, r = 0;
       if (this.filled > 0) {
-        ch0[i] = this.ringL[this.readIdx];
-        ch1[i] = this.ringR[this.readIdx];
+        l = this.ringL[this.readIdx];
+        r = this.ringR[this.readIdx];
         this.readIdx = (this.readIdx + 1) % this.cap;
         this.filled--;
-      } else {
-        ch0[i] = 0;
-        ch1[i] = 0;
       }
+      // 软限幅：峰值超阈值时快速压低增益，之后缓慢恢复（无爆音、无硬削波）
+      const peak = Math.max(Math.abs(l), Math.abs(r));
+      if (peak * this.limiterGain > 0.95) {
+        this.limiterGain = Math.max(0.2, 0.95 / peak);
+      } else if (this.limiterGain < 1.0) {
+        this.limiterGain = Math.min(1.0, this.limiterGain + 0.0002);
+      }
+      ch0[i] = l * this.limiterGain;
+      ch1[i] = r * this.limiterGain;
     }
     if (this.filled === 0) {
       this.underflows++;
