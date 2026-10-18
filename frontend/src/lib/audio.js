@@ -77,10 +77,11 @@ class PCMRingPlayer extends AudioWorkletProcessor {
         this.readIdx = (this.readIdx + 1) % this.cap;
         this.filled--;
       }
-      // 软限幅：峰值超阈值时快速压低增益，之后缓慢恢复（无爆音、无硬削波）
+      // 软限幅（只衰减、永不放大——放大是失真"炸"的来源）：
+      // 峰值超过阈值时把增益压到阈值以下，随后缓慢恢复到 1。
       const peak = Math.max(Math.abs(l), Math.abs(r));
-      if (peak * this.limiterGain > 0.95) {
-        this.limiterGain = Math.max(0.2, 0.95 / peak);
+      if (peak > 0.95) {
+        this.limiterGain = Math.min(this.limiterGain, 0.95 / peak);
       } else if (this.limiterGain < 1.0) {
         this.limiterGain = Math.min(1.0, this.limiterGain + 0.0002);
       }
