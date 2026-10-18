@@ -233,8 +233,16 @@ window.__audioDebug = () => ({
 
 // —— Opus 解码（WebCodecs 原生）——
 // 服务端推送 Opus 包（AUPS/AUPM tag 的 payload），此处解码为 float32
-// 交错帧后送入对应环形缓冲。
+// 平面帧（左/右声道各一段）后送入对应环形缓冲。
+//
+// 两个 WebCodecs 硬约束（此前踩过）：
+//   1) configure() 之后的第一块必须标记 type:'key'，否则 Chrome 抛
+//      DataError: Failed to execute 'decode' on 'AudioDecoder'，整条链路无声；
+//   2) AudioDecoder 输出的是平面（planar）数据，而 pushPCMFloats 接收
+//      左右两段 Float32Array——不能把交错数据当单参数传进去（会静音/抛错）。
 const opusDecoders = { sys: null, mic: null };
+// 每个解码器实例的首块必须是 key frame；解码报错后需重置按关键帧重来
+const opusNeedKey = { sys: true, mic: true };
 let opusTsUs = 0;
 
 function ensureOpusDecoder(key) {
@@ -246,24 +254,29 @@ function ensureOpusDecoder(key) {
   const decoder = new AudioDecoder({
     output: (audioData) => {
       const frames = audioData.numberOfFrames;
+      const channels = audioData.numberOfChannels;
       const l = new Float32Array(frames);
       const r = new Float32Array(frames);
-      audioData.copyTo(l, { planeIndex: 0, format: 'f32-planar' });
-      audioData.copyTo(r, { planeIndex: 1, format: 'f32-planar' });
-      audioData.close();
-      const interleaved = new Float32Array(frames * 2);
-      for (let i = 0; i < frames; i++) {
-        interleaved[i * 2] = l[i];
-        interleaved[i * 2 + 1] = r[i];
+      try {
+        audioData.copyTo(l, { planeIndex: 0, format: 'f32-planar' });
+        if (channels > 1) {
+          audioData.copyTo(r, { planeIndex: 1, format: 'f32-planar' });
+        } else {
+          r.set(l); // 单声道包：复制到右声道
+        }
+      } finally {
+        audioData.close();
       }
-      pushPCMFloats(key, interleaved);
+      pushPCMFloats(key, l, r);
     },
     error: (e) => {
       workletError = 'Opus 解码: ' + String((e && e.message) || e);
+      opusNeedKey[key] = true;
     },
   });
   decoder.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 2 });
   opusDecoders[key] = decoder;
+  opusNeedKey[key] = true;
 }
 
 // decodeOpus 解码一个 Opus 包并送入对应流缓冲。
@@ -272,10 +285,19 @@ export function decodeOpus(packet, stream) {
   ensureOpusDecoder(key);
   const d = opusDecoders[key];
   if (!d) return;
+  const type = opusNeedKey[key] ? 'key' : 'delta';
   opusTsUs += 20000; // 每包 20ms，时间戳仅用于顺序标记
-  d.decode(new EncodedAudioChunk({
-    type: 'delta',
-    timestamp: opusTsUs,
-    data: new Uint8Array(packet),
-  }));
+  try {
+    d.decode(new EncodedAudioChunk({
+      type,
+      timestamp: opusTsUs,
+      data: new Uint8Array(packet),
+    }));
+    opusNeedKey[key] = false;
+  } catch (e) {
+    // 不让异常冒泡到 WebSocket 消息处理链（会打断后续包的接收）；
+    // 记录到诊断状态并在下一包按关键帧重试
+    workletError = 'Opus 解码: ' + String((e && e.message) || e);
+    opusNeedKey[key] = true;
+  }
 }
