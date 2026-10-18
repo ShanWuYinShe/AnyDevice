@@ -335,7 +335,8 @@ func (w *wasapiCapture) frameBytes() int {
 	return w.srcChannels * w.srcBits / 8
 }
 
-// readChannel 从一帧中读取第 ch 声道（返回 -32768..32767 范围的浮点值）。
+// readChannel 从一帧中读取第 ch 声道，返回归一化值（正常 -1..1；
+// float 混音可能 >1.0——全链 float 传输下不削波，交给播放端限幅器）。
 func (w *wasapiCapture) readChannel(data []byte, frame int, ch int) float64 {
 	base := frame*w.frameBytes() + ch*w.srcBits/8
 	if base+w.srcBits/8 > len(data) {
@@ -347,38 +348,38 @@ func (w *wasapiCapture) readChannel(data []byte, frame int, ch int) float64 {
 		if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
 			return 0
 		}
-		return float64(v) * 32767.0
+		return float64(v)
 	case w.srcBits == 16:
-		return float64(int16(*(*uint16)(unsafe.Pointer(&data[base]))))
+		return float64(int16(*(*uint16)(unsafe.Pointer(&data[base])))) / 32768.0
 	case w.srcBits == 24:
 		v := int32(data[base]) | int32(data[base+1])<<8 | int32(data[base+2])<<16
 		if v&0x800000 != 0 {
 			v -= 1 << 24
 		}
-		return float64(v) / 256.0
+		return float64(v) / 8388608.0
 	case w.srcBits == 32:
 		v := int32(*(*uint32)(unsafe.Pointer(&data[base])))
-		return float64(v) / 65536.0
+		return float64(v) / 2147483648.0
 	}
 	return 0
 }
 
-// toS16 钳位并编码为 int16。
-func toS16(v float64) int16 {
-	if v > 32767 {
-		return 32767
-	}
-	if v < -32768 {
-		return -32768
-	}
-	return int16(v)
+// appendFloat32Frame 编码一帧立体声 float32（小端交错）。
+// 不做钳位：float 域全程保真，超过 1.0 的峰值交给播放端软限幅器平滑处理。
+func (w *wasapiCapture) appendFloat32Frame(buf []byte, l, r float64) []byte {
+	lb := math.Float32bits(float32(l))
+	rb := math.Float32bits(float32(r))
+	buf = append(buf,
+		byte(lb), byte(lb>>8), byte(lb>>16), byte(lb>>24),
+		byte(rb), byte(rb>>8), byte(rb>>16), byte(rb>>24))
+	return buf
 }
 
-// convert 原生帧序列 → 48kHz 立体声 S16 交错（流式线性重采样，跨包保留小数位置）。
+// convert 原生帧序列 → 48kHz 立体声 float32 交错（流式线性重采样，跨包保留小数位置）。
 func (w *wasapiCapture) convert(data []byte, nframes int) []byte {
 	// 目标输出帧数（含跨包余量）
 	outCap := int(float64(nframes)/w.resampleRatio) + 2
-	out := make([]byte, 0, outCap*4)
+	out := make([]byte, 0, outCap*8)
 
 	// 快路径：48kHz 直通（无重采样损失）
 	if w.srcRate == outSampleRate {
@@ -465,7 +466,7 @@ func (w *wasapiCapture) renderSilence(nframes int) []byte {
 		outFrames++
 	}
 	w.resampleFrac = pos - float64(nframes)
-	return make([]byte, outFrames*4)
+	return make([]byte, outFrames*8) // float32 立体声帧 = 8 字节
 }
 
 // dcHighPass 一阶 IIR 高通（20Hz 截止 @48kHz），去除设备直流偏移。
@@ -479,10 +480,9 @@ func (w *wasapiCapture) dcHighPass(x float64, x1, y1 *float64) float64 {
 	return y
 }
 
-// appendFrame 应用 DC 高通后追加一帧立体声 S16。
+// appendFrame 应用 DC 高通后追加一帧立体声 float32。
 func (w *wasapiCapture) appendFrame(buf []byte, l, r float64) []byte {
 	l = w.dcHighPass(l, &w.hpX1L, &w.hpY1L)
 	r = w.dcHighPass(r, &w.hpX1R, &w.hpY1R)
-	li, ri := toS16(l), toS16(r)
-	return append(buf, byte(li), byte(li>>8), byte(ri), byte(ri>>8))
+	return w.appendFloat32Frame(buf, l, r)
 }

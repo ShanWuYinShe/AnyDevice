@@ -110,12 +110,12 @@ export function sendSubscriptions() {
 let ws = null;
 let reconnectTimer = null;
 
-// isAllZeroPCM 判断 16bit 交错 PCM 是否全零（静音段）。
-// 全扫描 1920 个样本/50 帧每秒开销可忽略，避免误伤真实音频开头的静音采样。
+// isAllZeroPCM 判断 float32 交错 PCM 是否全零（静音段）。
+// 全扫描开销在 50 帧/秒下可忽略，避免误伤真实音频开头的静音采样。
 function isAllZeroPCM(pcm) {
-  const i16 = new Int16Array(pcm);
-  for (let i = 0; i < i16.length; i++) {
-    if (i16[i] !== 0) return false;
+  const f32 = new Float32Array(pcm);
+  for (let i = 0; i < f32.length; i++) {
+    if (f32[i] !== 0) return false;
   }
   return true;
 }

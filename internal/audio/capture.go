@@ -17,7 +17,7 @@ import (
 const (
 	SampleRate = 48000
 	Channels   = 2
-	BitDepth   = 16                        // S16: 2 bytes per sample
+	BitDepth   = 32                        // F32: 4 bytes per sample
 	FrameSize  = Channels * (BitDepth / 8) // 4 bytes per stereo frame
 )
 
@@ -62,18 +62,19 @@ type Engine struct {
 	cancelGen context.CancelFunc
 
 	mu          sync.Mutex
-	isRunning   bool
+	isRunning   atomic.Bool
 	isTestTone  bool // 当前来源为占位测试音（无真实虚拟声卡时的回退）
 	devName     string
 	subscribers int64 // 音频订阅数（atomic）：无订阅者时引擎静默，避免空转生成与广播 PCM
 
 	// 诊断统计（ANY_DEVICE_AUDIO_DEBUG=1 时输出）：捕获 chunk 数/字节量/
-	// 全零 chunk 数（SILENT 补丁后静音段表现为全零）/累计帧数
-	dbgChunks     uint64
-	dbgZeroChunks uint64
-	dbgBytes      int
-	dbgFrames     uint64
-	dbgSilent     bool
+	// 全零 chunk 数（SILENT 补丁后静音段表现为全零）/累计帧数。
+	// 全部 atomic：emit 在音频实时回调线程执行，绝不能阻塞（曾因
+	// 音频回调线程抢 e.mu 与 Start/Stop 死锁，服务整体卡死）。
+	dbgChunks     atomic.Uint64
+	dbgZeroChunks atomic.Uint64
+	dbgBytes      atomic.Int64
+	dbgFrames     atomic.Uint64
 }
 
 func NewEngine(kind AudioKind, mode CaptureMode, deviceIndex int, onChunk func([]byte)) *Engine {
@@ -100,24 +101,33 @@ func (e *Engine) DeviceName() string {
 	return e.devName
 }
 
+// setDevName 线程安全地写入当前音频源名称。
+func (e *Engine) setDevName(name string) {
+	e.mu.Lock()
+	e.devName = name
+	e.mu.Unlock()
+}
+
 // Kind returns whether this engine captures system output or mic input.
 func (e *Engine) Kind() AudioKind {
 	return e.kind
 }
 
 // Start begins capturing or generating audio.
+//
+// 重要：本函数在检查 isRunning 后立即释放 e.mu——后续的 miniaudio
+// 初始化是阻塞调用，期间音频回调线程可能已启动并调用 emit（需要
+// 竞争统计锁），持锁初始化曾导致回调线程与主线程互等死锁。
+// isRunning 仅在成功后加锁写入。
 func (e *Engine) Start() error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
-	if e.isRunning {
+	if !e.isRunning.CompareAndSwap(false, true) {
 		return nil
 	}
 
 	if e.mode == ModeTestTone {
-		e.devName = "系统扬声器 (未安装虚拟声卡)"
+		e.setDevName("系统扬声器 (未安装虚拟声卡)")
 		e.startTestTone()
-		e.isRunning = true
+
 		return nil
 	}
 
@@ -131,8 +141,8 @@ func (e *Engine) Start() error {
 		tag := TagSystemAudio
 		if err := startNativeSystemCapture(captureCtx, func(pcm []byte) { e.emit(tag, pcm) }); err == nil {
 			e.cancelGen = cancel
-			e.devName = "系统声音输出 (WASAPI 原生 Loopback)"
-			e.isRunning = true
+			e.setDevName("系统声音输出 (WASAPI 原生 Loopback)")
+
 			return nil
 		} else {
 			cancel()
@@ -145,9 +155,9 @@ func (e *Engine) Start() error {
 	if err != nil {
 		util.Logf("[Audio] Malgo context init failed for %s: %v\n", e.kind, err)
 		if e.kind == KindSystem {
-			e.devName = "系统扬声器 (音频驱动不可用)"
+			e.setDevName("系统扬声器 (音频驱动不可用)")
 			e.startTestTone()
-			e.isRunning = true
+
 			return nil
 		}
 		return fmt.Errorf("malgo init failed: %w", err)
@@ -157,12 +167,12 @@ func (e *Engine) Start() error {
 	var devType malgo.DeviceType
 	if e.kind == KindMic {
 		devType = malgo.Capture
-		e.devName = "麦克风输入"
+		e.setDevName("麦克风输入")
 	} else {
 		// System audio loopback
 		if runtime.GOOS == "windows" {
 			devType = malgo.Loopback
-			e.devName = "系统扬声器输出 (WASAPI Loopback)"
+			e.setDevName("系统扬声器输出 (WASAPI Loopback)")
 		} else {
 			// On macOS / Linux: check for virtual loopback (BlackHole, Soundflower...)
 			devType = malgo.Capture
@@ -170,7 +180,7 @@ func (e *Engine) Start() error {
 	}
 
 	deviceConfig := malgo.DefaultDeviceConfig(devType)
-	deviceConfig.Capture.Format = malgo.FormatS16
+	deviceConfig.Capture.Format = malgo.FormatF32
 	deviceConfig.Capture.Channels = Channels
 	deviceConfig.SampleRate = SampleRate
 	// 周期使用设备默认值（不手动指定毫秒周期）：
@@ -183,18 +193,18 @@ func (e *Engine) Start() error {
 		devices, err := e.ctx.Devices(malgo.Capture)
 		if err == nil {
 			if e.deviceIndex >= 0 && e.deviceIndex < len(devices) {
-				e.devName = devices[e.deviceIndex].Name()
+				e.setDevName(devices[e.deviceIndex].Name())
 				deviceConfig.Capture.DeviceID = devices[e.deviceIndex].ID.Pointer()
 			} else {
 				for _, d := range devices {
 					if d.IsDefault > 0 {
-						e.devName = d.Name()
+						e.setDevName(d.Name())
 						deviceConfig.Capture.DeviceID = d.ID.Pointer()
 						break
 					}
 				}
 				if e.devName == "麦克风输入" && len(devices) > 0 {
-					e.devName = devices[0].Name()
+					e.setDevName(devices[0].Name())
 					deviceConfig.Capture.DeviceID = devices[0].ID.Pointer()
 				}
 			}
@@ -205,12 +215,12 @@ func (e *Engine) Start() error {
 			devices, err := e.ctx.Devices(malgo.Playback)
 			if err == nil {
 				if e.deviceIndex >= 0 && e.deviceIndex < len(devices) {
-					e.devName = fmt.Sprintf("系统输出 [%s]", devices[e.deviceIndex].Name())
+					e.setDevName(fmt.Sprintf("系统输出 [%s]", devices[e.deviceIndex].Name()))
 					deviceConfig.Playback.DeviceID = devices[e.deviceIndex].ID.Pointer()
 				} else {
 					for _, d := range devices {
 						if d.IsDefault > 0 {
-							e.devName = fmt.Sprintf("系统输出 [%s]", d.Name())
+							e.setDevName(fmt.Sprintf("系统输出 [%s]", d.Name()))
 							deviceConfig.Playback.DeviceID = d.ID.Pointer()
 							break
 						}
@@ -223,9 +233,9 @@ func (e *Engine) Start() error {
 			if e.devName == "" {
 				// No virtual audio driver installed on macOS -> run test tone for system audio
 				// Do NOT capture user microphone!
-				e.devName = "系统扬声器 (未安装虚拟声卡，无法捕获原声)"
+				e.setDevName("系统扬声器 (未安装虚拟声卡，无法捕获原声)")
 				e.startTestTone()
-				e.isRunning = true
+
 				return nil
 			}
 		}
@@ -247,9 +257,10 @@ func (e *Engine) Start() error {
 			for {
 				time.Sleep(2 * time.Second)
 				e.mu.Lock()
-				e.mu.Lock()
-				c, z, b, f, silent := e.dbgChunks, e.dbgZeroChunks, uint64(e.dbgBytes), e.dbgFrames, e.dbgSilent
-				e.mu.Unlock()
+				c := e.dbgChunks.Load()
+				z := e.dbgZeroChunks.Load()
+				b := uint64(e.dbgBytes.Load())
+				f := e.dbgFrames.Load()
 				if c == lastChunks && lastBytes != 0 {
 					util.Logf("[音频诊断] %s 捕获已停止增长（chunks=%d）", kindName, c)
 					continue
@@ -263,8 +274,8 @@ func (e *Engine) Start() error {
 				if nChunks > 0 {
 					zeroRatio = float64(z-lastZero) / float64(nChunks) * 100
 				}
-				util.Logf("[音频诊断] %s 捕获: %d chunks/2s, %d KB/2s, 平均 %d 帧/chunk, 全零 chunk %.0f%%, 本段全零=%v",
-					kindName, nChunks, (b-lastBytes)/1024, avgFrames, zeroRatio, silent)
+				util.Logf("[音频诊断] %s 捕获: %d chunks/2s, %d KB/2s, 平均 %d 帧/chunk, 全零 chunk %.0f%%",
+					kindName, nChunks, (b-lastBytes)/1024, avgFrames, zeroRatio)
 				lastChunks, lastZero, lastBytes, lastFrames = c, z, b, f
 			}
 		}()
@@ -281,9 +292,9 @@ func (e *Engine) Start() error {
 	if err != nil {
 		util.Logf("[Audio] Warning: Failed to init audio device for %s (%v).\n", e.kind, err)
 		if e.kind == KindSystem {
-			e.devName = "系统扬声器 (未安装虚拟声卡)"
+			e.setDevName("系统扬声器 (未安装虚拟声卡)")
 			e.startTestTone()
-			e.isRunning = true
+
 			return nil
 		}
 		return err
@@ -294,15 +305,14 @@ func (e *Engine) Start() error {
 		e.device.Uninit()
 		e.device = nil
 		if e.kind == KindSystem {
-			e.devName = "系统扬声器 (未安装虚拟声卡)"
+			e.setDevName("系统扬声器 (未安装虚拟声卡)")
 			e.startTestTone()
-			e.isRunning = true
+
 			return nil
 		}
 		return err
 	}
 
-	e.isRunning = true
 	return nil
 }
 
@@ -323,7 +333,7 @@ func (e *Engine) autoSelectVirtualDevice(config *malgo.DeviceConfig, devType mal
 		name := d.Name()
 		if isVirtualDeviceName(name) {
 			util.Logf("[Audio] Auto-detected virtual audio loopback: %s\n", name)
-			e.devName = fmt.Sprintf("系统输出 [%s]", name)
+			e.setDevName(fmt.Sprintf("系统输出 [%s]", name))
 			if devType == malgo.Loopback {
 				config.Playback.DeviceID = d.ID.Pointer()
 			} else {
@@ -339,7 +349,7 @@ func (e *Engine) Stop() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if !e.isRunning {
+	if !e.isRunning.Load() {
 		return
 	}
 
@@ -360,7 +370,7 @@ func (e *Engine) Stop() {
 		e.ctx = nil
 	}
 
-	e.isRunning = false
+	e.isRunning.Store(false)
 }
 
 // emit 把 PCM 交付给订阅者：订阅门控、tag 前缀与诊断统计统一在此处理。
@@ -373,16 +383,12 @@ func (e *Engine) emit(tag []byte, pcm []byte) {
 		return
 	}
 	if util.DebugAudio() {
-		zero := isAllZero(pcm)
-		e.mu.Lock()
-		e.dbgChunks++
-		if zero {
-			e.dbgZeroChunks++
+		e.dbgChunks.Add(1)
+		if isAllZero(pcm) {
+			e.dbgZeroChunks.Add(1)
 		}
-		e.dbgBytes += len(pcm)
-		e.dbgFrames += uint64(len(pcm) / FrameSize)
-		e.dbgSilent = zero
-		e.mu.Unlock()
+		e.dbgBytes.Add(int64(len(pcm)))
+		e.dbgFrames.Add(uint64(len(pcm) / 8))
 	}
 	buf := make([]byte, 4+len(pcm))
 	copy(buf[:4], tag)
@@ -436,19 +442,23 @@ func (e *Engine) startTestTone() {
 					// 避免连续双频正弦被误认为电流声或杂音。
 					t := float64(sampleIndex) / float64(SampleRate)
 					phase := math.Mod(t, 1.5)
-					var val int16
+					var val float32
 					if phase < 0.26 {
 						amp := 0.22 * math.Min(1.0, phase/0.02) * math.Min(1.0, (0.26-phase)/0.02)
-						val = int16(math.Sin(2*math.Pi*660*t) * amp * 32767)
+						val = float32(math.Sin(2*math.Pi*660*t) * amp)
 					}
 
 					offset := i * FrameSize
-					// Left channel (Little Endian)
-					buf[offset] = byte(val)
-					buf[offset+1] = byte(val >> 8)
-					// Right channel
-					buf[offset+2] = byte(val)
-					buf[offset+3] = byte(val >> 8)
+					// 立体声交错 float32（Little Endian）
+					lf := math.Float32bits(val)
+					buf[offset] = byte(lf)
+					buf[offset+1] = byte(lf >> 8)
+					buf[offset+2] = byte(lf >> 16)
+					buf[offset+3] = byte(lf >> 24)
+					buf[offset+4] = byte(lf)
+					buf[offset+5] = byte(lf >> 8)
+					buf[offset+6] = byte(lf >> 16)
+					buf[offset+7] = byte(lf >> 24)
 
 					sampleIndex++
 				}

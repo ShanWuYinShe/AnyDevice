@@ -192,19 +192,19 @@ function pushPCMFloats(key, left, right) {
   }
 }
 
-// playPCM 播放一个 PCM chunk（16bit 交错立体声 48kHz）。
+// playPCM 播放一个 PCM chunk（float32 交错立体声 48kHz）。
 // stream: 'sys' | 'mic'
 export function playPCM(arrayBuffer, stream) {
   if (!audioCtx) return;
   const key = stream === 'mic' ? 'mic' : 'sys';
-  const int16 = new Int16Array(arrayBuffer);
-  const frames = int16.length / 2;
+  const f32 = new Float32Array(arrayBuffer);
+  const frames = f32.length / 2;
   if (frames <= 0) return;
   const left = new Float32Array(frames);
   const right = new Float32Array(frames);
   for (let i = 0; i < frames; i++) {
-    left[i] = int16[i * 2] / 32768.0;
-    right[i] = int16[i * 2 + 1] / 32768.0;
+    left[i] = f32[i * 2];
+    right[i] = f32[i * 2 + 1];
   }
   pushPCMFloats(key, left, right);
 }
@@ -214,7 +214,7 @@ export function playPCM(arrayBuffer, stream) {
 export function skipPCM(arrayBuffer, stream) {
   if (!audioCtx) return;
   const key = stream === 'mic' ? 'mic' : 'sys';
-  const frames = new Int16Array(arrayBuffer).length / 2;
+  const frames = new Float32Array(arrayBuffer).length / 2;
   if (frames <= 0) return;
   pushPCMFloats(key, new Float32Array(frames), new Float32Array(frames));
 }
