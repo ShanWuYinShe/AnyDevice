@@ -13,10 +13,10 @@ package audio
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"any_device/internal/util"
@@ -26,25 +26,21 @@ var (
 	ole32    = syscall.NewLazyDLL("ole32.dll")
 	kernel32 = syscall.NewLazyDLL("kernel32.dll")
 
-	procCoInitializeEx      = ole32.NewProc("CoInitializeEx")
-	procCoUninitialize      = ole32.NewProc("CoUninitialize")
-	procCoCreateInstance    = ole32.NewProc("CoCreateInstance")
-	procCoTaskMemFree       = ole32.NewProc("CoTaskMemFree")
-	procCreateEventW        = kernel32.NewProc("CreateEventW")
-	procWaitForSingleObject = kernel32.NewProc("WaitForSingleObject")
-	procCloseHandle         = kernel32.NewProc("CloseHandle")
+	procCoInitializeEx   = ole32.NewProc("CoInitializeEx")
+	procCoUninitialize   = ole32.NewProc("CoUninitialize")
+	procCoCreateInstance = ole32.NewProc("CoCreateInstance")
+	procCoTaskMemFree    = ole32.NewProc("CoTaskMemFree")
+	procCloseHandle      = kernel32.NewProc("CloseHandle")
 )
 
 const (
 	coinitMultithreaded    = 0x0
 	clsctxAll              = 0x17
 	audclntShareModeShared = 0
-	// AUDCLNT_STREAMFLAGS_*：loopback 捕获 + 事件回调
-	audclntStreamFlagsLoopback      = 0x00020000
-	audclntStreamFlagsEventCallback = 0x00040000
+	// AUDCLNT_STREAMFLAGS_LOOPBACK：loopback 捕获（轮询读取，不支持事件驱动）
+	audclntStreamFlagsLoopback = 0x00020000
 	// AUDCLNT_BUFFERFLAGS_SILENT：本段静音（数据未定义，必须按静音处理）
 	audclntBufferFlagsSilent = 0x2
-	waitTimeout              = 0x102
 	waveFormatExtensible     = 0xFFFE
 	waveFormatIEEEFloat      = 0x0003
 
@@ -151,7 +147,7 @@ func (w *wasapiCapture) Close() {
 // startNativeSystemCapture 启动自研 WASAPI Loopback 捕获。
 // 成功时在后台 goroutine 中持续回调 onPCM（48kHz S16 立体声交错）。
 func startNativeSystemCapture(ctx context.Context, onPCM func([]byte)) error {
-	for _, p := range []*syscall.LazyProc{procCoInitializeEx, procCoCreateInstance, procCreateEventW, procWaitForSingleObject, procCoTaskMemFree} {
+	for _, p := range []*syscall.LazyProc{procCoInitializeEx, procCoCreateInstance, procCoTaskMemFree} {
 		if err := p.Find(); err != nil {
 			return fmt.Errorf("WASAPI 依赖不可用: %w", err)
 		}
@@ -215,33 +211,20 @@ func startNativeSystemCapture(ctx context.Context, onPCM func([]byte)) error {
 		return err
 	}
 
-	// 事件（自动重置，初始未触发）
-	hEvent, _, _ := procCreateEventW.Call(0, 0, 0, 0)
-	if hEvent == 0 {
-		procCoTaskMemFree.Call(uintptr(unsafe.Pointer(pFormat)))
-		w.Close()
-		if initialized {
-			procCoUninitialize.Call()
-		}
-		return errors.New("WASAPI: 创建事件句柄失败")
-	}
-	w.event = hEvent
-
-	// Initialize：共享模式 + loopback + 事件回调（10ms 缓冲，显式传入设备混音格式）
+	// Initialize：共享模式 + LOOPBACK（轮询模式）。
+	// 注意：WASAPI 的 loopback 捕获不支持事件驱动（AUDCLNT_STREAMFLAGS_EVENTCALLBACK）——
+	// 事件在该模式下不会按音频周期可靠触发，实测会造成约一半数据包被当作
+	// SILENT 空包、以及数据重复读取（宽带翻倍、20ms 声音/20ms 静音交替）。
+	// 正确做法是轮询（见 loop 中的 sleep + GetNextPacketSize 循环）。
 	const hnsBufferDuration = 100000 // 10ms（100ns 单位）
 	hr = callCom(w.audioClient, 3,
 		audclntShareModeShared,
-		uintptr(audclntStreamFlagsLoopback|audclntStreamFlagsEventCallback),
+		uintptr(audclntStreamFlagsLoopback),
 		hnsBufferDuration, 0,
 		uintptr(unsafe.Pointer(pFormat)), 0)
 	procCoTaskMemFree.Call(uintptr(unsafe.Pointer(pFormat)))
 	if hrFailed(hr) {
 		return fail("Initialize 失败", hr)
-	}
-
-	hr = callCom(w.audioClient, 13, hEvent) // SetEventHandle
-	if hrFailed(hr) {
-		return fail("SetEventHandle 失败", hr)
 	}
 
 	// GetService(IAudioCaptureClient)
@@ -301,14 +284,15 @@ func (w *wasapiCapture) parseFormat(p *waveFormatEx) error {
 
 // loop 事件驱动读取音频包。
 func (w *wasapiCapture) loop(ctx context.Context, onPCM func([]byte)) {
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
 	for {
-		if ctx.Err() != nil {
+		select {
+		case <-ctx.Done():
 			return
+		case <-ticker.C:
 		}
-		r, _, _ := procWaitForSingleObject.Call(w.event, 100)
-		if r == waitTimeout {
-			continue
-		}
+		// 轮询读取所有可用包（loopback 不支持事件驱动）
 		for {
 			var packetFrames uint32
 			hr := callCom(w.captureClient, 5, uintptr(unsafe.Pointer(&packetFrames)))
