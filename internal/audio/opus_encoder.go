@@ -6,12 +6,15 @@ package audio
 // 带宽降低约 24 倍（384KB/s → 16KB/s），并为 UDP/跨网段场景提供
 // FEC/PLC 能力基础。
 //
-// 链接：macOS 用 Homebrew libopus；Windows 用仓库内交叉编译静态库
-// third_party/libopus/win64/libopus.a。
+// 链接：libopus 静态库随仓库 vendored（third_party/libopus/），macOS 与 Windows
+// 构建/运行都不依赖 Homebrew 或任何外部安装：
+//   - macOS arm64: third_party/libopus/macos-arm64/libopus.a（opus 1.6.1）
+//   - Windows x64: third_party/libopus/win64/libopus.a（mingw 交叉编译）
+// 目录内只有 .a、没有 .dylib/.dll，链接结果是静态的——分发 .app/exe 无需用户装 opus。
 
 /*
-#cgo darwin CFLAGS: -I/opt/homebrew/opt/opus/include
-#cgo darwin LDFLAGS: -L/opt/homebrew/opt/opus/lib -lopus
+#cgo darwin CFLAGS: -I${SRCDIR}/../../third_party/libopus/include
+#cgo darwin LDFLAGS: -L${SRCDIR}/../../third_party/libopus/macos-arm64 -lopus
 #cgo windows CFLAGS: -I${SRCDIR}/../../third_party/libopus/include
 #cgo windows LDFLAGS: -L${SRCDIR}/../../third_party/libopus/win64 -lopus
 #include <opus/opus.h>

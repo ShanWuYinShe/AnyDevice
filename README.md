@@ -129,7 +129,7 @@ go build -o any_device main.go
 
 > macOS 原生窗口必须运行在 `.app` 包内（`AnyDevice.app/Contents/MacOS/any_device`）；直接把可执行文件拷出包外会丢失 Info.plist，窗口内 WebSocket 会被 ATS 拦截。
 
-> macOS 构建依赖：音频 Opus 编码通过 cgo 链接 Homebrew `opus`（`/opt/homebrew/opt/opus`），当前为动态链接，**换机器运行 `.app` 前需先 `brew install opus`**（后续可改为静态链接以便分发）。
+> 依赖打包：音频 Opus 编码使用仓库内 vendored 静态库（`third_party/libopus/`，macOS arm64 / Windows x64），`.app` 与 `.exe` 静态链接、**运行时不需要安装 Homebrew 或 opus**；BSD-3-Clause 许可文本会随 `.app` 放进 `Contents/Resources/third_party/` 并在仓库 `third_party/libopus/COPYING` 保留。
 
 ### 测试
 

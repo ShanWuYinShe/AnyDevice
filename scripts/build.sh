@@ -32,6 +32,9 @@ go build -tags "$WAILS_TAGS" -ldflags "$LDFLAGS_COMMON -extldflags '$MAC_EXTLD'"
     -o "$MAC_APP/Contents/MacOS/any_device" main.go
 # Info.plist 由仓库根目录模板生成（注入版本号），再对整个 bundle 做 ad-hoc 签名
 sed "s/__VERSION__/${VERSION}/g" Info.plist > "$MAC_APP/Contents/Info.plist"
+# 静态链接的 libopus 为 BSD-3-Clause：二进制分发需随附许可文本（必须在签名前放入包内）
+mkdir -p "$MAC_APP/Contents/Resources/third_party"
+cp third_party/libopus/COPYING "$MAC_APP/Contents/Resources/third_party/libopus-COPYING"
 codesign -s - -f "$MAC_APP" >/dev/null 2>&1 || true
 
 if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then

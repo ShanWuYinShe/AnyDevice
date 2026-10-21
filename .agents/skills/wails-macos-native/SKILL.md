@@ -42,8 +42,11 @@ description: 本项目 AnyDevice 的 macOS Wails 原生窗口（AnyDevice.app）
 - `Info.plist` 必须有：`CFBundleExecutable/Identifier/Name/Version/ShortVersion`、
   `NSHighResolutionCapable`、`NSAppTransportSecurity{NSAllowsLocalNetworking}`、
   `NSMicrophoneUsageDescription`（缺了 TCC 不授权甚至终止进程）、`NSLocalNetworkUsageDescription`。
-- macOS 音频仍动态链接 Homebrew `/opt/homebrew/opt/opus/lib/libopus.0.dylib`：
-  换机器运行 .app 前需 `brew install opus`（未改静态链接）。
+- 音频 Opus 用仓库 vendored 静态库（`third_party/libopus/macos-arm64/libopus.a`，opus 1.6.1；
+  Windows 用 `win64/libopus.a`），cgo 链接后无外部 dylib —— 分发 `.app` 不需要用户安装
+  Homebrew/opus。验证：`otool -L bin/AnyDevice.app/Contents/MacOS/any_device | grep -i opus` 应为空。
+  许可（BSD-3-Clause）在 `third_party/libopus/COPYING`，build.sh 会随 .app 放到
+  `Contents/Resources/third_party/libopus-COPYING`。
 - ad-hoc 签名身份随每次构建变化：重新构建后「辅助功能」授权可能失效，需要重新勾选 `AnyDevice.app`。
 
 ## 排障事实
