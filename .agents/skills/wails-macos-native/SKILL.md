@@ -31,6 +31,11 @@ description: 本项目 AnyDevice 的 macOS Wails 原生窗口（AnyDevice.app）
   `internal/audio/opus_decoder.go`（cgo libopus）解码成 float32 PCM（AUDS/AUDM）
   只发给声明 pcm 的客户端；有 AudioDecoder 的客户端（Chrome/WebView2）仍收 Opus。
 - 诊断：`GET /api/status` 的 `audio_pcm_clients` 显示当前走 PCM 的客户端数。
+- **码率显示口径（易错）**：卡片上的 KB/s 必须用服务端统计的
+  `/api/peers → mapping.rx_system_audio_kbps / rx_mic_audio_kbps`（对端推流到本机的
+  网络字节率，按 peer 独立，2 秒窗口）。不要用前端自己数的 WS 接收字节：原生窗口收到的是
+  解码后的 float32 PCM（约 375 KB/s），会把 Opus 的真实带宽（约 16 KB/s）放大 24 倍；
+  而且前端计数是全局的，多对端映射时所有卡片会显示同一个数。旧实现就是这两个坑。
 
 ## 构建与打包
 

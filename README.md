@@ -36,7 +36,8 @@
 - **按客户端解码能力自适应（Opus ↔ float32 PCM）**：
   - 对端音频默认传 Opus（128kbps，带宽约 float32 PCM 的 1/24）；
   - 本机 UI 客户端若没有 WebCodecs `AudioDecoder`（macOS Wails 窗口的 WKWebView、Safari），服务端在转发对端音频时自动解码成 float32 PCM 再下发，**原生窗口内播放不会因浏览器内核缺解码器而无声**；
-  - 有解码能力的客户端（Chrome/Edge/WebView2）仍收 Opus，局域网带宽不受影响（`/api/status` 的 `audio_pcm_clients` 可查看当前声明走 PCM 的客户端数）。
+  - 有解码能力的客户端（Chrome/Edge/WebView2）仍收 Opus，局域网带宽不受影响（`/api/status` 的 `audio_pcm_clients` 可查看当前声明走 PCM 的客户端数）；
+  - 设备卡片上的「接收码率」是**对端推流到本机的真实网络字节率**（服务端按对端逐条统计，`/api/peers` 的 `mapping.rx_*_kbps`，不同对端互不混淆）：Opus 约 16 KB/s，旧版对端 PCM 约 350–380 KB/s；本机把 Opus 解码成 PCM 播放的部分不计入该数字，所以原生窗口与浏览器看到的是同一个网络码率。
 - **按需订阅，空闲零空转**：
   - 本机 UI 窗口默认不订阅音频/鼠标/键盘流，只有真正开启映射时才通过 `set_mapping` 动态订阅；无人订阅时音频捕获引擎静默，显著降低空闲 CPU 与网络开销。
 - **纯系统原生驱动（事件驱动捕获）**：

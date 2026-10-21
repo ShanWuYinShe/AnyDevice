@@ -135,9 +135,12 @@ function isAllZeroPCM(pcm) {
   return true;
 }
 
-// 音频接收实时统计（卡片上可见）：按流分类字节率（每 2 秒刷新一次）
-// 必须同时覆盖两种协议，否则新协议下卡片恒显示 0 KB/s：
-//   AUPS/AUPM = Opus（当前协议）· AUDS/AUDM = float32 PCM（历史协议）
+// 本窗口接收字节率（2 秒窗口）：只代表「这个 UI 客户端收到的字节」。
+// 注意原生窗口收到的是服务端解码后的 float32 PCM（约 375 KB/s），不代表
+// 对端网络码率，因此卡片主显示用服务端 /api/peers 的 rx_*_kbps（按 2 秒窗口
+// 统计的真实推流码率）；本值仅作为旧服务端缺字段时的回退。
+// 必须同时覆盖两种协议标签，否则新协议下会统计不到：
+//   AUPS/AUPM = Opus · AUDS/AUDM = float32 PCM
 const AUDIO_RATE_TAGS = { AUPS: 'sys', AUDS: 'sys', AUPM: 'mic', AUDM: 'mic' };
 export const audioRate = $state({ sys: 0, mic: 0 });
 let audioRateBytes = { sys: 0, mic: 0 };

@@ -29,6 +29,13 @@ type PeerMappingState struct {
 	LatencyMs            int64  `json:"latency_ms"`
 	LastError            string `json:"last_error,omitempty"`
 
+	// 对端推流到本机的实际码率（KiB/s，服务端按 ~2 秒窗口统计）。
+	// 这是「网络侧」字节率：Opus 约 16 KB/s，旧版对端 float32 PCM 约 350–380 KB/s。
+	// UI 必须显示这个值而不是本机窗口收到的字节数——原生窗口收到的是解码后的
+	// PCM（约 375 KB/s），比真实网络码率大 24 倍，会把带宽显示成假的。
+	RxSystemAudioKBps int `json:"rx_system_audio_kbps"`
+	RxMicAudioKBps    int `json:"rx_mic_audio_kbps"`
+
 	// Backward compatibility fields
 	PlayAudioLocal      bool `json:"play_audio_local"`
 	RemoteControlActive bool `json:"remote_control_active,omitempty"`
@@ -192,6 +199,13 @@ func (pm *PeerManager) SetMapping(peerID string, playSystemAudio, playMicAudio, 
 	if executeKeyboard != nil {
 		mapping.ExecuteKeyboardLocal = *executeKeyboard
 	}
+	// 关闭音频映射后立即清零码率，避免重开映射前卡片展示上次的旧数值
+	if playSystemAudio != nil && !*playSystemAudio {
+		mapping.RxSystemAudioKBps = 0
+	}
+	if playMicAudio != nil && !*playMicAudio {
+		mapping.RxMicAudioKBps = 0
+	}
 
 	needsConn := mapping.PlaySystemAudioLocal || mapping.PlayMicAudioLocal || mapping.ExecuteMouseLocal || mapping.ExecuteKeyboardLocal
 	pm.mu.Unlock()
@@ -287,6 +301,25 @@ func (pm *PeerManager) disconnect(peerID string) {
 		mapping.ConnectionStatus = "disconnected"
 	}
 	pm.mu.Unlock()
+}
+
+// setRxRates 把服务端统计的对端推流码率写入映射状态（UI 轮询 /api/peers 读取）。
+func (pm *PeerManager) setRxRates(peerID string, sysKBps, micKBps int) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	if m, ok := pm.mappings[peerID]; ok {
+		m.RxSystemAudioKBps = sysKBps
+		m.RxMicAudioKBps = micKBps
+	}
+}
+
+// kibPerSec 把窗口内累计字节数换算成 KiB/s（窗口长度按实际经过时间归一化，
+// 避免消息到达抖动导致读数跳变）。
+func kibPerSec(bytes int64, seconds float64) int {
+	if bytes <= 0 || seconds <= 0 {
+		return 0
+	}
+	return int(float64(bytes) / seconds / 1024)
 }
 
 // forwardPeerAudio 把对端 Opus 音频转发给本机订阅客户端：
@@ -396,6 +429,22 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 	var audioFwdLastFrames, audioFwdLastBytes int
 	audioFwdLastLog := time.Now()
 
+	// 对端推流码率统计（写入映射状态供 UI 展示）：按 tag 区分系统声/麦克风，
+	// 每 ~2 秒窗口把字节数换算成 KiB/s。窗口长度按实际经过时间归一化。
+	var rxSysBytes, rxMicBytes int64
+	rxLast := time.Now()
+	flushRxRates := func() {
+		now := time.Now()
+		elapsed := now.Sub(rxLast)
+		if elapsed < 2*time.Second {
+			return
+		}
+		secs := elapsed.Seconds()
+		pm.setRxRates(peerID, kibPerSec(rxSysBytes, secs), kibPerSec(rxMicBytes, secs))
+		rxSysBytes, rxMicBytes = 0, 0
+		rxLast = now
+	}
+
 	defer func() {
 		for _, d := range connObj.decoders {
 			d.Destroy()
@@ -408,6 +457,8 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 			if m.PlaySystemAudioLocal || m.PlayMicAudioLocal || m.ExecuteMouseLocal || m.ExecuteKeyboardLocal {
 				m.ConnectionStatus = "disconnected"
 			}
+			m.RxSystemAudioKBps = 0
+			m.RxMicAudioKBps = 0
 		}
 		pm.mu.Unlock()
 	}()
@@ -453,18 +504,22 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 				}
 				if tag == "AUPS" {
 					if curMapping.PlaySystemAudioLocal {
+						rxSysBytes += int64(len(data))
 						pm.forwardPeerAudio(connObj, data)
 					}
 				} else if tag == "AUPM" {
 					if curMapping.PlayMicAudioLocal {
+						rxMicBytes += int64(len(data))
 						pm.forwardPeerAudio(connObj, data)
 					}
 				} else if tag == "AUDS" {
 					if curMapping.PlaySystemAudioLocal {
+						rxSysBytes += int64(len(data))
 						pm.hub.BroadcastAudio(data)
 					}
 				} else if tag == "AUDM" {
 					if curMapping.PlayMicAudioLocal {
+						rxMicBytes += int64(len(data))
 						pm.hub.BroadcastAudio(data)
 					}
 				} else {
@@ -545,5 +600,7 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 				pm.hub.BroadcastKeyboard(data)
 			}
 		}
+		// 音频持续时会由音频帧频繁触发；对端停发时也靠其它消息把旧码率衰减下来
+		flushRxRates()
 	}
 }

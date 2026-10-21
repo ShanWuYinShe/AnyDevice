@@ -107,3 +107,40 @@ func TestOpusOnlyBroadcastSkippedForPCMClients(t *testing.T) {
 	case <-time.After(300 * time.Millisecond):
 	}
 }
+
+// TestKibPerSec 校验 UI 码率换算：只算对端推流到本机的网络字节，
+// 窗口长度按实际经过时间归一化（Opus 128kbps ≈ 16 KB/s，float32 PCM ≈ 375 KB/s）。
+func TestKibPerSec(t *testing.T) {
+	cases := []struct {
+		name  string
+		bytes int64
+		secs  float64
+		want  int
+	}{
+		{"无数据", 0, 2, 0},
+		{"Opus 128kbps", 32768, 2, 16},
+		{"float32 PCM 48k 立体声", 768000, 2, 375},
+		{"负值", -100, 2, 0},
+		{"零窗口", 32768, 0, 0},
+	}
+	for _, c := range cases {
+		if got := kibPerSec(c.bytes, c.secs); got != c.want {
+			t.Errorf("%s: kibPerSec(%d, %v) = %d，期望 %d", c.name, c.bytes, c.secs, got, c.want)
+		}
+	}
+}
+
+// TestSetRxRatesPerPeer：码率按对端独立写入，不能被全局值覆盖。
+func TestSetRxRatesPerPeer(t *testing.T) {
+	pm := NewPeerManager(nil, nil)
+	pm.mappings["peer-a"] = &PeerMappingState{}
+	pm.mappings["peer-b"] = &PeerMappingState{}
+
+	pm.setRxRates("peer-a", 16, 0)
+	if got := pm.mappings["peer-a"].RxSystemAudioKBps; got != 16 {
+		t.Fatalf("peer-a 系统声码率 = %d，期望 16", got)
+	}
+	if got := pm.mappings["peer-b"].RxSystemAudioKBps; got != 0 {
+		t.Fatalf("peer-b 不应被写入，实际 %d", got)
+	}
+}

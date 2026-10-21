@@ -10,6 +10,16 @@
   const mapping = $derived(peer.mapping || {});
   const provides = $derived(peer.provides || {});
 
+  // 接收码率口径：服务端统计的「对端推流到本机」网络字节率（按 peer 独立）。
+  // 不能用本窗口收到的字节数——原生窗口收到的是解码后的 float32 PCM
+  // （约 375 KB/s），会把 Opus 的真实带宽（约 16 KB/s）放大 24 倍。
+  // 旧服务端没有 rx_* 字段时退回本窗口自测值。
+  const sysRateKBps = $derived(mapping.rx_system_audio_kbps ?? audioRate.sys);
+  const micRateKBps = $derived(mapping.rx_mic_audio_kbps ?? audioRate.mic);
+  const audioRateTitle =
+    '实时接收码率：对端推流到本机的实际网络字节数（Opus 约 16 KB/s，旧版 PCM 约 350–380 KB/s）。' +
+    '本机把 Opus 解码成 PCM 播放的部分不计入该数字。';
+
   const sysAudioMapped = $derived(!!(mapping.play_system_audio_local || mapping.play_audio_local));
   const micAudioMapped = $derived(!!mapping.play_mic_audio_local);
   const mouseMapped = $derived(!!mapping.execute_mouse_local);
@@ -150,7 +160,7 @@
             <span class="status-dot" class:is-live={!audioSuspended} class:is-warn={audioSuspended} aria-hidden="true"></span>
             <span title={audioPlayState.text}>{audioSuspended ? '播放器被系统挂起' : '正在播放'}</span>
             <span class="meta-dot" aria-hidden="true"></span>
-            <span class="mono" title="实时接收码率（对端编码后的实际字节数：Opus 约 10–40 KB/s，历史 PCM 约 350 KB/s）">{audioRate.sys} KB/s</span>
+            <span class="mono" title={audioRateTitle}>{sysRateKBps} KB/s</span>
             {#if connectionText}
               <span class="meta-dot" aria-hidden="true"></span>
               <span>{connectionText}</span>
@@ -196,7 +206,7 @@
             <span class="status-dot is-live" aria-hidden="true"></span>
             <span title={audioPlayState.text}>正在收听</span>
             <span class="meta-dot" aria-hidden="true"></span>
-            <span class="mono" title="实时接收码率（对端编码后的实际字节数：Opus 约 10–40 KB/s，历史 PCM 约 350 KB/s）">{audioRate.mic} KB/s</span>
+            <span class="mono" title={audioRateTitle}>{micRateKBps} KB/s</span>
           {:else}
             <span>把对端的麦克风拾音映射到本机播放</span>
           {/if}
