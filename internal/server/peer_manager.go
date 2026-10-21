@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"any_device/internal/audio"
 	"any_device/internal/discovery"
 	"any_device/internal/keyboard"
 	"any_device/internal/mouse"
@@ -54,6 +55,10 @@ type peerConnection struct {
 	conn      *websocket.Conn
 	cancel    context.CancelFunc
 	startTime time.Time
+	// decoders 按音频流 tag 懒创建的 Opus→float32 PCM 解码器：
+	// 本机 UI 客户端（Wails macOS WKWebView / Safari）没有 WebCodecs
+	// AudioDecoder，转发对端音频时需要服务端先解码成 PCM 再下发。
+	decoders map[string]*audio.OpusDecoder
 }
 
 type PeerManager struct {
@@ -284,6 +289,52 @@ func (pm *PeerManager) disconnect(peerID string) {
 	pm.mu.Unlock()
 }
 
+// forwardPeerAudio 把对端 Opus 音频转发给本机订阅客户端：
+//   - 有 WebCodecs AudioDecoder 的客户端（Chrome/WebView2）收 Opus 原始包；
+//   - 没有的客户端（Wails macOS WKWebView、Safari）收解码后的 float32 PCM。
+//
+// 为什么要在这里解码：对端只发 Opus（128kbps，带宽是 PCM 的 1/24），而
+// WKWebView 目前只有 VideoDecoder、没有 AudioDecoder，无法前端解码。
+// 服务端在回环转发路径上解码，收到的仍是省带宽的 Opus，付出的是本机 CPU
+// （两条流各 50 帧/秒，可忽略），且不改变对端协议、旧版本对端照常可用。
+//
+// 每个 peer 连接按流 tag 各持一个解码器（Opus 解码器有状态，不能跨流复用）；
+// 解码失败时退回只发 Opus，保证有解码能力的客户端不受影响。
+func (pm *PeerManager) forwardPeerAudio(pc *peerConnection, data []byte) {
+	if len(data) < 4 || pc == nil {
+		return
+	}
+	tag := string(data[:4])
+	dec := pc.decoders[tag]
+	if dec == nil {
+		d, err := audio.NewOpusDecoder()
+		if err != nil {
+			util.Logf("[音频] 转发端创建 Opus 解码器失败: %v\n", err)
+			pm.hub.BroadcastAudio(data)
+			return
+		}
+		pc.decoders[tag] = d
+		dec = d
+	}
+	pcm, err := dec.DecodeToPCM(data[4:])
+	if err != nil {
+		util.Logf("[音频] 转发端 Opus 解码失败: %v\n", err)
+		pm.hub.BroadcastAudio(data)
+		return
+	}
+	if len(pcm) == 0 {
+		return
+	}
+	pcmTag := audio.TagSystemAudio
+	if tag == "AUPM" {
+		pcmTag = audio.TagMicAudio
+	}
+	pcmChunk := make([]byte, 0, len(pcmTag)+len(pcm))
+	pcmChunk = append(pcmChunk, pcmTag...)
+	pcmChunk = append(pcmChunk, pcm...)
+	pm.hub.BroadcastAudioDual(data, pcmChunk)
+}
+
 func (pm *PeerManager) connectAndLoop(peerID, target string) {
 	clean := strings.TrimPrefix(target, "ws://")
 	clean = strings.TrimPrefix(clean, "http://")
@@ -326,6 +377,7 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 		conn:      conn,
 		cancel:    cancel,
 		startTime: time.Now(),
+		decoders:  make(map[string]*audio.OpusDecoder),
 	}
 	pm.conns[peerID] = connObj
 	mapping.ConnectionStatus = "connected"
@@ -345,6 +397,9 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 	audioFwdLastLog := time.Now()
 
 	defer func() {
+		for _, d := range connObj.decoders {
+			d.Destroy()
+		}
 		cancel()
 		_ = conn.Close()
 		pm.mu.Lock()
@@ -396,7 +451,15 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 						audioFwdLastLog = now
 					}
 				}
-				if tag == "AUDS" {
+				if tag == "AUPS" {
+					if curMapping.PlaySystemAudioLocal {
+						pm.forwardPeerAudio(connObj, data)
+					}
+				} else if tag == "AUPM" {
+					if curMapping.PlayMicAudioLocal {
+						pm.forwardPeerAudio(connObj, data)
+					}
+				} else if tag == "AUDS" {
 					if curMapping.PlaySystemAudioLocal {
 						pm.hub.BroadcastAudio(data)
 					}

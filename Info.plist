@@ -1,8 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- AnyDevice.app 的 Info.plist 模板：scripts/build.sh 会把 __VERSION__ 替换成
+     main.go 里的 Version 后拷贝进 bin/AnyDevice.app/Contents/Info.plist。
+     macOS 窗口形态必须走 .app 包：裸二进制的可执行文件没有 Info.plist，
+     WKWebView 的 ATS 本地网络例外与麦克风用途声明都不会生效。 -->
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
+    <string>AnyDevice</string>
+    <key>CFBundleDisplayName</key>
     <string>AnyDevice</string>
     <key>CFBundleIdentifier</key>
     <string>local.anydevice.app</string>
@@ -10,9 +16,20 @@
     <string>any_device</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
-    <!-- macOS ATS：允许本地网络明文连接。
-         Wails 窗口页面（wails://）连接 ws://127.0.0.1 的 WebSocket
-         需要此例外，否则 WKWebView 会静默拦截（此前音频/遥测无数据的原因）。 -->
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+    <key>CFBundleVersion</key>
+    <string>__VERSION__</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <!-- Wails 窗口页面 origin 是 wails://wails，页面内必须直连
+         ws://127.0.0.1:<port> 才能收到音频/遥测流。WKWebView 受 ATS 约束，
+         未声明例外会静默拦截明文 WebSocket（表现为界面在线但一直无数据）。 -->
     <key>NSAppTransportSecurity</key>
     <dict>
         <key>NSAllowsLocalNetworking</key>
@@ -20,5 +37,12 @@
         <key>NSAllowsArbitraryLoads</key>
         <true/>
     </dict>
+
+    <!-- TCC 用途声明：缺失时 macOS 会直接终止访问隐私资源的进程。
+         麦克风用于「麦克风映射」，本地网络用于局域网设备发现与 WebSocket。 -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>AnyDevice 需要访问麦克风，才能把本机麦克风声音共享给其他设备，或接收对端麦克风声音。</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>AnyDevice 需要访问本地网络，才能发现并连接同一局域网内的其他设备。</string>
 </dict>
 </plist>

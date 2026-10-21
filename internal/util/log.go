@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -14,6 +15,10 @@ import (
 //
 // 日志路径优先级：exe 同目录 → 用户配置目录 → 系统临时目录。
 // 路径通过 LogFilePath() 暴露给 API/UI 显示，用户无需自行猜测位置。
+//
+// 例外：macOS .app 包内的可执行文件不能往包内写日志——签名后的 bundle
+// 新增文件会破坏代码签名（codesign --verify 报 "a sealed resource is
+// missing or invalid"），因此包内形态跳过 exe 目录，直接落到用户配置目录。
 var (
 	logMu       sync.Mutex
 	logWriter   io.Writer = os.Stdout
@@ -27,7 +32,7 @@ var BuildTime = "dev"
 // InitLogFile 打开日志文件并接管输出。返回日志文件路径（失败返回空串）。
 func InitLogFile() string {
 	candidates := make([]string, 0, 3)
-	if exe, err := os.Executable(); err == nil {
+	if exe, err := os.Executable(); err == nil && !isInAppBundle(exe) {
 		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "any_device.log"))
 	}
 	if cfgDir, err := os.UserConfigDir(); err == nil {
@@ -51,6 +56,13 @@ func InitLogFile() string {
 		return path
 	}
 	return ""
+}
+
+// isInAppBundle 判断可执行文件是否位于 macOS .app 包内。
+// 包内文件受代码签名保护，运行时新增/修改会破坏签名，故日志与配置需写包外。
+func isInAppBundle(exePath string) bool {
+	sep := string(os.PathSeparator)
+	return strings.Contains(exePath, ".app"+sep+"Contents"+sep+"MacOS"+sep)
 }
 
 // LogFilePath 返回当前日志文件路径（未初始化时为空）。

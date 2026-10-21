@@ -55,21 +55,21 @@ func TestOpusRoundTripFidelity(t *testing.T) {
 		t.Fatalf("期望 %d 个 Opus 包，实际 %d", packets, len(encoded))
 	}
 
-	dec, err := newOpusDecoderForTest()
+	// 直接使用生产解码器：Wails/Safari 客户端播放对端音频走的就是这条解码路径
+	dec, err := NewOpusDecoder()
 	if err != nil {
 		t.Fatalf("%v", err)
 	}
-	defer freeOpusDecoderForTest(dec)
+	defer dec.Destroy()
 
 	out := make([]float32, 0, packets*frameSize)
-	pcm := make([]float32, frameSize*channels)
 	for i, pkt := range encoded {
-		n, err := decodeOpusForTest(dec, pkt, pcm)
+		samples, err := dec.Decode(pkt)
 		if err != nil {
 			t.Fatalf("第 %d 包解码失败: %v", i, err)
 		}
-		for f := 0; f < n; f++ {
-			out = append(out, pcm[f*channels]) // 取左声道
+		for f := 0; f < len(samples)/channels; f++ {
+			out = append(out, samples[f*channels]) // 取左声道
 		}
 	}
 

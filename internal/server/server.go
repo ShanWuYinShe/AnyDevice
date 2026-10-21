@@ -437,6 +437,7 @@ func (s *Server) SetupRoutes() http.Handler {
 		audioSubs, mouseSubs, keyboardSubs := s.hub.SubscriberCounts()
 		status := map[string]interface{}{
 			"audio_subs":          audioSubs,
+			"audio_pcm_clients":   s.hub.PCMAudioClientCount(),
 			"mouse_subs":          mouseSubs,
 			"keyboard_subs":       keyboardSubs,
 			"clients":             s.hub.ClientCount(),

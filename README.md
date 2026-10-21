@@ -7,11 +7,12 @@
 ## 🌟 核心特性
 
 - **自带原生独立桌面应用窗口（Wails 原生窗口，无需浏览器）**：
-  - 桌面窗口采用 **Wails** 原生窗口（Windows WebView2 / macOS WKWebView），双击 `any_device.exe` / `any_device` 直接弹出**专属独立应用窗口**——无浏览器地址栏、无控制台黑窗、无浏览器启动器竞态，关窗即安全退出。
+  - 桌面窗口采用 **Wails** 原生窗口（macOS WKWebView / Windows WebView2）：macOS 双击 `AnyDevice.app`、Windows 双击 `any_device.exe` 直接弹出**专属独立应用窗口**——无浏览器地址栏、无控制台黑窗、无浏览器启动器竞态，关窗即安全退出。
+  - macOS 的 `.app` 由 `scripts/build.sh` 打包（`Info.plist` 带 ATS 本地网络例外与麦克风用途声明），**不依赖本机安装 Chrome/Edge**；窗口内的 WebSocket 直连 `ws://127.0.0.1:<port>`，页面与 `/api` 请求仍走内置 handler。
   - 窗口与局域网服务共用同一套 UI 与 API：窗口内的页面请求直达内置服务，局域网端口照常服务手机/平板/其他电脑。
   - **服务先于窗口就绪**：先完成端口监听再打开窗口，首屏不会因服务未就绪而白屏。
   - 也可以通过 `-no-ui` 运行于纯后台守护进程模式。
-  - 未启用 `wails` 构建标签的版本回退为浏览器 `--app` 独立窗口模式（Chrome/Edge 独立 profile）。
+  - 仅开发调试用的无标签 `go build` 会回退为浏览器 `--app` 独立窗口模式（Chrome/Edge 独立 profile）；发布产物一律是原生窗口。
 - **对等的发现与映射模型（提供方 + 使用方）**：
   - 📥 **接收侧（把对端能力映射到本机）**：
     - 🎧 **系统声音**：把对端电脑的声音串流到本机/手机播放；
@@ -32,6 +33,10 @@
 - **设备改名跨重启持久化**：
   - 本机名称与对端备注保存在本地配置文件（默认用户配置目录下 `AnyDevice/config.json`，可用环境变量 `ANY_DEVICE_CONFIG` 指定其他路径），重启不再丢失；
   - 对端备注优先于对端广播名显示，且**不会**被后续发现心跳覆盖。
+- **按客户端解码能力自适应（Opus ↔ float32 PCM）**：
+  - 对端音频默认传 Opus（128kbps，带宽约 float32 PCM 的 1/24）；
+  - 本机 UI 客户端若没有 WebCodecs `AudioDecoder`（macOS Wails 窗口的 WKWebView、Safari），服务端在转发对端音频时自动解码成 float32 PCM 再下发，**原生窗口内播放不会因浏览器内核缺解码器而无声**；
+  - 有解码能力的客户端（Chrome/Edge/WebView2）仍收 Opus，局域网带宽不受影响（`/api/status` 的 `audio_pcm_clients` 可查看当前声明走 PCM 的客户端数）。
 - **按需订阅，空闲零空转**：
   - 本机 UI 窗口默认不订阅音频/鼠标/键盘流，只有真正开启映射时才通过 `set_mapping` 动态订阅；无人订阅时音频捕获引擎静默，显著降低空闲 CPU 与网络开销。
 - **纯系统原生驱动（事件驱动捕获）**：
@@ -54,10 +59,12 @@
 | `ANY_DEVICE_AUDIO_DEBUG=1` | 音频链路诊断：捕获端每 2 秒输出 chunk/字节速率与静音标记；转发端输出帧到达统计 |
 | `ANY_DEVICE_KB_DEBUG=1` | 键鼠链路诊断：捕获端发出的事件、执行端收到的事件与模拟执行 |
 
+**日志位置**：原生窗口没有控制台，日志同时写入文件——macOS `.app` 形态写入用户配置目录 `~/Library/Application Support/AnyDevice/any_device.log`（包内文件受代码签名保护，禁止写入）；Windows / 裸二进制写入可执行文件同目录的 `any_device.log`。界面左下角会显示日志实际路径。
+
 **音频映射无声时的自查**：
 1. `ANY_DEVICE_AUDIO_DEBUG=1` 启动捕获端与播放端——若捕获端显示「本段全零静音」或速率极低，说明捕获设备上确实没有声音在播放（WASAPI Loopback 只捕获默认输出设备上正在播放的声音）；
 2. 检查捕获端设备卡片显示的系统声/麦克风设备名，确认与你实际听声的设备一致；
-3. macOS 端播放/捕获还需要「辅助功能」授权（启动时有警告提示）。
+3. macOS 端：音频采集需要「麦克风」授权（首次运行弹窗），键鼠跨端映射需要「系统设置 → 隐私与安全性 → 辅助功能」勾选 `AnyDevice.app`（未授权时启动有警告提示）；
 4. 浏览器场景可在页面 URL 追加 `?audiodebug` 查看前端收到的音频字节率与 AudioContext 状态。
 
 ---
@@ -67,10 +74,13 @@
 ### 1. 启动程序（电脑端）
 
 直接双击运行：
+- **macOS**：双击 `bin/AnyDevice.app`（也可先拖到「应用程序」再启动）
 - **Windows 台式机**：双击运行 `any_device.exe`
-- **macOS / Linux**：双击或终端执行 `./any_device`
+- **Linux**：当前未提供原生窗口包，`./any_device` 回退为浏览器独立窗口模式
 
 程序启动后会自动弹出**独立桌面应用窗口**：顶部为「扫码接入 / 添加设备 / 本机共享」三个入口，下方概览区显示本机名称、通信网卡与实时通道状态，点「扫码接入」即可显示连接二维码与本机局域网地址。
+
+> 多显示器：窗口由 macOS 按系统默认策略放置，局域网服务与二维码地址不受窗口位于哪块屏幕影响；手机扫码访问的是本机局域网 IP。
 
 ### 2. 手机/另一端连接
 
@@ -102,12 +112,24 @@
 UI 使用 **Svelte 5 + Vite**（源码在 `frontend/`），构建产物输出到 `internal/web/dist/` 并由 `go:embed` 打进二进制，无需任何运行时前端服务。
 
 ```bash
-# 一键构建（前端 + macOS 二进制 + Windows 交叉编译）
+# 一键构建（前端 + macOS 原生窗口 .app + Windows 交叉编译）
 ./scripts/build.sh
 
-# 只改了 Go 代码、前端未动时，可直接：
+# 只改了 Go 代码、前端未动时：
+#   macOS 原生窗口 -> 重新打包 .app（Info.plist 必须随包，裸二进制窗口内
+#   WebSocket/麦克风会因缺少 ATS/用途声明而失败）：
+go build -tags wails,desktop,production \
+    -ldflags "-s -w -extldflags '-framework UniformTypeIdentifiers'" \
+    -o bin/AnyDevice.app/Contents/MacOS/any_device main.go
+codesign -s - -f bin/AnyDevice.app
+
+# 无标签构建只用于快速调试（浏览器 --app 窗口回退，不是发布形态）：
 go build -o any_device main.go
 ```
+
+> macOS 原生窗口必须运行在 `.app` 包内（`AnyDevice.app/Contents/MacOS/any_device`）；直接把可执行文件拷出包外会丢失 Info.plist，窗口内 WebSocket 会被 ATS 拦截。
+
+> macOS 构建依赖：音频 Opus 编码通过 cgo 链接 Homebrew `opus`（`/opt/homebrew/opt/opus`），当前为动态链接，**换机器运行 `.app` 前需先 `brew install opus`**（后续可改为静态链接以便分发）。
 
 ### 测试
 
@@ -131,3 +153,7 @@ bun run build      # 构建产物到 internal/web/dist（随后 go build 即可�
 ```
 
 > 全新检出后若直接 `go build`，`internal/web/dist` 只有占位文件，页面为空白——请先执行前端构建（或使用 `scripts/build.sh`）。
+
+> 多显示器 / 高 DPI：窗口按 macOS 逻辑坐标渲染（Retina 自动 2x），无需额外配置；窗口出现在哪块屏幕不影响服务监听、局域网地址与扫码连接。
+
+> macOS 权限提示：`.app` 采用 ad-hoc 签名（`codesign -s -`），每次重新构建后系统签名身份会变化，「辅助功能」授权可能失效——到 系统设置 → 隐私与安全性 → 辅助功能 重新勾选 `AnyDevice.app` 即可；麦克风授权首次运行时弹窗。

@@ -164,11 +164,12 @@ func main() {
 	// 模拟按键与光标操作（无任何报错），表现为跨端映射完全无反应。
 	// 启动即检测并给出明确指引，避免用户无从排查。
 	if runtime.GOOS == "darwin" && !keyboard.AccessibilityTrusted() {
-		fmt.Println()
-		fmt.Println("⚠️  未授予「辅助功能」权限：键盘与鼠标的跨端映射将无法在本机执行！")
-		fmt.Println("    请打开 系统设置 → 隐私与安全性 → 辅助功能，")
-		fmt.Println("    添加并勾选 any_device（若从终端运行，还需勾选对应终端程序），然后重启本应用。")
-		fmt.Println()
+		// 同时走 util.Logf：.app 由 Finder 启动时 stdout 不可见，日志文件是唯一排查通道
+		util.Logf("")
+		util.Logf("⚠️  未授予「辅助功能」权限：键盘与鼠标的跨端映射将无法在本机执行！")
+		util.Logf("    请打开 系统设置 → 隐私与安全性 → 辅助功能，")
+		util.Logf("    添加并勾选 AnyDevice.app（若从终端直接运行包内可执行文件，还需勾选对应终端程序），然后重启本应用。")
+		util.Logf("")
 	}
 
 	// 6. Desktop Window vs Headless Mode

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"any_device/internal/audio"
 	"any_device/internal/mouse"
 
 	"github.com/gorilla/websocket"
@@ -44,6 +46,7 @@ type Client struct {
 	deviceType      string
 	joinedAt        time.Time
 	audioEnabled    bool
+	audioPCM        bool // 客户端音频能力：true=无 WebCodecs AudioDecoder，音频改发 float32 PCM
 	mouseEnabled    bool
 	keyboardEnabled bool
 	isLocal         bool // 本机回环 UI 客户端（127.0.0.1 / 本机网卡地址发起）
@@ -140,12 +143,23 @@ func (h *Hub) Run() {
 			h.notifySubscribers()
 
 		case pkt := <-h.audioBroadcast:
-			msg := OutMessage{isBinary: true, data: pkt.chunk}
+			opusMsg := OutMessage{isBinary: true, data: pkt.chunk}
+			pcmMsg := OutMessage{isBinary: true, data: pkt.pcmChunk}
+			// 音频能力路由：
+			//   - pcmChunk 非空（对端转发的音频，同时提供 Opus 与 PCM 两种形态）：
+			//     无 AudioDecoder 的客户端（Wails macOS WKWebView / Safari）收 PCM，
+			//     其余收 Opus；PCM 体积大（约 24 倍），只发给本机回环 UI 或声明了
+			//     该能力的客户端，避免局域网带宽膨胀。
+			//   - pcmChunk 为空（本机捕获引擎的广播，只有 Opus 形态）：
+			//     无法解码 Opus 的客户端直接跳过，避免每帧都做一次失败的解码。
+			isOpusChunk := bytes.HasPrefix(pkt.chunk, audio.TagSystemAudioOpus) ||
+				bytes.HasPrefix(pkt.chunk, audio.TagMicAudioOpus)
 			h.mu.RLock()
 			for client := range h.clients {
 				client.mu.RLock()
 				enabled := client.audioEnabled
 				local := client.isLocal
+				wantPCM := client.audioPCM
 				client.mu.RUnlock()
 
 				// 占位测试音只发给远程订阅端：本机 UI 播放测试音没有意义
@@ -154,13 +168,23 @@ func (h *Hub) Run() {
 				if pkt.remoteOnly && local {
 					continue
 				}
-				if enabled {
-					select {
-					case client.send <- msg:
-						atomic.AddUint64(&h.totalBytesSent, uint64(len(pkt.chunk)))
-					default:
-						// Drop chunk on laggy client to prevent audio latency accumulation
-					}
+				if !enabled {
+					continue
+				}
+				msg := opusMsg
+				switch {
+				case pkt.pcmChunk != nil && wantPCM:
+					msg = pcmMsg
+				case pkt.pcmChunk != nil:
+					// 有 AudioDecoder：继续收 Opus
+				case isOpusChunk && wantPCM:
+					continue
+				}
+				select {
+				case client.send <- msg:
+					atomic.AddUint64(&h.totalBytesSent, uint64(len(msg.data)))
+				default:
+					// Drop chunk on laggy client to prevent audio latency accumulation
 				}
 			}
 			h.mu.RUnlock()
@@ -249,16 +273,28 @@ func (h *Hub) SubscriberCounts() (audio, mouse, keyboard int) {
 	return
 }
 
-// audioPacket 一次音频广播：数据 + 是否只发远程客户端。
+// audioPacket 一次音频广播：Opus 数据 + 可选的 float32 PCM 形态 + 是否只发远程客户端。
 type audioPacket struct {
-	chunk      []byte
+	chunk      []byte // Opus 包（或旧版对端直接发来的 PCM 包）
+	pcmChunk   []byte // 同一音频包的 float32 PCM 形态（无 AudioDecoder 的客户端用）
 	remoteOnly bool
 }
 
-// BroadcastAudio pushes an audio PCM chunk to subscribed clients.
+// BroadcastAudio 广播一份音频数据给订阅客户端。
+// chunk 既可能是 Opus（AUPS/AUPM），也可能是旧版对端的 float32 PCM（AUDS/AUDM）。
 func (h *Hub) BroadcastAudio(chunk []byte) {
 	select {
 	case h.audioBroadcast <- audioPacket{chunk: chunk}:
+	default:
+	}
+}
+
+// BroadcastAudioDual 广播同一音频的两种形态：opusChunk 给有 WebCodecs
+// AudioDecoder 的客户端，pcmChunk 给没有的客户端（Wails macOS WKWebView、Safari）。
+// 用于转发对端音频：对端只发 Opus，本机侧按客户端能力分流。
+func (h *Hub) BroadcastAudioDual(opusChunk, pcmChunk []byte) {
+	select {
+	case h.audioBroadcast <- audioPacket{chunk: opusChunk, pcmChunk: pcmChunk}:
 	default:
 	}
 }
@@ -286,6 +322,22 @@ func (h *Hub) BroadcastKeyboard(event []byte) {
 	case h.keyboardBroadcast <- event:
 	default:
 	}
+}
+
+// PCMAudioClientCount 返回声明了 PCM 音频能力的客户端数（诊断用）：
+// 这些客户端没有 WebCodecs AudioDecoder，对端音频会以 float32 PCM 下发。
+func (h *Hub) PCMAudioClientCount() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	count := 0
+	for client := range h.clients {
+		client.mu.RLock()
+		if client.audioPCM {
+			count++
+		}
+		client.mu.RUnlock()
+	}
+	return count
 }
 
 // ClientCount returns current connected client count.
@@ -425,6 +477,9 @@ func (c *Client) readPump() {
 				Audio    *bool  `json:"audio"`
 				Mouse    *bool  `json:"mouse"`
 				Keyboard *bool  `json:"keyboard"`
+				// 客户端音频解码能力：true 表示无 WebCodecs AudioDecoder，
+				// 服务端对端音频改发 float32 PCM（WKWebView/Safari 无法解 Opus）
+				PCM *bool `json:"pcm"`
 				// 对端节点身份（新版实例握手时上报，用于设备档案归并）
 				NodeID   string `json:"node_id"`
 				NodeName string `json:"node_name"`
@@ -446,6 +501,9 @@ func (c *Client) readPump() {
 				}
 				if cmd.Keyboard != nil {
 					c.keyboardEnabled = *cmd.Keyboard
+				}
+				if cmd.PCM != nil {
+					c.audioPCM = *cmd.PCM
 				}
 				c.mu.Unlock()
 

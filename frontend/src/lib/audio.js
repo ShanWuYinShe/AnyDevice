@@ -248,7 +248,10 @@ let opusTsUs = 0;
 function ensureOpusDecoder(key) {
   if (opusDecoders[key]) return;
   if (typeof AudioDecoder === 'undefined') {
-    workletError = '浏览器不支持 WebCodecs AudioDecoder';
+    // 没有 AudioDecoder 的客户端（macOS Wails 窗口的 WKWebView、Safari）不会走到
+    // 这里：连接建立时 set_mapping 已声明 pcm=true，服务端把对端音频解码成
+    // float32 PCM 下发（AUDS/AUDM），由 playPCM 路径播放。这里只做兜底提示。
+    workletError = '当前环境无 WebCodecs AudioDecoder（服务端将改为下发 PCM）';
     return;
   }
   const decoder = new AudioDecoder({

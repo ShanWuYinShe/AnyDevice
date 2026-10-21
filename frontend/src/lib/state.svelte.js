@@ -109,7 +109,15 @@ export function sendSubscriptions() {
   if (!connState.wsOpen) return;
   const t = targetSubs();
   if (lastSubs.audio === t.audio && lastSubs.mouse === t.mouse && lastSubs.keyboard === t.keyboard) return;
-  ws.send(JSON.stringify({ action: 'set_mapping', audio: t.audio, mouse: t.mouse, keyboard: t.keyboard }));
+  // pcm：客户端没有 WebCodecs AudioDecoder（Wails macOS WKWebView / Safari）时
+  // 声明 true，服务端把对端音频解码成 float32 PCM 再下发（见 server/hub.go）。
+  ws.send(JSON.stringify({
+    action: 'set_mapping',
+    audio: t.audio,
+    mouse: t.mouse,
+    keyboard: t.keyboard,
+    pcm: typeof AudioDecoder === 'undefined',
+  }));
   lastSubs = { audio: t.audio, mouse: t.mouse, keyboard: t.keyboard };
 }
 
@@ -137,24 +145,41 @@ let audioRateLast = 0;
 // 播放链路状态描述（AudioContext 是否被系统挂起等）
 export const audioPlayState = $state({ text: '未创建' });
 
-export function connectWebSocket() {
-  // 浏览器访问：同源相对地址。
-  // Wails 桌面窗口（location.host 为空）：必须用 127.0.0.1 回环地址——
-  // WKWebView 的 ATS 安全策略会拦截 wails:// 页面对非 localhost 明文
-  // WebSocket 的连接（此前用局域网 IP 推导导致 ws 永远连不上、音频无数据）。
-  let wsBase;
-  if (location.host) {
+// 是否为 Wails 原生桌面窗口：
+//   darwin/linux 的页面 origin 是 wails://wails（自定义 scheme，由 Wails
+//   的 WKWebView/WKURLSchemeHandler 承载，不是本项目真正的 HTTP 服务端）；
+//   windows 是 http://wails.localhost（Wails 资产服务虚拟主机，同样不是监听地址）。
+// 两者 location.host 都不能用于推导 /ws 地址，必须显式连本机回环端口。
+function isDesktopShell() {
+  if (location.protocol !== 'http:' && location.protocol !== 'https:') return true;
+  return location.hostname === 'wails.localhost' || location.hostname.endsWith('.wails.localhost');
+}
+
+// 解析 WebSocket 基地址：
+//   - 浏览器/手机：同源相对地址（location.host 就是服务监听地址）；
+//   - 桌面窗口：ws://127.0.0.1:<真实端口>；端口以 /api/self 的 port 为准
+//     （-port 可改端口）。相对路径 fetch('/api/...') 会经 Wails 的
+//     AssetsHandler 直达本服务的 handler，因此 /api/self 在窗口内可用。
+async function resolveWsBase() {
+  if (!isDesktopShell()) {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    wsBase = proto + '//' + location.host;
-  } else {
-    // 从 primary_url 仅提取端口，主机固定回环地址（ATS 豁免）
-    let port = '8080';
-    if (selfState.data && selfState.data.primary_url) {
-      const m = selfState.data.primary_url.match(/:(\d+)$/);
-      if (m) port = m[1];
-    }
-    wsBase = 'ws://127.0.0.1:' + port;
+    return proto + '//' + location.host;
   }
+  if (!selfState.data) {
+    try {
+      await fetchSelf();
+    } catch {
+      // 拿不到本机信息时先按默认端口连接，后续轮询仍会刷新 selfState
+    }
+  }
+  const port = (selfState.data && selfState.data.port) || 8080;
+  return 'ws://127.0.0.1:' + port;
+}
+
+export async function connectWebSocket() {
+  // 异步解析基地址期间可能被再次调用（轮询/重连），已有连接时直接跳过
+  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
+  const wsBase = await resolveWsBase();
   ws = new WebSocket(wsBase + '/ws');
   ws.binaryType = 'arraybuffer';
 

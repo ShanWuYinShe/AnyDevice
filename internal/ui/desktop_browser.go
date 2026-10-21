@@ -1,6 +1,7 @@
-//go:build !(wails && windows)
+//go:build !wails
 
-// 浏览器壳回退版：无 Wails 依赖的构建（默认 go build）使用。
+// 浏览器壳回退版：无 Wails 依赖的构建（默认 go build）使用，仅开发调试用；
+// 发布产物（含 macOS .app）一律走 Wails 原生窗口。
 // 打开 Chrome/Edge/Chromium --app 独立窗口（带独立 profile），
 // 并处理“窗口命令提前返回 ≠ 用户关窗”的浏览器启动器行为：
 // 命令返回后观察 5 秒，页面连接仍在线则服务驻留（等 Ctrl+C），
