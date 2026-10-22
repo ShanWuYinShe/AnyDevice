@@ -109,25 +109,27 @@ func main() {
 		}
 		hub.BroadcastAudio(data)
 	})
-	if err := systemAudioEngine.Start(); err != nil {
-		util.Logf("[Audio] 系统声音捕获初始化警告: %v\n", err)
-	}
+	go func() {
+		if err := systemAudioEngine.Start(); err != nil {
+			util.Logf("[Audio] 系统声音捕获初始化警告: %v\n", err)
+		}
+		util.Logf("[启动] 系统声音引擎: %s", systemAudioEngine.DeviceName())
+	}()
 	defer systemAudioEngine.Stop()
 
 	micAudioEngine = audio.NewEngine(audio.KindMic, audio.CaptureMode(*mode), -1, hub.BroadcastAudio)
-	if err := micAudioEngine.Start(); err != nil {
-		util.Logf("[Audio] 麦克风输入捕获初始化警告: %v\n", err)
-	}
+	go func() {
+		if err := micAudioEngine.Start(); err != nil {
+			util.Logf("[Audio] 麦克风输入捕获初始化警告: %v\n", err)
+		}
+		util.Logf("[启动] 麦克风引擎: %s", micAudioEngine.DeviceName())
+	}()
 	defer micAudioEngine.Stop()
 
 	// 4. Network & URL Information (Using OS routing resolution to skip virtual adapters)
 	primaryIP := util.GetPrimaryIP(*customIP)
 	primaryURL := fmt.Sprintf("http://%s:%d", primaryIP, *port)
 	localURL := fmt.Sprintf("http://localhost:%d", *port)
-
-	// 引擎状态落文件（GUI 模式排查关键信息）
-	util.Logf("[启动] 系统声音引擎: %s", systemAudioEngine.DeviceName())
-	util.Logf("[启动] 麦克风引擎: %s", micAudioEngine.DeviceName())
 
 	fmt.Printf("\n🚀 AnyDevice 跨端双向设备映射服务已就绪！\n")
 	fmt.Printf("├─ 操作系统: %s (%s)\n", runtime.GOOS, runtime.GOARCH)

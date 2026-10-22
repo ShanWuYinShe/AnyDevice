@@ -9,6 +9,7 @@
   import PeerCard from './lib/PeerCard.svelte';
   import Modal from './lib/Modal.svelte';
   import Icon from './lib/Icon.svelte';
+  import NicSelect from './lib/NicSelect.svelte';
 
   const self = $derived(selfState.data || {});
   const selfOs = $derived(
@@ -123,7 +124,9 @@
 
 <header class="app-header">
   <div class="brand">
-    <div class="brand-mark"><Icon name="sync" size={19} /></div>
+    <div class="brand-mark">
+      <img src="/icon-32.png" alt="AnyDevice" class="brand-icon-img" />
+    </div>
     <div class="brand-text">
       <span class="brand-name">AnyDevice</span>
       <span class="brand-sub">跨端设备映射中枢</span>
@@ -173,25 +176,18 @@
       </div>
     </div>
 
-    <div class="ov-cell">
+    <div class="ov-cell ov-cell-nic">
       <div class="ov-icon"><Icon name="wifi" size={19} /></div>
-      <div class="ov-body">
-        <label class="ov-label" for="nicSelect">网络通道</label>
-        <select
-          id="nicSelect"
-          class="select"
-          title="切换对外广播与服务的网卡"
-          bind:value={selectedNic}
-          onchange={() => switchNic(selectedNic)}
-        >
-          {#if self.interfaces && self.interfaces.length}
-            {#each self.interfaces as iface (iface.name + '|' + iface.ip)}
-              <option value={iface.ip}>{iface.name} · {iface.ip}{iface.is_virtual ? '（虚拟）' : ''}</option>
-            {/each}
-          {:else}
-            <option value="">载入网卡中…</option>
-          {/if}
-        </select>
+      <div class="ov-body ov-body-grow">
+        <span class="ov-label">网络通道</span>
+        <NicSelect
+          interfaces={self.interfaces || []}
+          value={selectedNic}
+          onchange={(newIp) => {
+            selectedNic = newIp;
+            switchNic(newIp);
+          }}
+        />
       </div>
     </div>
 

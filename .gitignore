@@ -16,3 +16,4 @@ internal/web/dist/*
 .DS_Store
 .idea/
 .vscode/
+*.log

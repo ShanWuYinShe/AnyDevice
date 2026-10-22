@@ -35,6 +35,10 @@ sed "s/__VERSION__/${VERSION}/g" Info.plist > "$MAC_APP/Contents/Info.plist"
 # 静态链接的 libopus 为 BSD-3-Clause：二进制分发需随附许可文本（必须在签名前放入包内）
 mkdir -p "$MAC_APP/Contents/Resources/third_party"
 cp third_party/libopus/COPYING "$MAC_APP/Contents/Resources/third_party/libopus-COPYING"
+# 应用图标 AppIcon.icns
+if [ -f "build/AppIcon.icns" ]; then
+    cp "build/AppIcon.icns" "$MAC_APP/Contents/Resources/AppIcon.icns"
+fi
 codesign -s - -f "$MAC_APP" >/dev/null 2>&1 || true
 
 if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
