@@ -72,6 +72,10 @@ type Engine struct {
 	cancelGen context.CancelFunc
 	opus      *OpusEncoder // float32 PCM → Opus（新协议 AUPS/AUPM）；nil=输出 float32 PCM（AUDS/AUDM 旧协议）
 
+	// opusMu 仅保护 opus 指针与 Feed 调用：emitPCM 在音频实时回调线程执行，
+	// 绝不能碰 e.mu（历史教训：回调线程抢 e.mu 与 Start/Stop 互等死锁）；
+	// Stop 销毁编码器与回调线程 Feed 之间靠本锁互斥，避免 use-after-free。
+	opusMu      sync.Mutex
 	mu          sync.Mutex
 	isRunning   atomic.Bool
 	isTestTone  bool // 当前来源为占位测试音（无真实虚拟声卡时的回退）
@@ -134,7 +138,21 @@ func (e *Engine) Start() error {
 	if !e.isRunning.CompareAndSwap(false, true) {
 		return nil
 	}
+	if err := e.start(); err != nil {
+		// 失败路径回滚 isRunning：否则引擎永久卡在「已运行」，后续 Start 假成功
+		e.isRunning.Store(false)
+		// 设备未启动成功的失败路径里，malgo 上下文可能已创建：清理避免泄漏
+		if e.device == nil && e.ctx != nil {
+			e.ctx.Uninit()
+			e.ctx.Free()
+			e.ctx = nil
+		}
+		return err
+	}
+	return nil
+}
 
+func (e *Engine) start() error {
 	if e.mode == ModeTestTone {
 		e.setDevName("系统扬声器 (未安装虚拟声卡)")
 		e.startTestTone()
@@ -349,6 +367,12 @@ func (e *Engine) autoSelectVirtualDevice(config *malgo.DeviceConfig, devType mal
 }
 
 // Stop stops capture or test tone.
+//
+// 顺序关键：必须先停设备（等待 miniaudio 回调线程退出）再销毁 Opus 编码器，
+// isRunning 也要在销毁前置 false。emitPCM 在音频回调线程 / 自研 WASAPI
+// 捕获 goroutine 中仅靠 opusMu 互斥使用 e.opus——若先 Destroy，Feed 正在
+// 执行时会 use-after-free（销毁与 Feed 的互斥由 opusMu 保证，此顺序进一步
+// 收窄竞争窗口并杜绝「Stop 后回调又惰性新建编码器」的孤儿泄漏）。
 func (e *Engine) Stop() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -360,11 +384,6 @@ func (e *Engine) Stop() {
 	if e.cancelGen != nil {
 		e.cancelGen()
 		e.cancelGen = nil
-	}
-
-	if e.opus != nil {
-		e.opus.Destroy()
-		e.opus = nil
 	}
 
 	if e.device != nil {
@@ -379,7 +398,16 @@ func (e *Engine) Stop() {
 		e.ctx = nil
 	}
 
+	// 先关闸再销毁：迟到的回调线程进入 emitPCM 后看到 isRunning=false 直接返回，
+	// 不会新建孤儿编码器；其后 opusMu 互斥下销毁，与任何在途 Feed 不重叠
 	e.isRunning.Store(false)
+
+	e.opusMu.Lock()
+	if e.opus != nil {
+		e.opus.Destroy()
+		e.opus = nil
+	}
+	e.opusMu.Unlock()
 }
 
 // emit 把 PCM 交付给订阅者：订阅门控、tag 前缀与诊断统计统一在此处理。
@@ -408,6 +436,15 @@ func (e *Engine) emitPCM(pcm []byte) {
 		tag = TagMicAudioOpus
 	} else {
 		tag = TagSystemAudioOpus
+	}
+	// opusMu 保护编码器指针与 Feed：Stop 会并发销毁编码器，无锁使用是
+	// use-after-free（2026-10-24 审查发现的内存安全缺陷，已修复）。
+	// 仍然绝不碰 e.mu（音频实时线程死锁教训，见结构体注释）。
+	e.opusMu.Lock()
+	defer e.opusMu.Unlock()
+
+	if !e.isRunning.Load() {
+		return
 	}
 	if e.opus == nil {
 		opus, err := NewOpusEncoder(func(packet []byte) {

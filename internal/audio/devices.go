@@ -23,6 +23,9 @@ func ListAllDevices() ([]DeviceInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to init audio context: %w", err)
 	}
+	// malgo 契约：Uninit 之后必须 Free 释放 ma_context 的 C 内存
+	//（defer LIFO：先执行 Uninit 再执行 Free，缺 Free 每次调用泄漏一次）
+	defer ctx.Free()
 	defer ctx.Uninit()
 
 	var result []DeviceInfo
