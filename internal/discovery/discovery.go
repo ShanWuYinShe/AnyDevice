@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -47,11 +48,12 @@ const (
 
 // DeviceCapabilities describes what virtual/physical devices this endpoint provides to others.
 type DeviceCapabilities struct {
-	SystemAudio bool   `json:"system_audio"`
-	MicAudio    bool   `json:"mic_audio"`
-	Mouse       bool   `json:"mouse"`
-	Keyboard    bool   `json:"keyboard"`
-	Control     bool   `json:"control"`
+	SystemAudio bool `json:"system_audio"`
+	MicAudio    bool `json:"mic_audio"`
+	Mouse       bool `json:"mouse"`
+	Keyboard    bool `json:"keyboard"`
+	// control 字段已随反向控制子系统移除（2026-10-24 清理）：广播中不再出现，
+	// 旧版本对端读缺失字段得零值，行为安全。
 	AudioDevice string `json:"audio_device,omitempty"`
 	MicDevice   string `json:"mic_device,omitempty"`
 	AudioFormat string `json:"audio_format,omitempty"` // 音频编码协议（opus-48000-stereo / f32le-48000-stereo）；空=更早的 int16 协议
@@ -99,7 +101,6 @@ type Service struct {
 	persist        func(util.NodeConfig)
 	mu             sync.RWMutex
 	cancel         context.CancelFunc
-	onPeerFound    func(peer DiscoveredPeer)
 }
 
 func GenerateNodeID() string {
@@ -262,7 +263,7 @@ func (s *Service) IsSelf(id, ip string, port int) bool {
 // UpdateProvides 更新本机对外广播的能力集合。
 // audioFormat 由调用方传入（唯一事实来源在 internal/audio），
 // 避免这里再硬编码协议标识导致广播与真实链路不一致。
-func (s *Service) UpdateProvides(systemAudio, micAudio, mouse, keyboard, control bool, sysDev, micDev, audioFormat string) {
+func (s *Service) UpdateProvides(systemAudio, micAudio, mouse, keyboard bool, sysDev, micDev, audioFormat string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.provides = DeviceCapabilities{
@@ -270,7 +271,6 @@ func (s *Service) UpdateProvides(systemAudio, micAudio, mouse, keyboard, control
 		MicAudio:    micAudio,
 		Mouse:       mouse,
 		Keyboard:    keyboard,
-		Control:     control,
 		AudioDevice: sysDev,
 		MicDevice:   micDev,
 		AudioFormat: audioFormat,
@@ -320,7 +320,7 @@ func (s *Service) broadcastLoop(ctx context.Context) {
 	}
 	bconn, err := net.DialUDP("udp4", nil, bcastAddr)
 	if err != nil {
-		fmt.Printf("[Discovery] UDP 广播套接字警告: %v\n", err)
+		util.Logf("[Discovery] UDP 广播套接字警告: %v", err)
 	}
 	mcastAddr := &net.UDPAddr{
 		IP:   net.ParseIP(MulticastGroup),
@@ -426,7 +426,7 @@ func (s *Service) listenLoop(ctx context.Context) {
 		}
 		conn, err := s.openListener()
 		if err != nil {
-			fmt.Printf("[Discovery] Notice: Auto-discovery port %d unavailable (%v); manual IP connection active. %v 后重试。\n", DiscoveryPort, err, listenRetryInterval)
+			util.Logf("[Discovery] 发现监听端口 %d 不可用 (%v)；手动添加 IP 的连接不受影响，%v 后重试。", DiscoveryPort, err, listenRetryInterval)
 			select {
 			case <-ctx.Done():
 				return
@@ -606,13 +606,7 @@ func (s *Service) upsertBeacon(b Beacon, peerIP string) {
 		s.peers[b.ID] = p
 		s.peerIDByNodeID[b.ID] = b.ID
 	}
-	snapshot := *p
-	onFound := s.onPeerFound
 	s.mu.Unlock()
-
-	if !exists && onFound != nil {
-		go onFound(snapshot)
-	}
 }
 
 // ClaimNodeIdentity 将一次主动连接的对端身份认领到正确的设备档案：
@@ -786,10 +780,30 @@ func (s *Service) AddManualPeer(target string, name string) *DiscoveredPeer {
 		target = target + fmt.Sprintf(":%d", s.port)
 	}
 
-	parts := strings.Split(target, ":")
-	ip := parts[0]
+	// 解析 host 与端口：SplitHostPort 能正确处理 [::1]:8080 形式；
+	// 原实现按 ":" split 对未加括号的 IPv6 会错乱，Sscanf 忽略错误
+	// 让 "ip:abc" 静默回退默认端口
+	host := target
 	port := s.port
-	fmt.Sscanf(parts[1], "%d", &port)
+	if strings.Contains(target, ":") {
+		h, p, err := net.SplitHostPort(target)
+		if err != nil {
+			util.Logf("[Discovery] 手动添加对端地址格式无效: %q (%v)", target, err)
+			return nil
+		}
+		portNum, convErr := strconv.Atoi(p)
+		if convErr != nil || portNum <= 0 || portNum > 65535 {
+			util.Logf("[Discovery] 手动添加对端端口无效: %q", target)
+			return nil
+		}
+		host = h
+		port = portNum
+	}
+	ip := strings.Trim(host, "[]")
+	if net.ParseIP(ip) == nil {
+		util.Logf("[Discovery] 手动添加对端 IP 无效: %q", target)
+		return nil
+	}
 
 	if s.isSelfUnlocked("", ip, port) || util.IsLocalIP(ip) || util.IsLocalIP(target) {
 		return nil
@@ -854,7 +868,6 @@ func (s *Service) AddManualPeer(target string, name string) *DiscoveredPeer {
 			MicAudio:    true,
 			Mouse:       true,
 			Keyboard:    true,
-			Control:     true,
 			Audio:       true,
 		},
 		LastSeen: time.Now(),
@@ -945,7 +958,6 @@ func (s *Service) RegisterInboundClient(id, remoteAddr, userAgent string) *Disco
 				MicAudio:    false,
 				Mouse:       false,
 				Keyboard:    false,
-				Control:     true,
 				Audio:       false,
 			},
 			LastSeen: time.Now(),

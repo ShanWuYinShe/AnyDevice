@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -122,6 +123,11 @@ type Server struct {
 	discovery         *discovery.Service
 	peerMgr           *PeerManager
 	mu                sync.RWMutex
+
+	// 路由只构建一次：main.go 会调 SetupRoutes 两次（http.Serve 与桌面窗口），
+	// 每次新建 mux 虽行为正确但易漂移，缓存复用
+	routesOnce sync.Once
+	routes     http.Handler
 }
 
 func NewServer(port int, initialIP string, hub *Hub, systemAudioEngine *audio.Engine, micAudioEngine *audio.Engine, mouseEngine *mouse.Engine, keyboardEngine *keyboard.Engine) *Server {
@@ -139,7 +145,6 @@ func NewServer(port int, initialIP string, hub *Hub, systemAudioEngine *audio.En
 		MicAudio:    micAudioEngine != nil,
 		Mouse:       true,
 		Keyboard:    keyboardEngine != nil,
-		Control:     true,
 		AudioDevice: sysDev,
 		MicDevice:   micDev,
 		AudioFormat: audio.ProtocolFormatOpus,
@@ -219,7 +224,7 @@ func (s *Server) SetCurrentIP(ip string) {
 	if s.discovery != nil {
 		s.discovery.SetCurrentIP(ip)
 	}
-	fmt.Printf("[Network] 用户已切换当前通信网卡 IP 为: %s (访问地址: %s)\n", ip, s.getCurrentURLUnlocked())
+	util.Logf("[Network] 用户已切换当前通信网卡 IP 为: %s (访问地址: %s)", ip, s.getCurrentURLUnlocked())
 }
 
 func (s *Server) GetCurrentIP() string {
@@ -238,14 +243,20 @@ func (s *Server) getCurrentURLUnlocked() string {
 	return fmt.Sprintf("http://%s:%d", s.currentIP, s.port)
 }
 
+// SetupRoutes 返回完整路由；首次调用构建并缓存，重复调用复用同一 mux。
 func (s *Server) SetupRoutes() http.Handler {
+	s.routesOnce.Do(func() { s.routes = s.buildRoutes() })
+	return s.routes
+}
+
+func (s *Server) buildRoutes() http.Handler {
 	mux := http.NewServeMux()
 
 	// WebSocket unified stream endpoint (audio binary + mouse JSON text)
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			fmt.Printf("[WS] Upgrade error: %v\n", err)
+			util.Logf("[WS] Upgrade error: %v", err)
 			return
 		}
 
@@ -395,7 +406,6 @@ func (s *Server) SetupRoutes() http.Handler {
 			PlayAudio       *bool  `json:"play_audio"` // fallback
 			ExecuteMouse    *bool  `json:"execute_mouse"`
 			ExecuteKeyboard *bool  `json:"execute_keyboard"`
-			RemoteControl   *bool  `json:"remote_control"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -431,7 +441,15 @@ func (s *Server) SetupRoutes() http.Handler {
 			URL    string `json:"url"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		util.Logf("[前端自检] %s %s (ws=%s, ua=%s)", body.Event, body.Detail, body.URL, r.UserAgent())
+		// 限速：LAN 任意设备可调用本接口，无限制时可刷爆日志文件（日志虽已
+		// 归档轮转，仍是有效攻击面）；超出窗口配额的静默丢弃
+		if !allowClientReport() {
+			json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+			return
+		}
+		// 截断：防超长字段撑大每行日志
+		util.Logf("[前端自检] %s %s (ws=%s, ua=%s)",
+			truncLogField(body.Event), truncLogField(body.Detail), truncLogField(body.URL), truncLogField(r.UserAgent()))
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	})
 
@@ -445,7 +463,6 @@ func (s *Server) SetupRoutes() http.Handler {
 				Audio       *bool   `json:"audio"` // fallback
 				Mouse       *bool   `json:"mouse"`
 				Keyboard    *bool   `json:"keyboard"`
-				Control     *bool   `json:"control"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -470,10 +487,6 @@ func (s *Server) SetupRoutes() http.Handler {
 			if body.Keyboard != nil {
 				keyboardVal = *body.Keyboard
 			}
-			ctrlVal := cur.Control
-			if body.Control != nil {
-				ctrlVal = *body.Control
-			}
 			if body.Name != nil {
 				s.discovery.SetName(*body.Name)
 			}
@@ -485,7 +498,7 @@ func (s *Server) SetupRoutes() http.Handler {
 			if s.micAudioEngine != nil {
 				micDev = s.micAudioEngine.DeviceName()
 			}
-			s.discovery.UpdateProvides(sysAudioVal, micAudioVal, mouseVal, keyboardVal, ctrlVal, sysDev, micDev, audioFormatOf())
+			s.discovery.UpdateProvides(sysAudioVal, micAudioVal, mouseVal, keyboardVal, sysDev, micDev, audioFormatOf())
 			json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 			return
 		}
@@ -535,7 +548,6 @@ func (s *Server) SetupRoutes() http.Handler {
 			"mouse_subs":          mouseSubs,
 			"keyboard_subs":       keyboardSubs,
 			"clients":             s.hub.ClientCount(),
-			"inbound_count":       s.hub.ClientCount(),
 			"peers_count":         len(s.peerMgr.ListPeers("")),
 			"bytes_sent":          s.hub.TotalBytesSent(),
 			"sample_rate":         audio.SampleRate,
@@ -566,10 +578,53 @@ func (s *Server) SetupRoutes() http.Handler {
 	// 每次发版 hash 变化；若浏览器缓存旧 HTML，会引用已不存在的旧产物导致白屏）
 	staticFS, err := web.GetFileSystem()
 	if err == nil {
-		mux.Handle("/", noCache(http.FileServer(staticFS)))
+		mux.Handle("/", noDirListing(noCache(http.FileServer(staticFS))))
 	}
 
 	return limitBody(mux)
+}
+
+// noDirListing 禁止目录列表：embed 产物是纯静态文件树，
+// 无 index.html 的子目录（如 /assets/）不应向局域网暴露文件列表。
+func noDirListing(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/") && r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// client-report 限速：滑动 1 秒窗口内最多 20 条，超出静默丢弃。
+var clientReportMu sync.Mutex
+var clientReportHits []time.Time
+
+func allowClientReport() bool {
+	clientReportMu.Lock()
+	defer clientReportMu.Unlock()
+	now := time.Now()
+	kept := clientReportHits[:0]
+	for _, t := range clientReportHits {
+		if now.Sub(t) < time.Second {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) >= 20 {
+		clientReportHits = kept
+		return false
+	}
+	clientReportHits = append(kept, now)
+	return true
+}
+
+// truncLogField 截断日志字段，防超长输入撑大每行日志。
+func truncLogField(s string) string {
+	const max = 300
+	if len(s) > max {
+		return s[:max] + "…"
+	}
+	return s
 }
 
 // noCache 为静态响应附加禁缓存头：局域网服务体量小，正确性优先于缓存收益。

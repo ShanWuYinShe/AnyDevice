@@ -7,9 +7,8 @@ import (
 
 func TestDiscoveryService(t *testing.T) {
 	s1 := NewService(8080, "192.168.1.100", DeviceCapabilities{
-		Audio:   true,
-		Mouse:   true,
-		Control: true,
+		Audio: true,
+		Mouse: true,
 	})
 	s1.SetName("Test-Host-1")
 
@@ -91,9 +90,9 @@ func TestDiscoveryService(t *testing.T) {
 	// Test UpdateProvides
 	// 回归：协议标识必须由调用方传入并原样广播，不得在这里被硬编码覆盖
 	// （曾硬编码为 f32le，导致广播与真实 Opus 链路不一致）
-	s1.UpdateProvides(false, true, true, true, false, "扬声器", "USB 麦克风", "opus-48000-stereo")
+	s1.UpdateProvides(false, true, true, true, "扬声器", "USB 麦克风", "opus-48000-stereo")
 	caps := s1.GetProvides()
-	if caps.SystemAudio || !caps.MicAudio || !caps.Mouse || !caps.Keyboard || caps.Control {
+	if caps.SystemAudio || !caps.MicAudio || !caps.Mouse || !caps.Keyboard {
 		t.Fatalf("unexpected capabilities: %+v", caps)
 	}
 	if caps.MicDevice != "USB 麦克风" {
@@ -213,7 +212,7 @@ func TestDedupeBeaconMergesInbound(t *testing.T) {
 	}
 	s.upsertBeacon(Beacon{
 		ID: "nodeA", Name: "客厅 Mac mini", OS: "darwin", IP: "192.168.1.200", Port: 8080,
-		Provides: DeviceCapabilities{SystemAudio: true, Mouse: true, Control: true, Audio: true},
+		Provides: DeviceCapabilities{SystemAudio: true, Mouse: true, Audio: true},
 	}, "192.168.1.200")
 
 	peers := s.GetPeers()
@@ -242,7 +241,7 @@ func TestDedupeManualMergeKeepsAlias(t *testing.T) {
 	}
 	s.upsertBeacon(Beacon{
 		ID: "nodeB", Name: "出厂主机名", OS: "windows", IP: "192.168.1.200", Port: 8080,
-		Provides: DeviceCapabilities{SystemAudio: true, Control: true},
+		Provides: DeviceCapabilities{SystemAudio: true},
 	}, "192.168.1.200")
 
 	peers := s.GetPeers()

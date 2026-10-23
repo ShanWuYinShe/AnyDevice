@@ -38,8 +38,7 @@ type PeerMappingState struct {
 	RxMicAudioKBps    int `json:"rx_mic_audio_kbps"`
 
 	// Backward compatibility fields
-	PlayAudioLocal      bool `json:"play_audio_local"`
-	RemoteControlActive bool `json:"remote_control_active,omitempty"`
+	PlayAudioLocal bool `json:"play_audio_local"`
 }
 
 // UnifiedPeer is the clean, discoverer-centric peer model exposed to the UI.
@@ -399,7 +398,8 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 	clean := strings.TrimPrefix(target, "ws://")
 	clean = strings.TrimPrefix(clean, "http://")
 	if !strings.Contains(clean, ":") {
-		clean = clean + ":8080"
+		// 兜底端口与本机服务端口一致（discovery 侧 AddManualPeer 同口径）
+		clean = fmt.Sprintf("%s:%d", clean, pm.discovery.Port())
 	}
 
 	u := url.URL{Scheme: "ws", Host: clean, Path: "/ws"}
