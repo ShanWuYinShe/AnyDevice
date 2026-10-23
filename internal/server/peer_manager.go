@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net"
 	"net/url"
 	"strings"
@@ -62,10 +63,21 @@ type peerConnection struct {
 	conn      *websocket.Conn
 	cancel    context.CancelFunc
 	startTime time.Time
+	// writeMu 串行化对该连接的写：gorilla/websocket 禁止并发写，
+	// SetMapping（HTTP handler goroutine）与 connectAndLoop（连接 goroutine）
+	// 都会写握手，无互斥时会 panic 或帧交错（2026-10-24 审查发现）。
+	writeMu sync.Mutex
 	// decoders 按音频流 tag 懒创建的 Opus→float32 PCM 解码器：
 	// 本机 UI 客户端（Wails macOS WKWebView / Safari）没有 WebCodecs
 	// AudioDecoder，转发对端音频时需要服务端先解码成 PCM 再下发。
 	decoders map[string]*audio.OpusDecoder
+}
+
+// writeJSON 对对端连接的串行化写入口：所有 WriteJSON 必须经此发送。
+func (pc *peerConnection) writeJSON(v interface{}) error {
+	pc.writeMu.Lock()
+	defer pc.writeMu.Unlock()
+	return pc.conn.WriteJSON(v)
 }
 
 type PeerManager struct {
@@ -247,7 +259,7 @@ func (pm *PeerManager) SetMapping(peerID string, playSystemAudio, playMicAudio, 
 	}
 	pm.mu.RUnlock()
 	if connected && connObj != nil && connObj.conn != nil {
-		_ = connObj.conn.WriteJSON(pm.mappingHandshake(snap))
+		_ = connObj.writeJSON(pm.mappingHandshake(snap))
 	}
 
 	return nil
@@ -315,6 +327,21 @@ func (pm *PeerManager) setRxRates(peerID string, sysKBps, micKBps int) {
 
 // kibPerSec 把窗口内累计字节数换算成 KiB/s（窗口长度按实际经过时间归一化，
 // 避免消息到达抖动导致读数跳变）。
+// maxWheelDelta 滚轮增量的安全上限（WHEEL_DELTA=120/格，±83 格足够任何真实滚动）。
+const maxWheelDelta = 10000
+
+// clampUnit 把对端发来的归一化坐标限制到 [0,1]，NaN 归零：
+// 异常/恶意对端发任意浮点值时，避免 CGEvent/SendInput 收到未定义参数。
+func clampUnit(v float64) float64 {
+	if math.IsNaN(v) || v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
 func kibPerSec(bytes int64, seconds float64) int {
 	if bytes <= 0 || seconds <= 0 {
 		return 0
@@ -401,9 +428,25 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 		return
 	}
 
-	// 连接建立即声明本端需要的流订阅（此前依赖对端默认全开；
-	// 现在对端把默认订阅收紧后，必须显式握手，否则收不到任何流）
-	_ = conn.WriteJSON(pm.mappingHandshake(*mapping))
+	// 建连竞态防护：Dial（最长 4s）期间用户可能再次 SetMapping 触发了第二个
+	// connectAndLoop。若这里不 re-check，后写者会无条件覆盖 pm.conns——
+	// 被覆盖的连接无人 Close（goroutine/连接泄漏、音频双流），且先者的
+	// defer 误删后者的 map 条目，disconnect 再也关不掉它。
+	if existing, exists := pm.conns[peerID]; exists && existing != nil {
+		pm.mu.Unlock()
+		_ = conn.Close() // 我们这条是多余的，只关自己
+		return
+	}
+
+	// 出站方向的入站防护（与入站 hub.readPump 对齐）：手动添加的对端可以是
+	// 任意 LAN 主机，超大帧会整帧读入内存；假死对端（TCP 未断）会让
+	// ReadMessage 永久阻塞。读超时靠对端 writePump 的 30s ping 续命。
+	conn.SetReadLimit(1 << 20)
+	conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+	conn.SetPingHandler(func(appData string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+		return conn.WriteControl(websocket.PongMessage, []byte(appData), time.Now().Add(5*time.Second))
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	connObj := &peerConnection{
@@ -412,11 +455,15 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 		startTime: time.Now(),
 		decoders:  make(map[string]*audio.OpusDecoder),
 	}
+	// 连接建立即声明本端需要的流订阅（此前依赖对端默认全开；
+	// 现在对端把默认订阅收紧后，必须显式握手，否则收不到任何流）。
+	// 放锁后经 writeJSON 串行写，避免与 SetMapping 的推送并发写。
 	pm.conns[peerID] = connObj
 	mapping.ConnectionStatus = "connected"
 	mapping.LatencyMs = latency
 	mapping.LastError = ""
 	pm.mu.Unlock()
+	_ = connObj.writeJSON(pm.mappingHandshake(*mapping))
 
 	// 对端连接断开：释放本机注入的按钮与按键，防止卡在“按住”状态
 	defer mouse.ReleaseAllButtons()
@@ -452,7 +499,11 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 		cancel()
 		_ = conn.Close()
 		pm.mu.Lock()
-		delete(pm.conns, peerID)
+		// 只清理仍指向自己的条目：避免误删后续重连建立的新连接
+		//（旧写法会把别人的条目删掉，disconnect 从此关不掉真连接）
+		if cur, ok := pm.conns[peerID]; ok && cur == connObj {
+			delete(pm.conns, peerID)
+		}
 		if m, ok := pm.mappings[peerID]; ok {
 			if m.PlaySystemAudioLocal || m.PlayMicAudioLocal || m.ExecuteMouseLocal || m.ExecuteKeyboardLocal {
 				m.ConnectionStatus = "disconnected"
@@ -543,10 +594,16 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 						util.Logf("[鼠标链路] 收到对端鼠标 %s (%.2f, %.2f)\n", evt.Action, evt.X, evt.Y)
 					}
 					if evt.Action == "wheel" {
-						// 滚轮同步：正 = 向上
-						mouse.SimulateScroll(evt.WheelDelta)
+						// 滚轮同步：正 = 向上；限幅防异常/恶意对端发超大增量
+						delta := evt.WheelDelta
+						if delta > maxWheelDelta {
+							delta = maxWheelDelta
+						} else if delta < -maxWheelDelta {
+							delta = -maxWheelDelta
+						}
+						mouse.SimulateScroll(delta)
 					} else {
-						mouse.SimulateAbsolute(evt.X, evt.Y)
+						mouse.SimulateAbsolute(clampUnit(evt.X), clampUnit(evt.Y))
 						if evt.Action == "down" || evt.Action == "up" {
 							btn := evt.Button
 							if btn == "" {

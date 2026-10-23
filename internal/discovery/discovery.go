@@ -633,7 +633,9 @@ func (s *Service) ClaimNodeIdentity(ip, nodeID, nodeName string) {
 	defer s.mu.Unlock()
 
 	s.nodeByIP[ip] = nodeID
-	s.aliasesByIP[ip] = nodeID
+	// 注意：不能把 nodeID 写进 aliasesByIP——该表语义是「IP→用户备注」，
+	// 写入节点 ID 会①覆盖用户已设的备注，②让新建档案的 Alias 显示成
+	// 十六进制节点 ID（IP→nodeID 归并已由上一行 nodeByIP 承担）。
 
 	// 查找既有权威档案（可能直接以 nodeID 存在，或通过 peerIDByNodeID 索引）
 	var beacon *DiscoveredPeer
