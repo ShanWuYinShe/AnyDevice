@@ -4,7 +4,7 @@
     selfState, peerState, uiState, connState, targetSubs,
     openModal, closeModal, startPolling, sendSubscriptions,
     fetchPeers, openRenameSelf, submitRename, switchNic,
-    addPeer, saveSelfSettings, showToast,
+    addPeer, saveSelfSettings, showToast, formatOs,
   } from './lib/state.svelte.js';
   import PeerCard from './lib/PeerCard.svelte';
   import Modal from './lib/Modal.svelte';
@@ -12,12 +12,7 @@
   import NicSelect from './lib/NicSelect.svelte';
 
   const self = $derived(selfState.data || {});
-  const selfOs = $derived(
-    self.os === 'darwin' ? 'macOS'
-      : self.os === 'windows' ? 'Windows'
-      : self.os === 'linux' ? 'Linux'
-      : self.os || '未知系统'
-  );
+  const selfOs = $derived(formatOs(self.os));
 
   // 网卡下拉当前选中值：本机信息载入后对齐 current_ip
   let selectedNic = $state('');
@@ -85,11 +80,6 @@
     }
   }
 
-  function refreshQR() {
-    const img = document.getElementById('qrCodeImg');
-    if (img) img.src = '/api/qrcode?t=' + Date.now();
-  }
-
   async function copyUrl() {
     const url = self.primary_url;
     if (!url) {
@@ -137,7 +127,7 @@
       class="btn"
       title="手机扫码接入"
       aria-label="手机扫码接入"
-      onclick={() => { refreshQR(); openModal('qr'); }}
+      onclick={() => openModal('qr')}
     >
       <Icon name="qr" size={17} /><span class="btn-label">扫码接入</span>
     </button>
@@ -229,7 +219,7 @@
           若所在网络禁用了广播发现，可手动输入对端 IP 连接。
         </p>
         <div class="empty-actions">
-          <button class="btn btn-primary" onclick={() => { refreshQR(); openModal('qr'); }}>
+          <button class="btn btn-primary" onclick={() => openModal('qr')}>
             <Icon name="qr" size={16} /><span>扫码接入</span>
           </button>
           <button class="btn" onclick={() => openModal('add')}>

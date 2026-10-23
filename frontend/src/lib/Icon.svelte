@@ -27,7 +27,14 @@
   };
 
   let { name = 'link', size = 18, stroke = 1.8 } = $props();
-  const inner = $derived(PATHS[name] || PATHS.link);
+  const inner = $derived.by(() => {
+    const p = PATHS[name];
+    if (!p) {
+      if (import.meta.env.DEV) console.warn('[Icon] 未知图标名:', name);
+      return PATHS.link;
+    }
+    return p;
+  });
 </script>
 
 <svg

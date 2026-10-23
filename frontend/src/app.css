@@ -310,6 +310,19 @@ img {
   color: var(--text);
 }
 
+/* 触控热区：触屏设备上命中区 ≥44px（README 场景主打手机扫码使用），
+   视觉尺寸基本不变，负 margin 抵消 padding 避免布局位移 */
+@media (pointer: coarse) {
+  .icon-btn-xs {
+    width: 32px;
+    height: 32px;
+  }
+  .link-btn {
+    padding: 8px 6px;
+    margin: -8px -6px;
+  }
+}
+
 .link-btn {
   padding: 0;
   border: 0;

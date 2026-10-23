@@ -82,6 +82,17 @@ export function isSelfPeer(p) {
   return false;
 }
 
+// OS 标识 → 展示名（App 本机卡片与 PeerCard 对端卡片共用，避免两份映射漂移）
+export function formatOs(os) {
+  const o = String(os || '').toLowerCase();
+  return o === 'windows' ? 'Windows'
+    : o === 'darwin' || o === 'macos' ? 'macOS'
+    : o === 'ios' ? 'iOS'
+    : o === 'android' ? 'Android'
+    : o === 'linux' ? 'Linux'
+    : os || '未知系统';
+}
+
 // —— 数据轮询 ——
 // 请求序号守卫：轮询是无守卫的 async，服务端变慢时会多个请求并发，
 // 先发后至的旧响应会覆盖新响应（设备列表闪回旧状态、离线设备“复活”）。

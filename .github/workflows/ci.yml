@@ -1,0 +1,59 @@
+# 质量门：与本地「完成前验证」同口径
+#   gofmt → go vet → go test → 前端 svelte-check/vite build → Wails 生产构建
+#   外加 Windows 平台层交叉编译（键鼠捕获为纯 syscall，可在 Linux runner 交叉验证）
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  macos:
+    # 音频/键鼠捕获依赖 macOS 系统框架，Wails 构建只能在 macOS runner 完成
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: gofmt 检查
+        run: test -z "$(gofmt -l main.go internal/)" || { gofmt -l main.go internal/; exit 1; }
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -count=1 ./...
+
+      - name: 前端 svelte-check
+        working-directory: frontend
+        run: bun install --frozen-lockfile && bun run check
+
+      - name: 前端构建（产物嵌入 internal/web/dist）
+        working-directory: frontend
+        run: bun run build
+
+      - name: Wails 生产构建
+        # UniformTypeIdentifiers 需显式传给链接器（Wails v2.16 darwin 前端引用）
+        run: >
+          go build -tags "wails,desktop,production"
+          -ldflags "-s -w -extldflags '-framework UniformTypeIdentifiers'"
+          -o /dev/null main.go
+
+  windows-cross:
+    # Windows 平台层（钩子/SendInput/键码表）为纯 syscall，交叉编译即可验证
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: 交叉编译 Windows 平台层
+        run: CGO_ENABLED=0 GOOS=windows go build ./internal/mouse/ ./internal/keyboard/

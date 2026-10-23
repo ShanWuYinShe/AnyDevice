@@ -2,7 +2,7 @@
   import Icon from './Icon.svelte';
   import {
     telemetry, audioRate, audioPlayState,
-    openRenamePeer, toggleMapping, primeAudio, resumeAudio,
+    openRenamePeer, toggleMapping, primeAudio, resumeAudio, formatOs,
   } from './state.svelte.js';
 
   let { peer } = $props();
@@ -46,15 +46,7 @@
     '对端广播的音频协议为 ' + (String(peer.provides?.audio_format || '') || '（空，疑似更早的 int16 版本）')
   );
 
-  const osLower = $derived(String(peer.os || '').toLowerCase());
-  const osLabel = $derived(
-    osLower === 'windows' ? 'Windows'
-      : osLower === 'darwin' || osLower === 'macos' ? 'macOS'
-      : osLower === 'ios' ? 'iOS'
-      : osLower === 'android' ? 'Android'
-      : osLower === 'linux' ? 'Linux'
-      : peer.os || '未知系统'
-  );
+  const osLabel = $derived(formatOs(peer.os));
   const deviceIcon = $derived(
     osLower === 'ios' || osLower === 'android' ? 'phone'
       : osLower === 'windows' ? 'monitor'
@@ -78,16 +70,16 @@
   const keyboardTitle = $derived(keyboardMapped ? '停止同步' : '映射同步');
 
   function onToggleSystemAudio() {
-    primeAudio();
     const next = !sysAudioMapped;
+    if (next) primeAudio(); // 仅开启时预热 AudioContext，关闭无需创建
     // 开启时带上设备名：若对端是占位测试音（未装虚拟声卡）用户能立即识别
     const dev = provides.audio_device ? '（' + provides.audio_device + '）' : '';
     toggleMapping(peer, 'play_system_audio', next,
       '已开启播放对端系统声音 ' + dev, '已停止播放系统声音');
   }
   function onToggleMicAudio() {
-    primeAudio();
     const next = !micAudioMapped;
+    if (next) primeAudio();
     const dev = provides.mic_device ? '（' + provides.mic_device + '）' : '';
     toggleMapping(peer, 'play_mic_audio', next,
       '已开启收听对端麦克风 ' + dev, '已停止收听麦克风');
