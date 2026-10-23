@@ -219,6 +219,14 @@ func runEventCapture(ctx context.Context, emit func(MouseEvent)) bool {
 			return false
 		}
 	case <-ctx.Done():
+		// 早停窗口：钩子 goroutine 可能仍在安装流程中，必须等它的 installed
+		// 结果——若已安装成功，补发 WM_QUIT 让其退出 GetMessageW 并执行
+		// UnhookWindowsHookEx；否则 WH_MOUSE_LL 系统级钩子泄漏到进程退出
+		// （期间全系统鼠标事件都过一遍僵尸钩子，2026-10-24 审查发现）。
+		ok := <-installed
+		if ok && msHookThread != 0 {
+			procPostThreadMessageW.Call(uintptr(msHookThread), wM_QUIT, 0, 0)
+		}
 		return true
 	}
 

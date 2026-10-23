@@ -5,6 +5,7 @@ package mouse
 /*
 #cgo LDFLAGS: -framework CoreGraphics -framework CoreFoundation
 #include <CoreGraphics/CoreGraphics.h>
+#include <pthread.h>
 
 // 本应用注入事件的标记（kCGEventSourceUserData），事件钩子据此过滤，
 // 防止“注入 → 自己捕获 → 再转发 → 再注入”的无限回环。
@@ -16,9 +17,16 @@ static CFMachPortRef msTapPort = NULL;
 static CFRunLoopSourceRef msTapSource = NULL;
 static CFRunLoopRef msTapLoop = NULL;
 
+// tap 全局状态的互斥锁：install（调用方线程）、halt（任意线程）、
+// reenable（runloop 回调线程）会并发触碰这些指针；完整的资源释放（stop）
+// 只在 runloop 线程自身执行，杜绝跨线程 CFRelease 与在途回调的竞争
+// （此前三处并发 stop 曾实测双重释放崩溃，2026-10-24）。
+static pthread_mutex_t msTapMutex = PTHREAD_MUTEX_INITIALIZER;
+
 // msTapInstall 安装会话级只听鼠标钩子（移动/按下/抬起/滚轮）。
 // 未授予「辅助功能」权限时 CGEventTapCreate 返回 NULL（返回 0 → 回退轮询）。
 static int msTapInstall(void) {
+    pthread_mutex_lock(&msTapMutex);
     CGEventMask mask = CGEventMaskBit(kCGEventMouseMoved)
                      | CGEventMaskBit(kCGEventLeftMouseDown)
                      | CGEventMaskBit(kCGEventLeftMouseUp)
@@ -32,11 +40,12 @@ static int msTapInstall(void) {
                      | CGEventMaskBit(kCGEventScrollWheel);
     msTapPort = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap,
                                  kCGEventTapOptionListenOnly, mask, msTapCallback, NULL);
-    if (!msTapPort) return 0;
+    if (!msTapPort) { pthread_mutex_unlock(&msTapMutex); return 0; }
     msTapSource = CFMachPortCreateRunLoopSource(NULL, msTapPort, 0);
     msTapLoop = CFRunLoopGetCurrent();
     CFRunLoopAddSource(msTapLoop, msTapSource, kCFRunLoopDefaultMode);
     CGEventTapEnable(msTapPort, true);
+    pthread_mutex_unlock(&msTapMutex);
     return 1;
 }
 
@@ -44,7 +53,11 @@ static void msTapRun(void) {
     CFRunLoopRun();
 }
 
+// msTapStop 完整清理（remove source / release / stop loop）。
+// 只允许 runloop 线程在 msTapRun 返回后调用：跨线程 CFRelease 可能与
+// 在途回调竞争导致过度释放崩溃（2026-10-24 审查实测 SIGTRAP 复现）。
 static void msTapStop(void) {
+    pthread_mutex_lock(&msTapMutex);
     if (msTapSource) {
         CFRunLoopRemoveSource(msTapLoop, msTapSource, kCFRunLoopDefaultMode);
         CFRelease(msTapSource);
@@ -58,12 +71,25 @@ static void msTapStop(void) {
         CFRunLoopStop(msTapLoop);
         msTapLoop = NULL;
     }
+    pthread_mutex_unlock(&msTapMutex);
+}
+
+// msTapHalt 仅请求 runloop 退出、不释放任何资源，任意线程可安全调用；
+// 完整清理交给 runloop 线程自己的 msTapStop。
+static void msTapHalt(void) {
+    pthread_mutex_lock(&msTapMutex);
+    if (msTapLoop) {
+        CFRunLoopStop(msTapLoop);
+    }
+    pthread_mutex_unlock(&msTapMutex);
 }
 
 static void msTapReenable(void) {
+    pthread_mutex_lock(&msTapMutex);
     if (msTapPort) {
         CGEventTapEnable(msTapPort, true);
     }
+    pthread_mutex_unlock(&msTapMutex);
 }
 
 static void get_mouse_info(double* x, double* y, int* lDown, int* rDown, int* mDown) {
@@ -185,6 +211,7 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"time"
 	"unsafe"
 )
@@ -327,21 +354,42 @@ func msTapCallback(proxy C.CGEventTapProxy, etype C.CGEventType, event C.CGEvent
 // runEventCapture 以 CGEventTap 事件驱动捕获鼠标：移动合并到 ~60Hz 发送，
 // 按下/抬起/滚轮即时发送。未授权或安装失败返回 false（调用方回退轮询）。
 func runEventCapture(ctx context.Context, emit func(MouseEvent)) bool {
-	if C.msTapInstall() == 0 {
-		fmt.Println("[鼠标捕获] CGEventTap 安装失败（未授予辅助功能权限），回退轮询模式")
-		return false
-	}
 	events := make(chan MouseEvent, 512)
 	msEventCh = events
 
+	// install 与 run 必须在同一线程：CFRunLoopSource 挂在「安装时线程」的
+	// runloop 上，而 CFRunLoopRun 运行的是「当前线程」的 runloop。此前 install
+	// 在调用方 goroutine、run 另起 goroutine 且无 LockOSThread，goroutine 线程
+	// 迁移后 source 与 runloop 错位——钩子装上却收不到事件且完全静默失效。
+	// LockOSThread 把 install→run→stop 整个生命周期钉死在同一 OS 线程。
+	installed := make(chan bool, 1)
 	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		ok := C.msTapInstall() == 1
+		installed <- ok
+		if !ok {
+			return
+		}
+		// 安装完成后若 ctx 已取消（早停窗口），直接在同线程完成完整清理
+		select {
+		case <-ctx.Done():
+			C.msTapStop()
+			return
+		default:
+		}
 		C.msTapRun()
 		C.msTapStop()
 	}()
 
+	if !<-installed {
+		fmt.Println("[鼠标捕获] CGEventTap 安装失败（未授予辅助功能权限），回退轮询模式")
+		return false
+	}
+
 	go func() {
 		<-ctx.Done()
-		C.msTapStop()
+		C.msTapHalt()
 	}()
 
 	// move 合并节流：仅保留最新位置，按 ~60Hz 发送
@@ -352,7 +400,7 @@ func runEventCapture(ctx context.Context, emit func(MouseEvent)) bool {
 	for {
 		select {
 		case <-ctx.Done():
-			C.msTapStop()
+			C.msTapHalt()
 			return true
 		case evt := <-events:
 			if evt.Action == "move" {

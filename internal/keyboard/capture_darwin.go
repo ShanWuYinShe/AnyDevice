@@ -6,6 +6,7 @@ package keyboard
 #cgo LDFLAGS: -framework CoreGraphics -framework CoreFoundation -framework ApplicationServices
 #include <CoreGraphics/CoreGraphics.h>
 #include <ApplicationServices/ApplicationServices.h>
+#include <pthread.h>
 
 // 本应用注入事件的标记（kCGEventSourceUserData），事件钩子据此过滤，
 // 防止“注入 → 自己捕获 → 再转发 → 再注入”的无限回环。
@@ -17,19 +18,27 @@ static CFMachPortRef kbTapPort = NULL;
 static CFRunLoopSourceRef kbTapSource = NULL;
 static CFRunLoopRef kbTapLoop = NULL;
 
+// tap 全局状态的互斥锁：install（调用方线程）、halt（任意线程）、
+// reenable（runloop 回调线程）会并发触碰这些指针；完整的资源释放（stop）
+// 只在 runloop 线程自身执行，杜绝跨线程 CFRelease 与在途回调的竞争
+// （此前三处并发 stop 曾实测双重释放崩溃，2026-10-24）。
+static pthread_mutex_t kbTapMutex = PTHREAD_MUTEX_INITIALIZER;
+
 // kbTapInstall 安装会话级只听事件钩子（键盘按下/抬起/修饰键变化）。
 // 未授予「辅助功能」权限时 CGEventTapCreate 返回 NULL（返回 0 → 调用方回退轮询）。
 static int kbTapInstall(void) {
+    pthread_mutex_lock(&kbTapMutex);
     CGEventMask mask = CGEventMaskBit(kCGEventKeyDown)
                      | CGEventMaskBit(kCGEventKeyUp)
                      | CGEventMaskBit(kCGEventFlagsChanged);
     kbTapPort = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap,
                                  kCGEventTapOptionListenOnly, mask, kbTapCallback, NULL);
-    if (!kbTapPort) return 0;
+    if (!kbTapPort) { pthread_mutex_unlock(&kbTapMutex); return 0; }
     kbTapSource = CFMachPortCreateRunLoopSource(NULL, kbTapPort, 0);
     kbTapLoop = CFRunLoopGetCurrent();
     CFRunLoopAddSource(kbTapLoop, kbTapSource, kCFRunLoopDefaultMode);
     CGEventTapEnable(kbTapPort, true);
+    pthread_mutex_unlock(&kbTapMutex);
     return 1;
 }
 
@@ -37,7 +46,11 @@ static void kbTapRun(void) {
     CFRunLoopRun();
 }
 
+// kbTapStop 完整清理（remove source / release / stop loop）。
+// 只允许 runloop 线程在 kbTapRun 返回后调用：跨线程 CFRelease 可能与
+// 在途回调竞争导致过度释放崩溃（2026-10-24 审查实测 SIGTRAP 复现）。
 static void kbTapStop(void) {
+    pthread_mutex_lock(&kbTapMutex);
     if (kbTapSource) {
         CFRunLoopRemoveSource(kbTapLoop, kbTapSource, kCFRunLoopDefaultMode);
         CFRelease(kbTapSource);
@@ -51,12 +64,25 @@ static void kbTapStop(void) {
         CFRunLoopStop(kbTapLoop);
         kbTapLoop = NULL;
     }
+    pthread_mutex_unlock(&kbTapMutex);
+}
+
+// kbTapHalt 仅请求 runloop 退出、不释放任何资源，任意线程可安全调用；
+// 完整清理交给 runloop 线程自己的 kbTapStop。
+static void kbTapHalt(void) {
+    pthread_mutex_lock(&kbTapMutex);
+    if (kbTapLoop) {
+        CFRunLoopStop(kbTapLoop);
+    }
+    pthread_mutex_unlock(&kbTapMutex);
 }
 
 static void kbTapReenable(void) {
+    pthread_mutex_lock(&kbTapMutex);
     if (kbTapPort) {
         CGEventTapEnable(kbTapPort, true);
     }
+    pthread_mutex_unlock(&kbTapMutex);
 }
 
 static int is_key_down(int k) {
@@ -93,6 +119,7 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -389,28 +416,48 @@ func kbTapCallback(proxy C.CGEventTapProxy, etype C.CGEventType, event C.CGEvent
 // runEventCapture 以 CGEventTap 事件驱动捕获键盘（参照 Deskflow 的事件模型）。
 // 返回 false 表示未授权或安装失败，调用方回退轮询差分模式。
 func runEventCapture(ctx context.Context, emit func(KeyEvent)) bool {
-	if C.kbTapInstall() == 0 {
-		fmt.Println("[键盘捕获] CGEventTap 安装失败（未授予辅助功能权限），回退轮询模式")
-		return false
-	}
 	events := make(chan KeyEvent, 256)
 	kbEventCh = events
 
+	// install 与 run 必须在同一线程：CFRunLoopSource 挂在「安装时线程」的
+	// runloop 上，而 CFRunLoopRun 运行的是「当前线程」的 runloop。此前 install
+	// 在调用方 goroutine、run 另起 goroutine 且无 LockOSThread，goroutine 线程
+	// 迁移后 source 与 runloop 错位——钩子装上却收不到事件且完全静默失效。
+	// LockOSThread 把 install→run→stop 整个生命周期钉死在同一 OS 线程。
+	installed := make(chan bool, 1)
 	go func() {
-		// 专用线程运行钩子 runloop（cgo 调用天然绑定 OS 线程）
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		ok := C.kbTapInstall() == 1
+		installed <- ok
+		if !ok {
+			return
+		}
+		// 安装完成后若 ctx 已取消（早停窗口），直接在同线程完成完整清理
+		select {
+		case <-ctx.Done():
+			C.kbTapStop()
+			return
+		default:
+		}
 		C.kbTapRun()
 		C.kbTapStop()
 	}()
 
+	if !<-installed {
+		fmt.Println("[键盘捕获] CGEventTap 安装失败（未授予辅助功能权限），回退轮询模式")
+		return false
+	}
+
 	go func() {
 		<-ctx.Done()
-		C.kbTapStop()
+		C.kbTapHalt()
 	}()
 
 	for {
 		select {
 		case <-ctx.Done():
-			C.kbTapStop()
+			C.kbTapHalt()
 			return true
 		case evt := <-events:
 			emit(evt)
