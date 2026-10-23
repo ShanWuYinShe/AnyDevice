@@ -1,9 +1,12 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"runtime"
 	"sync"
 	"time"
@@ -23,9 +26,89 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  2048,
 	WriteBufferSize: 8192,
 	CheckOrigin: func(r *http.Request) bool {
-		// Allow any origin on LAN
-		return true
+		return isAllowedOrigin(r)
 	},
+}
+
+// isAllowedOrigin 判断 WebSocket 升级请求的 Origin 是否可信。
+// 跨源 WebSocket 不受浏览器同源策略限制，全靠服务端 CheckOrigin 把关；
+// 而本服务的 WS 连上即可订阅系统声音与键鼠事件流，必须白名单放行：
+//   - 无 Origin：本机 peer_manager 出站 dial、curl 等非浏览器客户端；
+//   - 本机地址：UI 从 http://<本机IP>:<port> 打开时的同源页面；
+//   - Wails 窗口：macOS WKWebView 为 wails://，Windows WebView2 为 http://wails.localhost。
+//
+// 其余（任意网页跨源直连 ws://<本机IP>:8080/ws 窃听键鼠/音频）一律拒绝。
+func isAllowedOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	reject := func() {
+		util.Logf("[WS] 拒绝跨源 WebSocket 连接: Origin=%q RemoteAddr=%s (若桌面窗口被误拒，请把日志里的 Origin 值加入白名单)", origin, r.RemoteAddr)
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		reject()
+		return false
+	}
+	switch u.Scheme {
+	case "wails":
+		// Wails 桌面窗口（macOS WKWebView 自定义 scheme）
+		return true
+	case "http", "https":
+		host := u.Hostname()
+		if host == "" {
+			reject()
+			return false
+		}
+		// Windows WebView2 的 Wails 窗口固定以 wails.localhost 为来源
+		if host == "localhost" || host == "wails.localhost" {
+			return true
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			if ip.IsLoopback() || util.IsLocalIP(ip.String()) {
+				return true
+			}
+			reject()
+			return false
+		}
+		// 主机名（如 mDNS 名称）解析到本机地址也算同源
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if addrs, err := net.DefaultResolver.LookupHost(ctx, host); err == nil {
+			for _, a := range addrs {
+				if util.IsLocalIP(a) {
+					return true
+				}
+			}
+		}
+		reject()
+		return false
+	default:
+		reject()
+		return false
+	}
+}
+
+// isLocalInterfaceIP 判断给定 IP 字符串是否属于本机现有网卡地址。
+func isLocalInterfaceIP(ipStr string) bool {
+	for _, info := range util.GetAllIPs() {
+		if info.IP == ipStr {
+			return true
+		}
+	}
+	return false
+}
+
+// limitBody 统一限制请求体大小：LAN 任意设备可直连本服务，无上限的 JSON
+// 解码可被超大 body 耗尽内存（WS 帧另有 SetReadLimit 把关，此处管 HTTP API）。
+func limitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 type Server struct {
@@ -207,6 +290,11 @@ func (s *Server) SetupRoutes() http.Handler {
 
 	// Network interface switch/select API
 	mux.HandleFunc("/api/interfaces/select", func(w http.ResponseWriter, r *http.Request) {
+		// 仅允许 POST：GET 会被网页 <img> 直接触发（CSRF 可打乱通信地址）
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		targetIP := r.URL.Query().Get("ip")
 		if targetIP == "" {
@@ -220,6 +308,12 @@ func (s *Server) SetupRoutes() http.Handler {
 
 		if targetIP == "" {
 			http.Error(w, "missing ip parameter", http.StatusBadRequest)
+			return
+		}
+
+		// 只接受本机真实网卡地址：防任意字符串打乱 QR 码/beacon 广播
+		if net.ParseIP(targetIP) == nil || !isLocalInterfaceIP(targetIP) {
+			http.Error(w, "invalid ip parameter", http.StatusBadRequest)
 			return
 		}
 
@@ -475,7 +569,7 @@ func (s *Server) SetupRoutes() http.Handler {
 		mux.Handle("/", noCache(http.FileServer(staticFS)))
 	}
 
-	return mux
+	return limitBody(mux)
 }
 
 // noCache 为静态响应附加禁缓存头：局域网服务体量小，正确性优先于缓存收益。
