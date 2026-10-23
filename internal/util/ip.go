@@ -121,14 +121,17 @@ func GetOutboundIP() string {
 	targets := []string{"223.5.5.5:80", "119.29.29.29:80", "8.8.8.8:80"}
 	for _, target := range targets {
 		conn, err := net.DialTimeout("udp", target, 500*time.Millisecond)
-		if err == nil {
-			defer conn.Close()
-			if localAddr, ok := conn.LocalAddr().(*net.UDPAddr); ok {
-				ip := localAddr.IP.To4()
-				if ip != nil && !ip.IsLoopback() {
-					return ip.String()
-				}
-			}
+		if err != nil {
+			continue
+		}
+		localAddr, ok := conn.LocalAddr().(*net.UDPAddr)
+		conn.Close() // 用完即关，不积压到函数返回（循环内 defer 是反模式）
+		if !ok {
+			continue
+		}
+		ip := localAddr.IP.To4()
+		if ip != nil && !ip.IsLoopback() {
+			return ip.String()
 		}
 	}
 	return ""
@@ -177,10 +180,12 @@ func GetPrimaryIP(userSpecifiedIP string) string {
 	}
 
 	// 2. Fallback: inspect physical non-virtual network interfaces
+	// IsPrivate 精确覆盖 RFC1918（10/8、172.16/12、192.168/16）：
+	// 此前的 "172." 前缀会把 172.0.x~172.15.x 的公网地址误判为私网
 	all := GetAllIPs()
 	for _, info := range all {
 		if !info.IsVirtual {
-			if strings.HasPrefix(info.IP, "192.168.") || strings.HasPrefix(info.IP, "10.") || strings.HasPrefix(info.IP, "172.") {
+			if ip := net.ParseIP(info.IP); ip != nil && ip.IsPrivate() {
 				return info.IP
 			}
 		}

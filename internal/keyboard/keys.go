@@ -1,5 +1,7 @@
 package keyboard
 
+import "strings"
+
 // Standard W3C key code identifiers for cross-platform mapping.
 const (
 	// Letters
@@ -194,4 +196,68 @@ func FriendlyKeyName(code string) string {
 		}
 		return code
 	}
+}
+
+// keyCharMap 字符型按键在美式布局下的字符（[无 Shift, 有 Shift]）。
+// Space/Tab/Enter 不在字符表内：它们是输入法的提交/候选键，
+// 必须走纯键码让目标输入法按原始语义处理，不能注入字符。
+// 平台无关（纯 W3C 键码 → 字符），放在无 build tag 的文件里，
+// 让各平台测试都能引用（此前在 darwin 文件里，Windows 下测试编译不过）。
+var keyCharMap = map[string][2]string{
+	Minus:          {"-", "_"},
+	Equal:          {"=", "+"},
+	BracketLeft:    {"[", "{"},
+	BracketRight:   {"]", "}"},
+	Backslash:      {"\\", "|"},
+	Semicolon:      {";", ":"},
+	Quote:          {"'", "\""},
+	Comma:          {",", "<"},
+	Period:         {".", ">"},
+	Slash:          {"/", "?"},
+	Backquote:      {"`", "~"},
+	Digit1:         {"1", "!"},
+	Digit2:         {"2", "@"},
+	Digit3:         {"3", "#"},
+	Digit4:         {"4", "$"},
+	Digit5:         {"5", "%"},
+	Digit6:         {"6", "^"},
+	Digit7:         {"7", "&"},
+	Digit8:         {"8", "*"},
+	Digit9:         {"9", "("},
+	Digit0:         {"0", ")"},
+	Numpad0:        {"0", "0"},
+	Numpad1:        {"1", "1"},
+	Numpad2:        {"2", "2"},
+	Numpad3:        {"3", "3"},
+	Numpad4:        {"4", "4"},
+	Numpad5:        {"5", "5"},
+	Numpad6:        {"6", "6"},
+	Numpad7:        {"7", "7"},
+	Numpad8:        {"8", "8"},
+	Numpad9:        {"9", "9"},
+	NumpadDecimal:  {".", "."},
+	NumpadAdd:      {"+", "+"},
+	NumpadSubtract: {"-", "-"},
+	NumpadMultiply: {"*", "*"},
+	NumpadDivide:   {"/", "/"},
+	NumpadEqual:    {"=", "="},
+}
+
+// keyChar 返回字母/数字/标点键对应的字符（Shift 决定上档），非字符键返回 false。
+func keyChar(key string, shift bool) (string, bool) {
+	// 字母：KeyA → a / A
+	if strings.HasPrefix(key, "Key") && len(key) == 4 {
+		letter := strings.ToLower(key[3:])
+		if shift {
+			return strings.ToUpper(letter), true
+		}
+		return letter, true
+	}
+	if pair, ok := keyCharMap[key]; ok {
+		if shift {
+			return pair[1], true
+		}
+		return pair[0], true
+	}
+	return "", false
 }

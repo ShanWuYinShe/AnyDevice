@@ -49,7 +49,11 @@ func main() {
 	printBanner()
 
 	// Check devices before starting
-	devices, _ := audio.ListAllDevices()
+	devices, err := audio.ListAllDevices()
+	if err != nil {
+		// 枚举失败按「未检测到设备」继续走提示流程，但必须留痕便于排查
+		util.Logf("[启动] 枚举音频设备失败: %v", err)
+	}
 	hasPlayback := false
 	for _, d := range devices {
 		if d.Type == "playback" {

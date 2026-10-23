@@ -44,6 +44,11 @@ func InitLogFile() string {
 		if dir := filepath.Dir(path); dir != "" {
 			_ = os.MkdirAll(dir, 0o755)
 		}
+		// 简单轮转：超过 5MB 归档为 .old（覆盖旧归档），防止日志无限增长
+		//（GUI 版全部诊断日志只落这一处，异常刷屏时磁盘可被打满）
+		if st, err := os.Stat(path); err == nil && st.Size() > 5<<20 {
+			_ = os.Rename(path, path+".old")
+		}
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
 			continue
