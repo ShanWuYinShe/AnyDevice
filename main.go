@@ -115,7 +115,7 @@ func main() {
 	})
 	go func() {
 		if err := systemAudioEngine.Start(); err != nil {
-			util.Logf("[Audio] 系统声音捕获初始化警告: %v\n", err)
+			util.Logf("[Audio] 系统声音捕获初始化警告: %v", err)
 		}
 		util.Logf("[启动] 系统声音引擎: %s", systemAudioEngine.DeviceName())
 	}()
@@ -156,12 +156,18 @@ func main() {
 	srv := server.NewServer(*port, primaryIP, hub, systemAudioEngine, micAudioEngine, mouseEngine, keyboardEngine)
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {
-		util.Logf("[Fatal] 端口 %d 监听失败（可能已被其他实例占用）: %v\n", *port, err)
+		util.Logf("[Fatal] 端口 %d 监听失败（可能已被其他实例占用）: %v", *port, err)
 		os.Exit(1)
 	}
 	go func() {
 		if err := http.Serve(ln, srv.SetupRoutes()); err != nil && err != http.ErrServerClosed {
-			util.Logf("[Fatal] HTTP server error: %v\n", err)
+			// os.Exit 会跳过所有 defer（各引擎 Stop、Windows 下 WASAPI/COM
+			// 释放）——失败路径手动走一遍与正常退出相同的清理再退出
+			util.Logf("[Fatal] HTTP server error: %v", err)
+			systemAudioEngine.Stop()
+			micAudioEngine.Stop()
+			mouseEngine.Stop()
+			keyboardEngine.Stop()
 			os.Exit(1)
 		}
 	}()

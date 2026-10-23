@@ -15,6 +15,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime"
 	"syscall"
 	"time"
 	"unsafe"
@@ -153,6 +154,12 @@ func (w *wasapiCapture) Close() {
 
 // startNativeSystemCapture 启动自研 WASAPI Loopback 捕获。
 // 成功时在后台 goroutine 中持续回调 onPCM（48kHz S16 立体声交错）。
+//
+// 线程亲和：COM 的 CoInitializeEx/CoUninitialize 必须同线程配对，且 Go
+// goroutine 会在调用间迁移线程。原实现 Init 在调用方 goroutine、Uninit
+// 在捕获 goroutine，违反配对契约。现在初始化、捕获循环与清理全部在
+// 同一 goroutine 内完成并用 LockOSThread 钉死单一线程；初始化结果经
+// ready 通道同步回调用方，保持原有的同步错误语义（失败回退 miniaudio）。
 func startNativeSystemCapture(ctx context.Context, onPCM func([]byte)) error {
 	for _, p := range []*syscall.LazyProc{procCoInitializeEx, procCoCreateInstance, procCoTaskMemFree} {
 		if err := p.Find(); err != nil {
@@ -160,102 +167,116 @@ func startNativeSystemCapture(ctx context.Context, onPCM func([]byte)) error {
 		}
 	}
 
-	w := &wasapiCapture{}
-	initialized := false
-	hr, _, _ := procCoInitializeEx.Call(0, coinitMultithreaded)
-	if !hrFailed(hr) || int32(hr) == 1 { // S_FALSE：当前线程已初始化
-		initialized = true
-	}
-	fail := func(msg string, hr uintptr) error {
-		w.Close()
-		if initialized {
-			procCoUninitialize.Call()
+	// initialized 由下方 start 闭包设置、goroutine 清理段读取，二者同 goroutine
+	var initialized bool
+	start := func() (*wasapiCapture, error) {
+		w := &wasapiCapture{}
+		hr, _, _ := procCoInitializeEx.Call(0, coinitMultithreaded)
+		if !hrFailed(hr) || int32(hr) == 1 { // S_FALSE：当前线程已初始化
+			initialized = true
 		}
-		return fmt.Errorf("WASAPI: %s (hr=%#x)", msg, uint32(hr))
-	}
+		fail := func(msg string, hr uintptr) error {
+			w.Close()
+			if initialized {
+				procCoUninitialize.Call()
+			}
+			return fmt.Errorf("WASAPI: %s (hr=%#x)", msg, uint32(hr))
+		}
 
-	// IMMDeviceEnumerator
-	var ppv unsafe.Pointer
-	hr, _, _ = procCoCreateInstance.Call(
-		uintptr(unsafe.Pointer(&clsidMMDeviceEnumerator)), 0, clsctxAll,
-		uintptr(unsafe.Pointer(&iidIMMDeviceEnumerator)),
-		uintptr(unsafe.Pointer(&ppv)))
-	if hrFailed(hr) || ppv == nil {
-		return fail("创建设备枚举器失败", hr)
-	}
-	w.enumerator = ppv
+		// IMMDeviceEnumerator
+		var ppv unsafe.Pointer
+		hr, _, _ = procCoCreateInstance.Call(
+			uintptr(unsafe.Pointer(&clsidMMDeviceEnumerator)), 0, clsctxAll,
+			uintptr(unsafe.Pointer(&iidIMMDeviceEnumerator)),
+			uintptr(unsafe.Pointer(&ppv)))
+		if hrFailed(hr) || ppv == nil {
+			return nil, fail("创建设备枚举器失败", hr)
+		}
+		w.enumerator = ppv
 
-	// GetDefaultAudioEndpoint(eRender=0, eConsole=0)
-	ppv = nil
-	hr = callCom(w.enumerator, 4, 0, 0, uintptr(unsafe.Pointer(&ppv)))
-	if hrFailed(hr) || ppv == nil {
-		return fail("获取默认输出设备失败", hr)
-	}
-	w.device = ppv
+		// GetDefaultAudioEndpoint(eRender=0, eConsole=0)
+		ppv = nil
+		hr = callCom(w.enumerator, 4, 0, 0, uintptr(unsafe.Pointer(&ppv)))
+		if hrFailed(hr) || ppv == nil {
+			return nil, fail("获取默认输出设备失败", hr)
+		}
+		w.device = ppv
 
-	// Activate(IAudioClient)
-	ppv = nil
-	hr = callCom(w.device, 3,
-		uintptr(unsafe.Pointer(&iidIAudioClient)), clsctxAll, 0,
-		uintptr(unsafe.Pointer(&ppv)))
-	if hrFailed(hr) || ppv == nil {
-		return fail("激活 IAudioClient 失败", hr)
-	}
-	w.audioClient = ppv
+		// Activate(IAudioClient)
+		ppv = nil
+		hr = callCom(w.device, 3,
+			uintptr(unsafe.Pointer(&iidIAudioClient)), clsctxAll, 0,
+			uintptr(unsafe.Pointer(&ppv)))
+		if hrFailed(hr) || ppv == nil {
+			return nil, fail("激活 IAudioClient 失败", hr)
+		}
+		w.audioClient = ppv
 
-	// GetMixFormat：设备原生混音格式（Initialize 需要显式传入，最后再释放）
-	var pFormat *waveFormatEx
-	hr = callCom(w.audioClient, 8, uintptr(unsafe.Pointer(&pFormat)))
-	if hrFailed(hr) || pFormat == nil {
-		return fail("获取混音格式失败", hr)
-	}
-	if err := w.parseFormat(pFormat); err != nil {
+		// GetMixFormat：设备原生混音格式（Initialize 需要显式传入，最后再释放）
+		var pFormat *waveFormatEx
+		hr = callCom(w.audioClient, 8, uintptr(unsafe.Pointer(&pFormat)))
+		if hrFailed(hr) || pFormat == nil {
+			return nil, fail("获取混音格式失败", hr)
+		}
+		if err := w.parseFormat(pFormat); err != nil {
+			procCoTaskMemFree.Call(uintptr(unsafe.Pointer(pFormat)))
+			w.Close()
+			if initialized {
+				procCoUninitialize.Call()
+			}
+			return nil, err
+		}
+
+		// Initialize：共享模式 + LOOPBACK（轮询模式）。
+		// 注意：WASAPI 的 loopback 捕获不支持事件驱动（AUDCLNT_STREAMFLAGS_EVENTCALLBACK）——
+		// 事件在该模式下不会按音频周期可靠触发，实测会造成约一半数据包被当作
+		// SILENT 空包、以及数据重复读取（宽带翻倍、20ms 声音/20ms 静音交替）。
+		// 正确做法是轮询（见 loop 中的 sleep + GetNextPacketSize 循环）。
+		//
+		// 缓冲给足 200ms：捕获 goroutine 与游戏等高负载应用共享 CPU，调度
+		// 停顿一旦超过缓冲时长，WASAPI 会覆盖未读取的包（数据撕裂=破音）。
+		// 200ms 缓冲 + 5ms 轮询可扛住数百毫秒级的调度停顿；延迟代价仅 200ms。
+		const hnsBufferDuration = 2000000 // 200ms（100ns 单位）
+		hr = callCom(w.audioClient, 3,
+			audclntShareModeShared,
+			uintptr(audclntStreamFlagsLoopback),
+			hnsBufferDuration, 0,
+			uintptr(unsafe.Pointer(pFormat)), 0)
 		procCoTaskMemFree.Call(uintptr(unsafe.Pointer(pFormat)))
-		w.Close()
-		if initialized {
-			procCoUninitialize.Call()
+		if hrFailed(hr) {
+			return nil, fail("Initialize 失败", hr)
 		}
-		return err
+
+		// GetService(IAudioCaptureClient)
+		ppv = nil
+		hr = callCom(w.audioClient, 14,
+			uintptr(unsafe.Pointer(&iidIAudioCaptureClient)),
+			uintptr(unsafe.Pointer(&ppv)))
+		if hrFailed(hr) || ppv == nil {
+			return nil, fail("获取捕获客户端失败", hr)
+		}
+		w.captureClient = ppv
+
+		hr = callCom(w.audioClient, 10) // Start
+		if hrFailed(hr) {
+			return nil, fail("Start 失败", hr)
+		}
+		util.Logf("[音频] 自研 WASAPI Loopback 已启动（设备格式 %.1fkHz %dch %dbit%s，输出 48kHz 立体声）",
+			float64(w.srcRate)/1000, w.srcChannels, w.srcBits, map[bool]string{true: " float", false: ""}[w.srcIsFloat])
+
+		return w, nil
 	}
 
-	// Initialize：共享模式 + LOOPBACK（轮询模式）。
-	// 注意：WASAPI 的 loopback 捕获不支持事件驱动（AUDCLNT_STREAMFLAGS_EVENTCALLBACK）——
-	// 事件在该模式下不会按音频周期可靠触发，实测会造成约一半数据包被当作
-	// SILENT 空包、以及数据重复读取（宽带翻倍、20ms 声音/20ms 静音交替）。
-	// 正确做法是轮询（见 loop 中的 sleep + GetNextPacketSize 循环）。
-	//
-	// 缓冲给足 200ms：捕获 goroutine 与游戏等高负载应用共享 CPU，调度
-	// 停顿一旦超过缓冲时长，WASAPI 会覆盖未读取的包（数据撕裂=破音）。
-	// 200ms 缓冲 + 5ms 轮询可扛住数百毫秒级的调度停顿；延迟代价仅 200ms。
-	const hnsBufferDuration = 2000000 // 200ms（100ns 单位）
-	hr = callCom(w.audioClient, 3,
-		audclntShareModeShared,
-		uintptr(audclntStreamFlagsLoopback),
-		hnsBufferDuration, 0,
-		uintptr(unsafe.Pointer(pFormat)), 0)
-	procCoTaskMemFree.Call(uintptr(unsafe.Pointer(pFormat)))
-	if hrFailed(hr) {
-		return fail("Initialize 失败", hr)
-	}
-
-	// GetService(IAudioCaptureClient)
-	ppv = nil
-	hr = callCom(w.audioClient, 14,
-		uintptr(unsafe.Pointer(&iidIAudioCaptureClient)),
-		uintptr(unsafe.Pointer(&ppv)))
-	if hrFailed(hr) || ppv == nil {
-		return fail("获取捕获客户端失败", hr)
-	}
-	w.captureClient = ppv
-
-	hr = callCom(w.audioClient, 10) // Start
-	if hrFailed(hr) {
-		return fail("Start 失败", hr)
-	}
-	util.Logf("[音频] 自研 WASAPI Loopback 已启动（设备格式 %.1fkHz %dch %dbit%s，输出 48kHz 立体声）",
-		float64(w.srcRate)/1000, w.srcChannels, w.srcBits, map[bool]string{true: " float", false: ""}[w.srcIsFloat])
-
+	ready := make(chan error, 1)
 	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+
+		w, err := start()
+		ready <- err
+		if err != nil || w == nil {
+			return
+		}
 		defer func() {
 			w.Close()
 			if initialized {
@@ -274,7 +295,7 @@ func startNativeSystemCapture(ctx context.Context, onPCM func([]byte)) error {
 		}
 		w.loop(ctx, onPCM)
 	}()
-	return nil
+	return <-ready
 }
 
 // parseFormat 解析 WAVEFORMATEX / WAVEFORMATEXTENSIBLE。

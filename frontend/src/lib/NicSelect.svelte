@@ -14,6 +14,11 @@
 
   let open = $state(false);
   let containerRef = $state(null);
+  let triggerRef = $state(null);
+  let listboxRef = $state(null);
+  // 键盘导航的活动候选（listbox 模式：焦点留在 listbox 容器上，
+  // aria-activedescendant 指向高亮项）
+  let activeIndex = $state(-1);
 
   const current = $derived(
     interfaces.find((item) => item.ip === value) ||
@@ -22,7 +27,18 @@
 
   function toggleOpen(e) {
     e.stopPropagation();
-    open = !open;
+    if (open) {
+      open = false;
+    } else {
+      openListbox();
+    }
+  }
+
+  function openListbox() {
+    open = true;
+    // 打开时高亮定位到当前选中项（无选中则首项）
+    const idx = interfaces.findIndex((item) => item.ip === value);
+    activeIndex = idx >= 0 ? idx : 0;
   }
 
   function selectOption(ip, e) {
@@ -32,6 +48,59 @@
     }
     open = false;
   }
+
+  function moveActive(delta) {
+    if (!interfaces?.length) return;
+    activeIndex = (activeIndex + delta + interfaces.length) % interfaces.length;
+  }
+
+  function handleTriggerKey(e) {
+    if (open) return; // 展开时导航由 listbox 容器处理
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      e.stopPropagation();
+      openListbox();
+    }
+  }
+
+  function handleListboxKey(e) {
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        moveActive(1);
+        break;
+      case 'ArrowUp':
+        e.preventDefault();
+        moveActive(-1);
+        break;
+      case 'Home':
+        e.preventDefault();
+        activeIndex = 0;
+        break;
+      case 'End':
+        e.preventDefault();
+        activeIndex = interfaces.length - 1;
+        break;
+      case 'Enter':
+      case ' ':
+        e.preventDefault();
+        if (activeIndex >= 0 && interfaces[activeIndex]) {
+          selectOption(interfaces[activeIndex].ip, e);
+          triggerRef?.focus();
+        }
+        break;
+      case 'Escape':
+        e.preventDefault();
+        open = false;
+        triggerRef?.focus();
+        break;
+    }
+  }
+
+  // 展开后把焦点移入 listbox 容器（tabindex="-1"），方向键导航才能生效
+  $effect(() => {
+    if (open) listboxRef?.focus();
+  });
 
   function handleKeydown(e) {
     if (e.key === 'Escape' && open) {
@@ -59,9 +128,11 @@
 <div class="nic-select-wrapper" bind:this={containerRef}>
   <button
     type="button"
+    bind:this={triggerRef}
     class="nic-trigger"
     class:is-open={open}
     onclick={toggleOpen}
+    onkeydown={handleTriggerKey}
     aria-haspopup="listbox"
     aria-expanded={open}
     title="切换对外广播与服务的网络通道"
@@ -88,16 +159,26 @@
   </button>
 
   {#if open}
-    <div class="nic-dropdown" role="listbox">
+    <div
+      class="nic-dropdown"
+      role="listbox"
+      tabindex="-1"
+      bind:this={listboxRef}
+      aria-activedescendant={activeIndex >= 0 ? `nic-opt-${activeIndex}` : undefined}
+      aria-label="选择网络通道"
+      onkeydown={handleListboxKey}
+    >
       <div class="nic-dropdown-header">选择网络通道</div>
       <div class="nic-options-list">
         {#if interfaces && interfaces.length > 0}
-          {#each interfaces as iface (iface.name + '|' + iface.ip)}
+          {#each interfaces as iface, i (iface.name + '|' + iface.ip)}
             {@const isSelected = iface.ip === value}
             <button
               type="button"
+	              id={`nic-opt-${i}`}
               class="nic-option"
               class:is-selected={isSelected}
+              class:is-active={i === activeIndex}
               role="option"
               aria-selected={isSelected}
               onclick={(e) => selectOption(iface.ip, e)}
@@ -304,9 +385,13 @@
     transition: all 0.12s ease;
   }
 
-  .nic-option:hover {
+  .nic-option:hover,
+  .nic-option.is-active {
     background: rgba(59, 130, 246, 0.18);
     border-color: rgba(59, 130, 246, 0.3);
+  }
+  .nic-option:focus-visible {
+    outline: none;
   }
 
   .nic-option.is-selected {

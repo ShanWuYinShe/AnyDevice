@@ -134,6 +134,10 @@ func (e *Engine) Kind() AudioKind {
 // 初始化是阻塞调用，期间音频回调线程可能已启动并调用 emit（需要
 // 竞争统计锁），持锁初始化曾导致回调线程与主线程互等死锁。
 // isRunning 仅在成功后加锁写入。
+// 已知微泄漏：malgo DeviceInfo.ID.Pointer() 每次调用 C.CBytes 分配且
+// vendored malgo 无释放入口（third_party/malgo/device_info.go）——InitDevice
+// 同步复制 ID 后指针即无用，每次 Start 残留数十字节，量级可忽略，不做
+// vendored 改造（升级 malgo 会丢补丁）。
 func (e *Engine) Start() error {
 	if !e.isRunning.CompareAndSwap(false, true) {
 		return nil
