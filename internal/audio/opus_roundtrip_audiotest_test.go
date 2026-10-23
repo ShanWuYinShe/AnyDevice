@@ -1,8 +1,7 @@
-//go:build audiotest
-
 package audio
 
-// Opus 编码保真回归测试：`go test -tags audiotest ./internal/audio -run RoundTrip -v`
+// Opus 编码保真回归测试（默认 go test 即跑；曾隔离在 -tags audiotest 后
+// 导致日常测试不覆盖，2026-10-24 纳入默认）：
 //
 // 背景（真实缺陷，2026-10-18 定位）：实现曾把 float32 采样缓冲直接按
 // `opus_int16*` 传给 int16 入口 `opus_encode`。float 与 int16 是两套不同
