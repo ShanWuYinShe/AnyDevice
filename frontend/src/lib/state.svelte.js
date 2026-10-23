@@ -83,20 +83,31 @@ export function isSelfPeer(p) {
 }
 
 // —— 数据轮询 ——
+// 请求序号守卫：轮询是无守卫的 async，服务端变慢时会多个请求并发，
+// 先发后至的旧响应会覆盖新响应（设备列表闪回旧状态、离线设备“复活”）。
+let fetchSelfSeq = 0;
+let fetchPeersSeq = 0;
+
 export async function fetchSelf() {
+  const seq = ++fetchSelfSeq;
   try {
-    selfState.data = await api.fetchSelf();
+    const data = await api.fetchSelf();
+    if (seq === fetchSelfSeq) {
+      selfState.data = data;
+    }
   } catch (e) {
     console.error('fetchSelf failed:', e);
   }
 }
 
 export async function fetchPeers() {
+  const seq = ++fetchPeersSeq;
   try {
     if (!selfState.data) {
       await fetchSelf();
     }
     const data = await api.fetchPeers();
+    if (seq !== fetchPeersSeq) return;
     // 服务端已按查看者过滤“自己”，这里再兜底过滤一次
     peerState.list = (data.peers || []).filter((p) => !isSelfPeer(p));
   } catch (e) {
@@ -378,7 +389,14 @@ export async function addPeer(target, name) {
 }
 
 export async function saveSelfSettings(payload) {
-  await api.updateSelfProvides(payload);
+  try {
+    await api.updateSelfProvides(payload);
+  } catch (e) {
+    // 失败时 Modal 保持打开、toast 明确报错（此前是 unhandled rejection，
+    // 用户看不到任何反馈，与 toggleMapping/rename/switchNic 的处理不一致）
+    showToast('保存本机共享设置失败: ' + ((e && e.message) || e), 'error');
+    return;
+  }
   closeModal();
   await fetchSelf();
   showToast('本机共享设置已更新', 'success');

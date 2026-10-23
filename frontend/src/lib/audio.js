@@ -274,6 +274,11 @@ function ensureOpusDecoder(key) {
     },
     error: (e) => {
       workletError = 'Opus 解码: ' + String((e && e.message) || e);
+      // fatal error 后 decoder 进入 closed 态：销毁并置空，由 ensureOpusDecoder
+      // 在下一包重建。否则后续每包 decode 都抛 InvalidStateError 被吞，
+      // Opus 链路从此静默失效直到刷新页面（2026-10-24 审查发现）。
+      try { decoder.close(); } catch (_) { /* 已关闭则忽略 */ }
+      opusDecoders[key] = null;
       opusNeedKey[key] = true;
     },
   });
