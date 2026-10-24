@@ -147,6 +147,47 @@ jobs:
           path: any_device_linux_amd64
           retention-days: 14
 
+      - name: 构建 AppImage（含 GTK/WebKitGTK 运行库）
+        # AppImage 把 GTK3/WebKitGTK/opus 等运行库打进单文件，用户下载即可
+        # 双击运行，无需自行安装发行版依赖（Linux 无法全静态，见
+        # internal/audio/opus_encoder.go 的说明）
+        run: |
+          sudo apt-get install -y imagemagick
+          ARCH=amd64 ./scripts/build-appimage.sh
+
+      - name: 验证 AppImage 可运行
+        # CI 无显示器：用 --appimage-extract 校验内容完整性，再以 -no-ui
+        # 模式起服务验证二进制本身可执行（AppImage 内二进制与挂载机制）
+        run: |
+          set -e
+          APPIMAGE=$(ls bin/*.AppImage | head -1)
+          echo "=== $APPIMAGE ==="
+          ./"$APPIMAGE" --appimage-extract > /dev/null
+          test -x squashfs-root/AppRun
+          test -f squashfs-root/usr/share/applications/AnyDevice.desktop
+          echo "AppImage 内容结构完整"
+          # 用解包后的二进制做无窗口冒烟（绕过 FUSE 挂载）
+          ./squashfs-root/usr/bin/any_device -no-ui -no-qr -port 18096 &
+          APP_PID=$!
+          for i in $(seq 1 15); do
+            sleep 1
+            if curl -sf http://127.0.0.1:18096/api/status > /dev/null; then
+              echo "API 200 OK —— AppImage 内二进制可正常启动"
+              kill $APP_PID 2>/dev/null || true
+              exit 0
+            fi
+          done
+          echo "服务未在 15s 内就绪"
+          kill $APP_PID 2>/dev/null || true
+          exit 1
+
+      - name: 上传 AppImage
+        uses: actions/upload-artifact@v7
+        with:
+          name: AnyDevice_linux_AppImage
+          path: bin/*.AppImage
+          retention-days: 14
+
   linux-build-arm64:
     # 原生 arm64 runner 构建（替代交叉编译：CGO + GTK/WebKitGTK 的多架构
     # 依赖在 amd64 runner 上装不全，原生 runner 更可靠）
