@@ -112,11 +112,33 @@ jobs:
           kill $APP_PID 2>/dev/null || true
           exit 1
 
+      - name: 构建 Linux arm64（交叉编译）
+        # CGO 交叉编译需 aarch64 工具链与对应架构的 GTK/WebKitGTK/opus 库。
+        # 失败不阻塞 amd64 产物——arm64 依赖 apt 源支持，属尽力而为
+        continue-on-error: true
+        run: |
+          sudo dpkg --add-architecture arm64
+          sudo sed -i 's|^deb |deb [arch=amd64] |' /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main universe" | sudo tee -a /etc/apt/sources.list
+          sudo apt-get update || true
+          sudo apt-get install -y gcc-aarch64-linux-gnu \
+            libgtk-3-dev:arm64 libwebkit2gtk-4.0-dev:arm64 libopus-dev:arm64 || {
+              echo "::warning::arm64 依赖安装失败，跳过 arm64 构建"
+              exit 0
+            }
+          CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CC=aarch64-linux-gnu-gcc \
+            PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig \
+            go build -tags "wails,desktop,production" -o any_device_linux_arm64 main.go
+          ls -lh any_device_linux_arm64
+
       - name: 上传 Linux 包
         uses: actions/upload-artifact@v4
         with:
           name: AnyDevice_linux_amd64
-          path: any_device_linux_amd64
+          path: |
+            any_device_linux_amd64
+            any_device_linux_arm64
+          if-no-files-found: warn
           retention-days: 14
 
   windows-runtime:

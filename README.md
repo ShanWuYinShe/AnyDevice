@@ -9,7 +9,7 @@
 ## 🌟 核心特性
 
 - **自带原生独立桌面应用窗口（Wails 原生窗口，无需浏览器）**：
-  - 桌面窗口采用 **Wails** 原生窗口（macOS WKWebView / Windows WebView2）：macOS 双击 `AnyDevice.app`、Windows 双击 `any_device.exe` 直接弹出**专属独立应用窗口**——无浏览器地址栏、无控制台黑窗、无浏览器启动器竞态，关窗即安全退出。
+  - 桌面窗口采用 **Wails** 原生窗口（macOS WKWebView / Windows WebView2 / Linux WebKitGTK）：macOS 双击 `AnyDevice.app`、Windows 双击 `any_device.exe`、Linux 运行 `any_device_linux_amd64`，直接弹出**专属独立应用窗口**——无浏览器地址栏、无控制台黑窗、无浏览器启动器竞态，关窗即安全退出。
   - macOS 的 `.app` 由 `scripts/build.sh` 打包（`Info.plist` 带 ATS 本地网络例外与麦克风用途声明），**不依赖本机安装 Chrome/Edge**；窗口内的 WebSocket 直连 `ws://127.0.0.1:<port>`，页面与 `/api` 请求仍走内置 handler。
   - 窗口与局域网服务共用同一套 UI 与 API：窗口内的页面请求直达内置服务，局域网端口照常服务手机/平板/其他电脑。
   - **服务先于窗口就绪**：先完成端口监听再打开窗口，首屏不会因服务未就绪而白屏。
@@ -80,7 +80,9 @@
 直接双击运行：
 - **macOS**：双击 `bin/AnyDevice.app`（也可先拖到「应用程序」再启动）
 - **Windows 台式机**：双击运行 `any_device.exe`
-- **Linux**：当前未提供原生窗口包，`./any_device` 回退为浏览器独立窗口模式
+- **Linux**：运行 `./any_device_linux_amd64`（Wails 原生窗口，GTK3 + WebKitGTK）。需系统安装运行库：
+  `sudo apt install libgtk-3-0 libwebkit2gtk-4.0-37`（Debian/Ubuntu）、`sudo dnf install gtk3 webkit2gtk4.1`（Fedora）。
+  无图形环境或缺少 GTK/WebKitGTK 时，加 `-no-ui` 以纯服务模式运行，用手机/浏览器扫码接入。
 
 程序启动后会自动弹出**独立桌面应用窗口**：顶部为「扫码接入 / 添加设备 / 本机共享」三个入口，下方概览区显示本机名称、通信网卡与实时通道状态，点「扫码接入」即可显示连接二维码与本机局域网地址。
 
@@ -130,11 +132,24 @@ codesign -s - -f bin/AnyDevice.app
 
 # 无标签构建只用于快速调试（浏览器 --app 窗口回退，不是发布形态）：
 go build -o any_device main.go
+
+# Linux 原生窗口（需 libgtk-3-dev libwebkit2gtk-4.0-dev libopus-dev）：
+go build -tags wails,desktop,production -o any_device_linux_amd64 main.go
 ```
 
 > macOS 原生窗口必须运行在 `.app` 包内（`AnyDevice.app/Contents/MacOS/any_device`）；直接把可执行文件拷出包外会丢失 Info.plist，窗口内 WebSocket 会被 ATS 拦截。
 
-> 依赖打包：音频 Opus 编码使用仓库内 vendored 静态库（`third_party/libopus/`，macOS arm64 / Windows x64），`.app` 与 `.exe` 静态链接、**运行时不需要安装 Homebrew 或 opus**；BSD-3-Clause 许可文本会随 `.app` 放进 `Contents/Resources/third_party/` 并在仓库 `third_party/libopus/COPYING` 保留。
+> 依赖打包：音频 Opus 编码在 macOS arm64 / Windows x64 使用仓库内 vendored 静态库（`third_party/libopus/`），`.app` 与 `.exe` 静态链接、**运行时不需要安装 Homebrew 或 opus**；BSD-3-Clause 许可文本会随 `.app` 放进 `Contents/Resources/third_party/` 并在仓库 `third_party/libopus/COPYING` 保留。Linux 使用系统 libopus（构建需 `libopus-dev`，运行需 `libopus0`）——各发行版架构/ABI 差异大，系统包比 vendored 单架构静态库更可靠。
+
+### CI 自动构建产物
+
+推送 main 或提交 PR 时，GitHub Actions 会跑完整质量门（gofmt/vet/test/前端检查 + 三平台构建）并上传可下载的安装包（Actions 页面 run 的 Artifacts 区，保留 14 天）：
+
+| Artifact | 内容 |
+| :--- | :--- |
+| `AnyDevice_macOS_arm64` | `AnyDevice.app`（Info.plist + 图标 + 许可文本 + ad-hoc 签名） |
+| `AnyDevice_windows_amd64` | `any_device.exe`（Wails 原生窗口）+ `any_device_portable.exe`（浏览器壳回退） |
+| `AnyDevice_linux_amd64` | Linux 原生窗口二进制（GTK3 + WebKitGTK） |
 
 ### 测试
 
