@@ -113,7 +113,7 @@ jobs:
           exit 1
 
       - name: 上传 Linux amd64 包
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: AnyDevice_linux_amd64
           path: any_device_linux_amd64
@@ -158,7 +158,7 @@ jobs:
           exit 1
 
       - name: 上传 Linux arm64 包
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: AnyDevice_linux_arm64
           path: any_device_linux_arm64
