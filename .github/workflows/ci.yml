@@ -1,6 +1,10 @@
 # 质量门：与本地「完成前验证」同口径
 #   gofmt → go vet → go test → 前端 svelte-check/vite build → Wails 生产构建
-#   外加 Windows 平台层交叉编译（键鼠捕获为纯 syscall，可在 Linux runner 交叉验证）
+#   外加 Windows 双通道：Linux 交叉编译（快速反馈）+ windows runner 真实环境
+#   （完整 CGO 编译、全量测试运行、钩子/WASAPI 生命周期测试、服务冒烟）。
+#   注意：LL 钩子捕获真实事件与 WASAPI 真实捕获需要交互式会话与音频设备，
+#   CI 覆盖的是「真实 Windows 进程内的调用路径不崩溃、不挂死、可反复启停」，
+#   端到端听感仍需真机验证。
 name: CI
 
 on:
@@ -57,3 +61,53 @@ jobs:
 
       - name: 交叉编译 Windows 平台层
         run: CGO_ENABLED=0 GOOS=windows go build ./internal/mouse/ ./internal/keyboard/
+
+  windows-runtime:
+    # 真实 Windows 环境：完整 CGO 编译（miniaudio/WASAPI）+ 全量测试运行
+    # （含 Opus 回归、键鼠逻辑测试、钩子启停生命周期、WASAPI 线程配对清理）
+    # + 服务启停冒烟（-no-ui 起服务 → /api/status 200 → 进程存活 → 清理）
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: 确认 MinGW（audio 包 CGO 编译需要）
+        shell: pwsh
+        run: |
+          if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
+            choco install mingw -y --no-progress
+          }
+          gcc --version | Select-Object -First 1
+
+      - name: go vet
+        # -unsafeptr=false：Windows 钩子回调的 LPARAM→unsafe.Pointer 是标准
+        # 回调模式（指针源自系统调用约定，非 Go 堆指针），vet 无法识别会误报
+        run: go vet -unsafeptr=false ./...
+
+      - name: go test（全量，真实 Windows 运行）
+        run: go test -count=1 ./...
+
+      - name: 构建
+        run: go build -o any_device-smoke.exe main.go
+
+      - name: 服务启停冒烟
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath ".any_device-smoke.exe" `
+            -ArgumentList "-no-ui","-no-qr","-port","18099" `
+            -PassThru -WindowStyle Hidden `
+            -RedirectStandardOutput smoke-out.log -RedirectStandardError smoke-err.log
+          Start-Sleep -Seconds 5
+          if ($p.HasExited) {
+            Get-Content smoke-out.log, smoke-err.log -ErrorAction SilentlyContinue
+            throw "服务进程提前退出（exit=$($p.ExitCode)）"
+          }
+          $resp = Invoke-WebRequest -Uri "http://127.0.0.1:18099/api/status" `
+            -UseBasicParsing -TimeoutSec 10
+          if ($resp.StatusCode -ne 200) { throw "API 未返回 200" }
+          Write-Output "API 200 OK，进程存活 —— Start 路径（含钩子安装/引擎初始化）在真实 Windows 正常"
+          Stop-Process -Id $p.Id -Force
+          Write-Output "冒烟通过"
