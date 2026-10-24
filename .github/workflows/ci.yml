@@ -61,18 +61,6 @@ jobs:
           path: bin/AnyDevice.app
           retention-days: 14
 
-      - name: 打包 AnyDevice.app
-        # build.sh 会做：前端构建（幂等）→ .app 组装（Info.plist 注入版本/
-        # 许可文本/图标）→ ad-hoc 签名；runner 无 mingw 时自动跳过 Windows 交叉编译
-        run: ./scripts/build.sh
-
-      - name: 上传 macOS 包
-        uses: actions/upload-artifact@v4
-        with:
-          name: AnyDevice_macOS_arm64
-          path: bin/AnyDevice.app
-          retention-days: 14
-
   windows-cross:
     # Windows 平台层（钩子/SendInput/键码表）为纯 syscall，交叉编译即可验证
     runs-on: ubuntu-latest
