@@ -49,6 +49,30 @@ jobs:
           -ldflags "-s -w -extldflags '-framework UniformTypeIdentifiers'"
           -o /dev/null main.go
 
+      - name: 打包 AnyDevice.app
+        # build.sh 会做：前端构建（幂等）→ .app 组装（Info.plist 注入版本/
+        # 许可文本/图标）→ ad-hoc 签名；runner 无 mingw 时自动跳过 Windows 交叉编译
+        run: ./scripts/build.sh
+
+      - name: 上传 macOS 包
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyDevice_macOS_arm64
+          path: bin/AnyDevice.app
+          retention-days: 14
+
+      - name: 打包 AnyDevice.app
+        # build.sh 会做：前端构建（幂等）→ .app 组装（Info.plist 注入版本/
+        # 许可文本/图标）→ ad-hoc 签名；runner 无 mingw 时自动跳过 Windows 交叉编译
+        run: ./scripts/build.sh
+
+      - name: 上传 macOS 包
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyDevice_macOS_arm64
+          path: bin/AnyDevice.app
+          retention-days: 14
+
   windows-cross:
     # Windows 平台层（钩子/SendInput/键码表）为纯 syscall，交叉编译即可验证
     runs-on: ubuntu-latest
@@ -111,3 +135,28 @@ jobs:
           Write-Output "API 200 OK，进程存活 —— Start 路径（含钩子安装/引擎初始化）在真实 Windows 正常"
           Stop-Process -Id $p.Id -Force
           Write-Output "冒烟通过"
+
+      - name: 打包 Windows 版（Wails + Portable）
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' main.go)
+          BUILD_TIME=$(date +%Y%m%d-%H%M)
+          LDFLAGS="-s -w -X any_device/internal/util.BuildTime=${BUILD_TIME}"
+          OUT="AnyDevice_${VERSION}_windows_amd64"
+          mkdir -p "$OUT"
+          # Wails 版：无控制台窗口（WebView2 前端为纯 Go，cgo 仅 audio 包需要）
+          CGO_ENABLED=1 CC=gcc GOOS=windows GOARCH=amd64 \
+            go build -tags "wails,desktop,production" -ldflags "$LDFLAGS -H=windowsgui" \
+            -o "$OUT/any_device.exe" main.go
+          # Portable 回退版：浏览器 --app 窗口壳，控制台可见便于排查
+          CGO_ENABLED=1 CC=gcc GOOS=windows GOARCH=amd64 \
+            go build -ldflags "$LDFLAGS" \
+            -o "$OUT/any_device_portable.exe" main.go
+          ls -lh "$OUT"
+
+      - name: 上传 Windows 包
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyDevice_windows_amd64
+          path: AnyDevice_*_windows_amd64/
+          retention-days: 14
