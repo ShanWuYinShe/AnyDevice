@@ -11,12 +11,19 @@ package audio
 //   - macOS arm64: third_party/libopus/macos-arm64/libopus.a（opus 1.6.1）
 //   - Windows x64: third_party/libopus/win64/libopus.a（mingw 交叉编译）
 // 目录内只有 .a、没有 .dylib/.dll，链接结果是静态的——分发 .app/exe 无需用户装 opus。
+//   - Linux: 使用系统 libopus（-lopus），需装 libopus-dev / opus-devel
+//     （发行版自带且架构/ABI 差异大，vendored 单架构静态库不适用）
 
 /*
 #cgo darwin CFLAGS: -I${SRCDIR}/../../third_party/libopus/include
 #cgo darwin LDFLAGS: -L${SRCDIR}/../../third_party/libopus/macos-arm64 -lopus
 #cgo windows CFLAGS: -I${SRCDIR}/../../third_party/libopus/include
 #cgo windows LDFLAGS: -L${SRCDIR}/../../third_party/libopus/win64 -lopus
+// Linux 使用系统 libopus（Debian/Ubuntu: apt install libopus-dev；
+// Fedora: dnf install opus-devel）。仓库未 vendored linux 静态库，
+// 因为 Linux 发行版普遍自带 opus 且架构/ABI 差异大，系统包更可靠。
+#cgo linux CFLAGS: -I${SRCDIR}/../../third_party/libopus/include
+#cgo linux LDFLAGS: -lopus
 #include <opus/opus.h>
 
 // opus_encoder_ctl 是变参函数，cgo 无法直接调用——通过固定参数包装转发。

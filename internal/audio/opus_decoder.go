@@ -8,7 +8,8 @@ package audio
 // Opus 流。服务端在转发对端音频时用本解码器还原成交错 float32 PCM（AUDS/AUDM），
 // 再按客户端能力分发（见 server/hub.go 的音频路由与 peer_manager.go 的转发）。
 //
-// 链接参数与 opus_encoder.go 一致：macOS Homebrew libopus；Windows 仓库静态库。
+// 链接参数与 opus_encoder.go 一致：macOS/Windows 用仓库 vendored 静态库，
+// Linux 用系统 libopus。
 
 /*
 #include <opus/opus.h>

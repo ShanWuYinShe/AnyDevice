@@ -86,10 +86,10 @@ jobs:
         with:
           go-version: stable
 
-      - name: 安装 GTK/WebKitGTK 构建依赖
+      - name: 安装 GTK/WebKitGTK/Opus 构建依赖
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev pkg-config
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libopus-dev pkg-config
 
       - name: 构建 Linux 桌面版（wails 标签）
         run: |
