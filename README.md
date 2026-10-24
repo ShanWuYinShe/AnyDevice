@@ -80,9 +80,11 @@
 直接双击运行：
 - **macOS**：双击 `bin/AnyDevice.app`（也可先拖到「应用程序」再启动）。Apple Silicon 用 arm64 包、Intel Mac 用 amd64 包，或直接用 universal 包（一个包通吃，体积约两倍）
 - **Windows 台式机**：双击运行 `any_device.exe`
-- **Linux**：运行 `./any_device_linux_amd64`（Wails 原生窗口，GTK3 + WebKitGTK）。需系统安装运行库：
-  `sudo apt install libgtk-3-0 libwebkit2gtk-4.0-37`（Debian/Ubuntu）、`sudo dnf install gtk3 webkit2gtk4.1`（Fedora）。
-  无图形环境或缺少 GTK/WebKitGTK 时，加 `-no-ui` 以纯服务模式运行，用手机/浏览器扫码接入。
+- **Linux**：
+  - 推荐 **AppImage**：`chmod +x AnyDevice-*.AppImage && ./AnyDevice-*.AppImage` —— 运行库已打包在内，无需安装任何依赖。
+  - 或用裸二进制 `./any_device_linux_amd64`（体积小），需系统运行库：
+    `sudo apt install libgtk-3-0 libwebkit2gtk-4.0-37`（Debian/Ubuntu）、`sudo dnf install gtk3 webkit2gtk4.1`（Fedora）。
+  - 无图形环境时加 `-no-ui` 以纯服务模式运行，用手机/浏览器扫码接入。
 
 程序启动后会自动弹出**独立桌面应用窗口**：顶部为「扫码接入 / 添加设备 / 本机共享」三个入口，下方概览区显示本机名称、通信网卡与实时通道状态，点「扫码接入」即可显示连接二维码与本机局域网地址。
 
@@ -126,6 +128,10 @@ UI 使用 **Svelte 5 + Vite**（源码在 `frontend/`），构建产物输出到
 MAC_ARCH=amd64 ./scripts/build.sh      # Intel Mac
 MAC_ARCH=universal ./scripts/build.sh  # 双架构通吃（体积约两倍）
 
+# Linux AppImage（需 libgtk-3-dev libwebkit2gtk-4.0-dev libopus-dev pkg-config imagemagick）：
+ARCH=amd64 ./scripts/build-appimage.sh
+ARCH=arm64 ./scripts/build-appimage.sh
+
 # 只改了 Go 代码、前端未动时：
 #   macOS 原生窗口 -> 重新打包 .app（Info.plist 必须随包，裸二进制窗口内
 #   WebSocket/麦克风会因缺少 ATS/用途声明而失败）：
@@ -153,7 +159,8 @@ go build -tags wails,desktop,production -o any_device_linux_amd64 main.go
 | :--- | :--- |
 | `AnyDevice_macOS` | 三个 `.app`：`_arm64`（Apple Silicon）/ `_amd64`（Intel）/ `_universal`（双架构通吃）；均含 Info.plist + 图标 + 许可文本 + ad-hoc 签名 |
 | `AnyDevice_windows_amd64` | `any_device.exe`（Wails 原生窗口）+ `any_device_portable.exe`（浏览器壳回退） |
-| `AnyDevice_linux_amd64` | Linux 原生窗口二进制（GTK3 + WebKitGTK） |
+| `AnyDevice_linux_amd64` | Linux 原生窗口二进制（GTK3 + WebKitGTK，需系统运行库） |
+| `AnyDevice_linux_AppImage` | **Linux AppImage**（含 GTK/WebKitGTK/opus 运行库，下载即用，约 79 MB） |
 
 ### 测试
 
