@@ -100,17 +100,13 @@ jobs:
       - name: 服务启停冒烟
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath ".any_device-smoke.exe" `
-            -ArgumentList "-no-ui","-no-qr","-port","18099" `
-            -PassThru -WindowStyle Hidden `
-            -RedirectStandardOutput smoke-out.log -RedirectStandardError smoke-err.log
+          $p = Start-Process -FilePath ".\any_device-smoke.exe" -ArgumentList "-no-ui","-no-qr","-port","18099" -PassThru -WindowStyle Hidden -RedirectStandardOutput smoke-out.log -RedirectStandardError smoke-err.log
           Start-Sleep -Seconds 5
           if ($p.HasExited) {
             Get-Content smoke-out.log, smoke-err.log -ErrorAction SilentlyContinue
             throw "服务进程提前退出（exit=$($p.ExitCode)）"
           }
-          $resp = Invoke-WebRequest -Uri "http://127.0.0.1:18099/api/status" `
-            -UseBasicParsing -TimeoutSec 10
+          $resp = Invoke-WebRequest -Uri "http://127.0.0.1:18099/api/status" -UseBasicParsing -TimeoutSec 10
           if ($resp.StatusCode -ne 200) { throw "API 未返回 200" }
           Write-Output "API 200 OK，进程存活 —— Start 路径（含钩子安装/引擎初始化）在真实 Windows 正常"
           Stop-Process -Id $p.Id -Force
