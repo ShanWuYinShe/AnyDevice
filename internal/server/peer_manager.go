@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/rand"
 	"net"
 	"net/url"
 	"strings"
@@ -79,20 +80,38 @@ func (pc *peerConnection) writeJSON(v interface{}) error {
 	return pc.conn.WriteJSON(v)
 }
 
+// peerRetry 承载一个对端会话的自动重连控制器：cancel 供 disconnect 立即
+// 打断重连等待/读循环；sessionCtx 用于会话收尾时与 ensureConnected 侧的
+// cancel 配对，防 context 泄漏。
+type peerRetry struct {
+	sessionCtx context.Context
+	cancel     context.CancelFunc
+}
+
 type PeerManager struct {
 	discovery *discovery.Service
 	hub       *Hub
 	mappings  map[string]*PeerMappingState
 	conns     map[string]*peerConnection
-	mu        sync.RWMutex
+	// retries：仍在生命周期内的对端会话（连接中/退避重试中/已连接）。
+	// 存在即表示 ensureConnected 不应再起第二个会话。
+	retries map[string]*peerRetry
+	mu      sync.RWMutex
+
+	// 自动重连退避参数（测试注入短值用）：1s 起步、30s 上限
+	reconnectInitial time.Duration
+	reconnectMax     time.Duration
 }
 
 func NewPeerManager(disc *discovery.Service, hub *Hub) *PeerManager {
 	return &PeerManager{
-		discovery: disc,
-		hub:       hub,
-		mappings:  make(map[string]*PeerMappingState),
-		conns:     make(map[string]*peerConnection),
+		discovery:        disc,
+		hub:              hub,
+		mappings:         make(map[string]*PeerMappingState),
+		conns:            make(map[string]*peerConnection),
+		retries:          make(map[string]*peerRetry),
+		reconnectInitial: time.Second,
+		reconnectMax:     30 * time.Second,
 	}
 }
 
@@ -286,17 +305,32 @@ func (pm *PeerManager) ensureConnected(peerID, target string) {
 		pm.mu.Unlock()
 		return
 	}
+	// 自动重连会话已在跑（连接中/退避重试中）：不再另起，否则双会话竞态
+	if _, retrying := pm.retries[peerID]; retrying {
+		pm.mu.Unlock()
+		return
+	}
 
 	mapping := pm.mappings[peerID]
 	mapping.ConnectionStatus = "connecting"
 	mapping.LastError = ""
+	retryCtx, cancel := context.WithCancel(context.Background())
+	pm.retries[peerID] = &peerRetry{sessionCtx: retryCtx, cancel: cancel}
 	pm.mu.Unlock()
 
-	go pm.connectAndLoop(peerID, target)
+	go func() {
+		defer cancel() // 会话收尾兜底 cancel，防 context 泄漏
+		pm.connectAndLoop(retryCtx, peerID, target)
+	}()
 }
 
 func (pm *PeerManager) disconnect(peerID string) {
 	pm.mu.Lock()
+	// 同时打断自动重连会话（若有）：用户已明确关闭映射，不得再重连
+	if rc, ok := pm.retries[peerID]; ok {
+		rc.cancel()
+		delete(pm.retries, peerID)
+	}
 	connObj, exists := pm.conns[peerID]
 	if exists {
 		delete(pm.conns, peerID)
@@ -394,48 +428,119 @@ func (pm *PeerManager) forwardPeerAudio(pc *peerConnection, data []byte) {
 	pm.hub.BroadcastAudioDual(data, pcmChunk)
 }
 
-func (pm *PeerManager) connectAndLoop(peerID, target string) {
+// connectAndLoop 维持到对端的连接：Dial 成功后进入读循环；连接失败或中断
+// 且映射仍开启时按指数退避自动重连（1s 起步、上限 reconnectMax、带随机抖动
+// 防多对端同步重连风暴），直到用户断开映射或会话被取消。
+func (pm *PeerManager) connectAndLoop(sessionCtx context.Context, peerID, target string) {
+	defer func() {
+		pm.mu.Lock()
+		// 只删除仍指向本次会话的控制器：防止误删 disconnect 后用户新开的会话
+		if rc, ok := pm.retries[peerID]; ok && rc.sessionCtx == sessionCtx {
+			delete(pm.retries, peerID)
+		}
+		pm.mu.Unlock()
+	}()
+
+	u, dialer := pm.buildDialer(target)
+	backoff := pm.reconnectInitial
+
+	for {
+		if sessionCtx.Err() != nil {
+			return
+		}
+
+		t0 := time.Now()
+		conn, _, err := dialer.Dial(u.String(), nil)
+		latency := time.Since(t0).Milliseconds()
+
+		if err != nil {
+			pm.mu.Lock()
+			mapping, ok := pm.mappings[peerID]
+			if !ok {
+				pm.mu.Unlock()
+				if conn != nil {
+					_ = conn.Close()
+				}
+				return
+			}
+			mapping.ConnectionStatus = "error"
+			mapping.LastError = fmt.Sprintf("连接失败: %v", err)
+			_, stillWanted := pm.retries[peerID]
+			pm.mu.Unlock()
+			if !stillWanted {
+				return
+			}
+			// 指数退避 + 随机抖动；等待期间 disconnect 会 cancel 立即打断
+			jitter := time.Duration(rand.Int63n(int64(backoff)/4 + 1))
+			select {
+			case <-sessionCtx.Done():
+				return
+			case <-time.After(backoff + jitter):
+			}
+			if backoff < pm.reconnectMax {
+				backoff *= 2
+				if backoff > pm.reconnectMax {
+					backoff = pm.reconnectMax
+				}
+			}
+			continue
+		}
+
+		if !pm.runPeerConnection(sessionCtx, peerID, target, conn, latency) {
+			return
+		}
+		// 连接中断但映射仍开启：重置退避（对端往往很快恢复）后重连
+		backoff = pm.reconnectInitial
+	}
+}
+
+// buildDialer 解析 target 并构造出站拨号器。
+func (pm *PeerManager) buildDialer(target string) (*url.URL, *websocket.Dialer) {
 	clean := strings.TrimPrefix(target, "ws://")
 	clean = strings.TrimPrefix(clean, "http://")
 	if !strings.Contains(clean, ":") {
 		// 兜底端口与本机服务端口一致（discovery 侧 AddManualPeer 同口径）
 		clean = fmt.Sprintf("%s:%d", clean, pm.discovery.Port())
 	}
-
 	u := url.URL{Scheme: "ws", Host: clean, Path: "/ws"}
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 4 * time.Second,
+	return &u, &websocket.Dialer{HandshakeTimeout: 4 * time.Second}
+}
+
+// shouldRetry 判断连接断开后是否应安排自动重连：会话未被 disconnect 取消、
+// 重连控制器仍在（disconnect 会删除），且映射仍需要连接。
+func (pm *PeerManager) shouldRetry(peerID string, sessionCtx context.Context) bool {
+	if sessionCtx.Err() != nil {
+		return false
 	}
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	if _, ok := pm.retries[peerID]; !ok {
+		return false
+	}
+	if m := pm.mappings[peerID]; m != nil {
+		return m.PlaySystemAudioLocal || m.PlayMicAudioLocal || m.ExecuteMouseLocal || m.ExecuteKeyboardLocal
+	}
+	return false
+}
 
-	t0 := time.Now()
-	conn, _, err := dialer.Dial(u.String(), nil)
-	latency := time.Since(t0).Milliseconds()
-
+// runPeerConnection 承载单条对端连接的完整生命周期：注册、握手、读循环、清理。
+// 返回 true 表示连接已断开但映射仍需要连接（调用方应安排自动重连）；
+// 返回 false 表示不应重连（被 disconnect、映射已关闭或会话取消）。
+func (pm *PeerManager) runPeerConnection(sessionCtx context.Context, peerID, target string, conn *websocket.Conn, latency int64) (willRetry bool) {
 	pm.mu.Lock()
 	mapping, ok := pm.mappings[peerID]
 	if !ok {
 		pm.mu.Unlock()
-		if conn != nil {
-			_ = conn.Close()
-		}
-		return
+		_ = conn.Close()
+		return false
 	}
 
-	if err != nil {
-		mapping.ConnectionStatus = "error"
-		mapping.LastError = fmt.Sprintf("连接失败: %v", err)
-		pm.mu.Unlock()
-		return
-	}
-
-	// 建连竞态防护：Dial（最长 4s）期间用户可能再次 SetMapping 触发了第二个
-	// connectAndLoop。若这里不 re-check，后写者会无条件覆盖 pm.conns——
-	// 被覆盖的连接无人 Close（goroutine/连接泄漏、音频双流），且先者的
-	// defer 误删后者的 map 条目，disconnect 再也关不掉它。
+	// 建连竞态防护：另一条连接仍注册在案时本条是多余的（自动重连等待期间
+	// 用户手动重开映射等场景），只关自己，不覆盖也不读循环
 	if existing, exists := pm.conns[peerID]; exists && existing != nil {
 		pm.mu.Unlock()
-		_ = conn.Close() // 我们这条是多余的，只关自己
-		return
+		_ = conn.Close()
+		return false
 	}
 
 	// 出站方向的入站防护（与入站 hub.readPump 对齐）：手动添加的对端可以是
@@ -462,8 +567,11 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 	mapping.ConnectionStatus = "connected"
 	mapping.LatencyMs = latency
 	mapping.LastError = ""
+	// 握手需要的字段在锁内快照：mapping 指针在锁外解引用会与
+	// SetMapping 的字段写入构成数据竞争（-race 实测）
+	snap := *mapping
 	pm.mu.Unlock()
-	_ = connObj.writeJSON(pm.mappingHandshake(*mapping))
+	_ = connObj.writeJSON(pm.mappingHandshake(snap))
 
 	// 对端连接断开：释放本机注入的按钮与按键，防止卡在“按住”状态
 	defer mouse.ReleaseAllButtons()
@@ -500,12 +608,14 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 		_ = conn.Close()
 		pm.mu.Lock()
 		// 只清理仍指向自己的条目：避免误删后续重连建立的新连接
-		//（旧写法会把别人的条目删掉，disconnect 从此关不掉真连接）
 		if cur, ok := pm.conns[peerID]; ok && cur == connObj {
 			delete(pm.conns, peerID)
 		}
 		if m, ok := pm.mappings[peerID]; ok {
-			if m.PlaySystemAudioLocal || m.PlayMicAudioLocal || m.ExecuteMouseLocal || m.ExecuteKeyboardLocal {
+			if willRetry {
+				// 自动重连已排定：UI 显示重连中而非断开（LastError 保留具体原因）
+				m.ConnectionStatus = "connecting"
+			} else if m.PlaySystemAudioLocal || m.PlayMicAudioLocal || m.ExecuteMouseLocal || m.ExecuteKeyboardLocal {
 				m.ConnectionStatus = "disconnected"
 			}
 			m.RxSystemAudioKBps = 0
@@ -523,9 +633,11 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 
 		msgType, data, err := conn.ReadMessage()
 		if err != nil {
+			// 先判重连意愿再写状态：disconnect 会并发关闭连接，若这里
+			// 无条件写 error 会覆盖 disconnect 刚设置的 disconnected
+			willRetry = pm.shouldRetry(peerID, sessionCtx)
 			pm.mu.Lock()
 			if m, ok := pm.mappings[peerID]; ok {
-				m.ConnectionStatus = "error"
 				m.LastError = fmt.Sprintf("连接中断: %v", err)
 			}
 			pm.mu.Unlock()
@@ -535,7 +647,6 @@ func (pm *PeerManager) connectAndLoop(peerID, target string) {
 		pm.mu.RLock()
 		curMapping := *pm.mappings[peerID]
 		pm.mu.RUnlock()
-
 		if msgType == websocket.BinaryMessage {
 			if len(data) >= 4 {
 				tag := string(data[:4])

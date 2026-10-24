@@ -805,8 +805,13 @@ func (s *Service) AddManualPeer(target string, name string) *DiscoveredPeer {
 		return nil
 	}
 
-	if s.isSelfUnlocked("", ip, port) || util.IsLocalIP(ip) || util.IsLocalIP(target) {
-		return nil
+	// 自身或本机网卡地址一律拒绝；唯一豁免是「回环地址且端口不是本机服务
+	// 端口」——本机起两个实例（不同端口）互相添加调试是真实需求。服务监听
+	// 全接口，回环地址 + 本机服务端口的组合必达自身，不放行
+	if !((ip == "127.0.0.1" || ip == "::1") && port != s.port) {
+		if s.isSelfUnlocked("", ip, port) || util.IsLocalIP(ip) || util.IsLocalIP(target) {
+			return nil
+		}
 	}
 
 	// 1. 如果该 IP 之前已探测为某个 nodeID，且该设备档案已存在，复用为手动条目
@@ -1051,8 +1056,10 @@ func (s *Service) GetPeers() []DiscoveredPeer {
 	order := make([]*DiscoveredPeer, 0, len(s.peers))
 
 	for _, p := range s.peers {
-		// Strictly filter out self and local loopback/interface IPs
-		if s.isSelfUnlocked(p.ID, p.IP, p.Port) || util.IsLocalIP(p.IP) || util.IsLocalIP(p.Target) {
+		// 过滤自己与本机网卡/回环地址（设备列表不显示自己）；
+		// 用户显式手动添加的条目豁免——回环第二实例调试、显式指定的
+		// 本机地址都是用户明确意图，且 isSelfUnlocked 仍拦自己的服务端口
+		if !p.IsManual && (s.isSelfUnlocked(p.ID, p.IP, p.Port) || util.IsLocalIP(p.IP) || util.IsLocalIP(p.Target)) {
 			continue
 		}
 
