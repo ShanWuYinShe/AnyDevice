@@ -202,6 +202,8 @@ func main() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 		<-sigChan
+		// 主动关闭监听：正在处理的 HTTP/WS 请求先收尾，避免硬断
+		_ = ln.Close()
 	}
 
 	fmt.Println("\n正在停止 AnyDevice 服务...")

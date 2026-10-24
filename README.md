@@ -1,5 +1,7 @@
 # AnyDevice - 跨端双向设备映射中心 🎵🖱️🎮
 
+[![CI](https://github.com/ShanWuYinShe/AnyDevice/actions/workflows/ci.yml/badge.svg)](https://github.com/ShanWuYinShe/AnyDevice/actions/workflows/ci.yml)
+
 > 将台式机/电脑的声音与鼠标实时无线映射到手机、平板、另一台电脑或电视上。**自带原生独立桌面应用窗口（双击直接弹窗，无需浏览器）：既能作为提供方把本机系统声音、麦克风、鼠标与键盘共享给对端，也能作为使用方把对端能力逐项映射到本机播放或执行**。智能路由过滤虚拟机网卡，支持在 UI 上切换通信网卡与设备映射。
 
 ---
