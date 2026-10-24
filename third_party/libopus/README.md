@@ -7,10 +7,13 @@
 | `include/opus/` | 共用头文件 | Xiph libopus | 与 win64 库配套（所用 API 自 1.0 起稳定） |
 | `win64/libopus.a` | Windows x86_64 | mingw 交叉编译静态库 | — |
 | `macos-arm64/libopus.a` | macOS arm64 | Homebrew opus 1.6.1 bottle 的 `lib/libopus.a` | 1.6.1 |
+| `macos-amd64/libopus.a` | macOS x86_64 | opus 1.6.1 源码用 clang `-arch x86_64` 手工编译（供 Intel Mac 与 Universal 包） | 1.6.1 |
 
 链接方式见 `internal/audio/opus_encoder.go` 的 cgo 指令：
 
-- darwin：`-I${SRCDIR}/../../third_party/libopus/include -L${SRCDIR}/../../third_party/libopus/macos-arm64 -lopus`
+- darwin/arm64：`-I${SRCDIR}/../../third_party/libopus/include -L${SRCDIR}/../../third_party/libopus/macos-arm64 -lopus`
+- darwin/amd64：`-I${SRCDIR}/../../third_party/libopus/include -L${SRCDIR}/../../third_party/libopus/macos-amd64 -lopus`
+- linux：`-I${SRCDIR}/../../third_party/libopus/include -l:libopus.a`（静态链接系统库）
 - windows：`-I${SRCDIR}/../../third_party/libopus/include -L${SRCDIR}/../../third_party/libopus/win64 -lopus`
 
 目录内只有 `.a`（无 `.dylib` / `.dll`），链接结果是静态的。验证方式：

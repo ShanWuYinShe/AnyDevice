@@ -49,16 +49,27 @@ jobs:
           -ldflags "-s -w -extldflags '-framework UniformTypeIdentifiers'"
           -o /dev/null main.go
 
-      - name: 打包 AnyDevice.app
+      - name: 打包 AnyDevice.app（arm64 + amd64 + universal）
         # build.sh 会做：前端构建（幂等）→ .app 组装（Info.plist 注入版本/
-        # 许可文本/图标）→ ad-hoc 签名；runner 无 mingw 时自动跳过 Windows 交叉编译
-        run: ./scripts/build.sh
+        # 许可文本/图标）→ ad-hoc 签名；runner 无 mingw 时自动跳过 Windows 交叉编译。
+        # 三种架构各打一份，供不同 Mac 用户按需下载（universal 体积约为单架构两倍）
+        run: |
+          set -e
+          for ARCH in arm64 amd64 universal; do
+            MAC_ARCH="$ARCH" ./scripts/build.sh
+            OUT="AnyDevice_macOS_${ARCH}.app"
+            rm -rf "dist/$OUT"
+            mkdir -p dist
+            cp -R bin/AnyDevice.app "dist/$OUT"
+            echo "=== $OUT ==="
+            lipo -info "dist/$OUT/Contents/MacOS/any_device"
+          done
 
       - name: 上传 macOS 包
         uses: actions/upload-artifact@v7
         with:
-          name: AnyDevice_macOS_arm64
-          path: bin/AnyDevice.app
+          name: AnyDevice_macOS
+          path: dist/AnyDevice_macOS_*.app
           retention-days: 14
 
   windows-cross:

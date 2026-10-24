@@ -78,7 +78,7 @@
 ### 1. 启动程序（电脑端）
 
 直接双击运行：
-- **macOS**：双击 `bin/AnyDevice.app`（也可先拖到「应用程序」再启动）
+- **macOS**：双击 `bin/AnyDevice.app`（也可先拖到「应用程序」再启动）。Apple Silicon 用 arm64 包、Intel Mac 用 amd64 包，或直接用 universal 包（一个包通吃，体积约两倍）
 - **Windows 台式机**：双击运行 `any_device.exe`
 - **Linux**：运行 `./any_device_linux_amd64`（Wails 原生窗口，GTK3 + WebKitGTK）。需系统安装运行库：
   `sudo apt install libgtk-3-0 libwebkit2gtk-4.0-37`（Debian/Ubuntu）、`sudo dnf install gtk3 webkit2gtk4.1`（Fedora）。
@@ -122,6 +122,10 @@ UI 使用 **Svelte 5 + Vite**（源码在 `frontend/`），构建产物输出到
 # 一键构建（前端 + macOS 原生窗口 .app + Windows 交叉编译）
 ./scripts/build.sh
 
+# macOS 架构选择（默认 arm64）：
+MAC_ARCH=amd64 ./scripts/build.sh      # Intel Mac
+MAC_ARCH=universal ./scripts/build.sh  # 双架构通吃（体积约两倍）
+
 # 只改了 Go 代码、前端未动时：
 #   macOS 原生窗口 -> 重新打包 .app（Info.plist 必须随包，裸二进制窗口内
 #   WebSocket/麦克风会因缺少 ATS/用途声明而失败）：
@@ -139,7 +143,7 @@ go build -tags wails,desktop,production -o any_device_linux_amd64 main.go
 
 > macOS 原生窗口必须运行在 `.app` 包内（`AnyDevice.app/Contents/MacOS/any_device`）；直接把可执行文件拷出包外会丢失 Info.plist，窗口内 WebSocket 会被 ATS 拦截。
 
-> 依赖打包：音频 Opus 编码在 macOS arm64 / Windows x64 使用仓库内 vendored 静态库（`third_party/libopus/`），`.app` 与 `.exe` 静态链接、**运行时不需要安装 Homebrew 或 opus**；BSD-3-Clause 许可文本会随 `.app` 放进 `Contents/Resources/third_party/` 并在仓库 `third_party/libopus/COPYING` 保留。Linux 使用系统 libopus（构建需 `libopus-dev`，运行需 `libopus0`）——各发行版架构/ABI 差异大，系统包比 vendored 单架构静态库更可靠。
+> 依赖打包：音频 Opus 编码在 macOS arm64 / Windows x64 使用仓库内 vendored 静态库（`third_party/libopus/`），`.app` 与 `.exe` 静态链接、**运行时不需要安装 Homebrew 或 opus**；BSD-3-Clause 许可文本会随 `.app` 放进 `Contents/Resources/third_party/` 并在仓库 `third_party/libopus/COPYING` 保留。Linux 静态链接系统 libopus（构建需 `libopus-dev`），**运行期不再需要 `libopus0`**；但 GTK3/WebKitGTK 官方不提供静态库且 WebKit 的进程模型要求动态加载，故 Linux 包无法做到全静态，运行库仍需安装（见上文启动说明）。
 
 ### CI 自动构建产物
 
@@ -147,7 +151,7 @@ go build -tags wails,desktop,production -o any_device_linux_amd64 main.go
 
 | Artifact | 内容 |
 | :--- | :--- |
-| `AnyDevice_macOS_arm64` | `AnyDevice.app`（Info.plist + 图标 + 许可文本 + ad-hoc 签名） |
+| `AnyDevice_macOS` | 三个 `.app`：`_arm64`（Apple Silicon）/ `_amd64`（Intel）/ `_universal`（双架构通吃）；均含 Info.plist + 图标 + 许可文本 + ad-hoc 签名 |
 | `AnyDevice_windows_amd64` | `any_device.exe`（Wails 原生窗口）+ `any_device_portable.exe`（浏览器壳回退） |
 | `AnyDevice_linux_amd64` | Linux 原生窗口二进制（GTK3 + WebKitGTK） |
 

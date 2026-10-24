@@ -6,6 +6,7 @@ set -e
 #     必须是 .app 包：裸二进制没有 Info.plist，ATS 本地网络例外与麦克风
 #     用途声明不会生效，窗口内 WebSocket/麦克风都会失败。
 #   - Windows: Wails 原生窗口 exe（无控制台黑窗）+ Portable 浏览器壳回退版。
+#   - macOS 架构可用环境变量选择：MAC_ARCH=arm64（默认）/ amd64 / universal。
 # 前端产物嵌入 internal/web/dist，由 go:embed 打进二进制。
 WAILS_TAGS="wails,desktop,production"
 BUILD_TIME=$(date +%Y%m%d-%H%M)
@@ -24,12 +25,30 @@ bun run check
 bun run build
 cd ..
 
-echo ">>> 正在编译 macOS 桌面版 (arm64, Wails 原生窗口, 版本 ${VERSION}, 构建 ${BUILD_TIME})..."
+# macOS 架构：arm64（默认，Apple Silicon 原生）/ amd64（Intel）/ universal（双架构通吃）
+MAC_ARCH="${MAC_ARCH:-arm64}"
 MAC_APP="bin/AnyDevice.app"
 rm -rf "$MAC_APP"
 mkdir -p "$MAC_APP/Contents/MacOS"
-go build -tags "$WAILS_TAGS" -ldflags "$LDFLAGS_COMMON -extldflags '$MAC_EXTLD'" \
-    -o "$MAC_APP/Contents/MacOS/any_device" main.go
+echo ">>> 正在编译 macOS 桌面版 (${MAC_ARCH}, Wails 原生窗口, 版本 ${VERSION}, 构建 ${BUILD_TIME})..."
+if [ "$MAC_ARCH" = "universal" ]; then
+    # Universal 2：分别构建两个架构再用 lipo 合并（libopus 各架构静态库按
+    # GOARCH 由 cgo 指令自动选择，见 internal/audio/opus_encoder.go）
+    for ARCH in arm64 amd64; do
+        echo "    - 构建 ${ARCH}..."
+        GOARCH="$ARCH" CGO_ENABLED=1 go build -tags "$WAILS_TAGS" \
+            -ldflags "$LDFLAGS_COMMON -extldflags '$MAC_EXTLD'" \
+            -o "bin/.any_device_${ARCH}" main.go
+    done
+    lipo -create -output "$MAC_APP/Contents/MacOS/any_device" \
+        bin/.any_device_arm64 bin/.any_device_amd64
+    rm -f bin/.any_device_arm64 bin/.any_device_amd64
+    lipo -info "$MAC_APP/Contents/MacOS/any_device"
+else
+    GOARCH="$MAC_ARCH" CGO_ENABLED=1 go build -tags "$WAILS_TAGS" \
+        -ldflags "$LDFLAGS_COMMON -extldflags '$MAC_EXTLD'" \
+        -o "$MAC_APP/Contents/MacOS/any_device" main.go
+fi
 # Info.plist 由仓库根目录模板生成（注入版本号），再对整个 bundle 做 ad-hoc 签名
 sed "s/__VERSION__/${VERSION}/g" Info.plist > "$MAC_APP/Contents/Info.plist"
 # 静态链接的 libopus 为 BSD-3-Clause：二进制分发需随附许可文本（必须在签名前放入包内）
