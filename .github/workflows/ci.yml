@@ -165,32 +165,6 @@ jobs:
           retention-days: 14
 
 
-  static-link-probe:
-    # 一次性探针：核验 Linux 全静态链接的可行边界（GTK/WebKitGTK 是否提供 .a、
-    # libopus 静态链接是否可行、全静态是否因 glibc/NSS 等无法完成）
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: stable
-      - name: 安装依赖
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libopus-dev pkg-config
-      - name: 探针：检查静态库可用性
-        run: |
-          echo "=== libopus 静态库 ==="
-          ls -la /usr/lib/x86_64-linux-gnu/libopus.a 2>/dev/null || echo "无 libopus.a"
-          echo "=== GTK3 静态库 ==="
-          ls /usr/lib/x86_64-linux-gnu/libgtk-3.a 2>/dev/null || echo "无 libgtk-3.a（GTK 通常不提供静态库）"
-          echo "=== WebKitGTK 静态库 ==="
-          ls /usr/lib/x86_64-linux-gnu/libwebkit2gtk*.a 2>/dev/null || echo "无 libwebkit2gtk*.a（WebKitGTK 不提供静态库）"
-          echo "=== 尝试 opus 静态链接（项目自身 C 依赖）==="
-          CGO_ENABLED=1 go build -tags "wails,desktop,production" -ldflags '-linkmode external -extldflags "-static"' -o /tmp/full_static main.go 2>&1 | head -8 || echo "全静态链接失败（预期：GTK/WebKitGTK/glibc 无法全静态）"
-          echo "=== 尝试 opus 部分静态（仅 -l:libopus.a）==="
-          CGO_ENABLED=1 go build -tags "wails,desktop,production" -o /tmp/normal main.go && ldd /tmp/normal | grep -E 'opus|gtk|webkit|glibc|libc' | head -10
-
   windows-runtime:
     # 真实 Windows 环境：完整 CGO 编译（miniaudio/WASAPI）+ 全量测试运行
     # （含 Opus 回归、键鼠逻辑测试、钩子启停生命周期、WASAPI 线程配对清理）
