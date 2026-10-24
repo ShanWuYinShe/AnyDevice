@@ -10,6 +10,12 @@
 set -euo pipefail
 
 ARCH="${ARCH:-amd64}"
+# linuxdeploy 的发布资产用 x86_64/aarch64 命名，Go 用 amd64/arm64——映射
+case "$ARCH" in
+    amd64) LD_ARCH="x86_64" ;;
+    arm64) LD_ARCH="aarch64" ;;
+    *) echo "不支持的架构: $ARCH（可用 amd64/arm64）"; exit 1 ;;
+esac
 VERSION=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' main.go)
 BUILD_TIME=$(date +%Y%m%d-%H%M)
 APP_NAME="AnyDevice"
@@ -61,7 +67,7 @@ TOOLS="${RUNNER_TEMP:-/tmp}/appimage-tools"
 mkdir -p "$TOOLS"
 if [ ! -x "$TOOLS/linuxdeploy" ]; then
     curl -fsSL --max-time 300 -o "$TOOLS/linuxdeploy" \
-        "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${ARCH}.AppImage"
+        "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${LD_ARCH}.AppImage"
     chmod +x "$TOOLS/linuxdeploy"
 fi
 if [ ! -x "$TOOLS/linuxdeploy-plugin-gtk.sh" ]; then
