@@ -19,7 +19,10 @@ import (
 	"any_device/internal/util"
 )
 
-const Version = "1.2.0"
+// Version 是应用版本号。发布构建由 CI 用 -ldflags -X main.Version=<tag>
+// 注入（tag 为唯一版本源，见 .github/workflows/release.yml）；这里的默认值
+// 仅用于本地 go run/go build 调试，不参与发布。
+var Version = "dev"
 
 func main() {
 	port := flag.Int("port", 8080, "Web & WebSocket server port")

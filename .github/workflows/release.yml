@@ -1,0 +1,212 @@
+# 发布流程：推送 v* tag 触发，构建三平台安装包并创建 GitHub Release。
+#
+# 版本号唯一源是 git tag（v1.2.0 → 1.2.0），构建时经 -ldflags -X main.Version
+# 注入，仓库内不维护版本文件。详见 README「发布」一节。
+#
+# 打 tag 纪律见 ~/.agents/skills/git-workflow：逐个推送并确认流水，
+# 禁止 git push --tags（超过 3 个 tag 时 GitHub 不产生 push 事件）。
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # 允许手动触发以便演练（不创建 Release，仅构建产物）
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 创建 Release 需要
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # git describe 需要完整 tag 历史
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: 校验 vendored libopus（macos-amd64）
+        run: ./scripts/fetch-libopus-amd64.sh "$RUNNER_TEMP/opus" && cmp -s "$RUNNER_TEMP/opus/libopus.a" third_party/libopus/macos-amd64/libopus.a
+
+      - name: 构建三种架构 .app
+        run: |
+          set -e
+          mkdir -p dist
+          for ARCH in arm64 amd64 universal; do
+            MAC_ARCH="$ARCH" ./scripts/build.sh
+            OUT="AnyDevice_${ARCH}.app"
+            rm -rf "dist/$OUT"
+            cp -R bin/AnyDevice.app "dist/$OUT"
+            lipo -info "dist/$OUT/Contents/MacOS/any_device"
+          done
+
+      - name: 打包为 zip（保留 .app 结构与权限）
+        run: |
+          cd dist
+          for A in arm64 amd64 universal; do
+            zip -qry "AnyDevice-macOS-${A}.zip" "AnyDevice_${A}.app"
+          done
+          ls -lh *.zip
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-macos
+          path: dist/*.zip
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+
+      - name: 确认 MinGW
+        shell: pwsh
+        run: |
+          if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
+            choco install mingw -y --no-progress
+            $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH", "User")
+          }
+          gcc --version | Select-Object -First 1
+
+      - name: 构建前端
+        working-directory: frontend
+        run: |
+          npm install -g bun 2>$null; bun install; bun run build
+        shell: pwsh
+
+      - name: 构建 Windows 双 exe
+        shell: bash
+        run: |
+          set -e
+          VERSION=$(git describe --tags --always 2>/dev/null | sed 's/^v//')
+          BUILD_TIME=$(date +%Y%m%d-%H%M)
+          LDFLAGS="-s -w -X main.Version=${VERSION} -X any_device/internal/util.BuildTime=${BUILD_TIME}"
+          mkdir -p dist
+          CGO_ENABLED=1 CC=gcc GOOS=windows GOARCH=amd64 \
+            go build -tags "wails,desktop,production" -ldflags "$LDFLAGS -H=windowsgui" \
+            -o dist/any_device.exe main.go
+          CGO_ENABLED=1 CC=gcc GOOS=windows GOARCH=amd64 \
+            go build -ldflags "$LDFLAGS" -o dist/any_device_portable.exe main.go
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-windows
+          path: dist/*.exe
+
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+
+      - name: 安装依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libopus-dev pkg-config imagemagick
+
+      - name: 构建 AppImage 与裸二进制
+        run: |
+          set -e
+          ARCH=amd64 ./scripts/build-appimage.sh
+          VERSION=$(git describe --tags --always 2>/dev/null | sed 's/^v//')
+          BUILD_TIME=$(date +%Y%m%d-%H%M)
+          mkdir -p dist
+          cp bin/*.AppImage "dist/AnyDevice-${VERSION}-linux-amd64.AppImage"
+          CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -tags "wails,desktop,production" \
+            -ldflags "-s -w -X main.Version=${VERSION} -X any_device/internal/util.BuildTime=${BUILD_TIME}" \
+            -o "dist/any_device-linux-amd64" main.go
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-linux
+          path: dist/*
+
+  publish:
+    # 汇总三平台产物，生成 GitHub Release（仅 tag 触发时创建，手动触发只构建）
+    needs: [build-macos, build-windows, build-linux]
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: 下载全部产物
+        uses: actions/download-artifact@v7
+        with:
+          path: release-assets
+
+      - name: 整理资产清单
+        run: |
+          set -e
+          mkdir -p assets
+          find release-assets -type f \( -name '*.zip' -o -name '*.exe' -o -name '*.AppImage' -o -name 'any_device-linux-amd64' \) -exec cp {} assets/ \;
+          ls -lh assets
+
+      - name: 生成 Release 说明
+        # 用 python 生成：避免 heredoc 在 YAML 块标量里的缩进污染 Markdown，
+        # 也避免 shell 变量展开与 YAML 语法冲突
+        run: |
+          python3 - <<'PYEOF'
+          import os, pathlib
+          BT = chr(96)  # 反引号：用 chr() 构造，避免多层转义
+          tag = os.environ["GITHUB_REF"].removeprefix("refs/tags/")
+          version = tag.removeprefix("v")
+          rows = [
+              ("macOS（Apple Silicon）", "AnyDevice-macOS-arm64.zip", "解压后双击 AnyDevice.app"),
+              ("macOS（Intel）", "AnyDevice-macOS-amd64.zip", "解压后双击 AnyDevice.app"),
+              ("macOS（通用）", "AnyDevice-macOS-universal.zip", "一个包通吃 Intel 与 Apple Silicon"),
+              ("Windows", "any_device.exe", "Wails 原生窗口，双击运行"),
+              ("Windows（备用）", "any_device_portable.exe", "浏览器窗口回退版，控制台可见便于排查"),
+              ("Linux", f"AnyDevice-{version}-linux-amd64.AppImage", "已内置 GTK/WebKitGTK 运行库，chmod +x 后直接运行"),
+              ("Linux（小体积）", "any_device-linux-amd64", "裸二进制，需系统安装 GTK3/WebKitGTK"),
+          ]
+          lines = [
+              f"## AnyDevice {tag}", "",
+              "跨端音频、鼠标与键盘无线映射中心。", "",
+              "### 下载", "",
+              "| 平台 | 文件 | 说明 |", "| :--- | :--- | :--- |",
+          ]
+          for plat, fname, desc in rows:
+              lines.append(f"| {plat} | {BT}{fname}{BT} | {desc} |")
+          lines += [
+              "", "### 首次运行提示", "",
+              "- **macOS**：包为 ad-hoc 签名（未公证），首次打开需右键 →「打开」，或在「系统设置 → 隐私与安全性」中允许。",
+              "  跨端键鼠映射需在「隐私与安全性 → 辅助功能」中授权本应用。",
+              "- **Windows**：SmartScreen 可能提示未知发布者，选择「更多信息 → 仍要运行」。",
+              "- **Linux**：AppImage 需 chmod +x；无图形环境可用 -no-ui 纯服务模式。",
+              "", "### 校验", "",
+              f"各文件由 GitHub Actions 从 tag {tag} 构建，版本号经 ldflags 注入（any_device -list 可查看）。", "",
+          ]
+          notes = "\n".join(lines)
+          pathlib.Path("release-notes.md").write_text(notes, encoding="utf-8")
+          print(notes)
+          PYEOF
+
+      - name: 创建 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: AnyDevice ${{ github.ref_name }}
+          body_path: release-notes.md
+          files: assets/*
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') }}

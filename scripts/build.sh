@@ -10,11 +10,13 @@ set -e
 # 前端产物嵌入 internal/web/dist，由 go:embed 打进二进制。
 WAILS_TAGS="wails,desktop,production"
 BUILD_TIME=$(date +%Y%m%d-%H%M)
-LDFLAGS_COMMON="-s -w -X any_device/internal/util.BuildTime=${BUILD_TIME}"
+# 版本号以 git tag 为唯一源（tag 即版本，无需改文件）；
+# 无 tag 时用 0.0.0-dev 标识未发布构建
+VERSION=$(git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo "0.0.0-dev")
+LDFLAGS_COMMON="-s -w -X any_device/internal/util.BuildTime=${BUILD_TIME} -X main.Version=${VERSION}"
 # Wails v2.16 的 darwin 前端引用 UniformTypeIdentifiers framework，
 # 需向外部链接器显式传递
 MAC_EXTLD="-framework UniformTypeIdentifiers"
-VERSION=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' main.go)
 
 echo ">>> 正在构建前端 (Svelte + Vite, 产物嵌入 internal/web/dist)..."
 cd frontend
