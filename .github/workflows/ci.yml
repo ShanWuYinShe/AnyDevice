@@ -17,9 +17,9 @@ jobs:
     # 音频/键鼠捕获依赖 macOS 系统框架，Wails 构建只能在 macOS runner 完成
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
 
@@ -53,9 +53,9 @@ jobs:
     # Windows 平台层（钩子/SendInput/键码表）为纯 syscall，交叉编译即可验证
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
 
@@ -68,9 +68,9 @@ jobs:
     # + 服务启停冒烟（-no-ui 起服务 → /api/status 200 → 进程存活 → 清理）
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
 

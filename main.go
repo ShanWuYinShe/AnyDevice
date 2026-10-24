@@ -157,6 +157,11 @@ func main() {
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {
 		util.Logf("[Fatal] 端口 %d 监听失败（可能已被其他实例占用）: %v", *port, err)
+		// 此时各引擎已启动，os.Exit 会跳过 defer——手动清理再退出
+		mouseEngine.Stop()
+		keyboardEngine.Stop()
+		systemAudioEngine.Stop()
+		micAudioEngine.Stop()
 		os.Exit(1)
 	}
 	go func() {

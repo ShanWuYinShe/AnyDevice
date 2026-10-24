@@ -35,12 +35,17 @@ var (
 	netCacheAt time.Time
 	netIPs     []IPInfo
 	netBcasts  []string
+	// netV6：本机 IPv6 地址（同时存含 zone 与去 zone 两种形式）。
+	// GetAllIPs 只收集 IPv4（广播/主 IP 选择语义均为 v4），IPv6 仅用于
+	// IsLocalIP 的本机判断——IPv6 直连访问时 RemoteAddr 是本机 v6 地址
+	netV6 []string
 )
 
 // refreshNetCacheLocked 重新枚举网卡；调用方必须持有 netMu。
 func refreshNetCacheLocked() {
 	netIPs = nil
 	netBcasts = nil
+	netV6 = nil
 	netCacheAt = time.Now()
 
 	interfaces, err := net.Interfaces()
@@ -88,6 +93,19 @@ func refreshNetCacheLocked() {
 				IfaceName: iface.Name,
 				IsVirtual: isVirt,
 			})
+
+			// 本机 IPv6 收集：独立全地址枚举、不做 loopback 过滤——
+			// macOS lo0 上也有 fe80::1（链路本地），IsLocalIP 需要它；
+			// GetAllIPs/广播语义仍仅 IPv4，互不影响
+			if v6addrs, err := net.InterfaceAddrs(); err == nil {
+				for _, addr := range v6addrs {
+					if ipn, ok := addr.(*net.IPNet); ok {
+						if s := ipn.IP.String(); strings.Contains(s, ":") {
+							netV6 = append(netV6, s)
+						}
+					}
+				}
+			}
 
 			// 定向广播地址 = 网段地址 | 反掩码；
 			// 点对点/无掩码接口、链路本地与全网广播没有意义，跳过。
@@ -253,6 +271,20 @@ func IsLocalIP(ipStr string) bool {
 	for _, info := range GetAllIPs() {
 		if info.IP == ipStr {
 			return true
+		}
+	}
+
+	// 本机 IPv6 匹配：GetAllIPs 只含 IPv4，IPv6 直连访问（如 fe80:: 链路
+	// 本地地址）此前会被误判为外部对端。zone（%接口）两侧归一化后比较
+	trimmed := ipStr
+	if i := strings.LastIndexByte(trimmed, '%'); i >= 0 {
+		trimmed = trimmed[:i]
+	}
+	if strings.Contains(trimmed, ":") {
+		for _, v6 := range netV6 {
+			if v6 == trimmed || v6 == ipStr {
+				return true
+			}
 		}
 	}
 	return false
