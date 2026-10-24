@@ -72,10 +72,16 @@ type Engine struct {
 	cancelGen context.CancelFunc
 	opus      *OpusEncoder // float32 PCM → Opus（新协议 AUPS/AUPM）；nil=输出 float32 PCM（AUDS/AUDM 旧协议）
 
-	// opusMu 仅保护 opus 指针与 Feed 调用：emitPCM 在音频实时回调线程执行，
-	// 绝不能碰 e.mu（历史教训：回调线程抢 e.mu 与 Start/Stop 互等死锁）；
-	// Stop 销毁编码器与回调线程 Feed 之间靠本锁互斥，避免 use-after-free。
-	opusMu      sync.Mutex
+	// opusMu 仅保护 opus 指针与 Feed 调用：编码在独立 goroutine 执行，
+	// Stop 销毁编码器与 Feed 之间靠本锁互斥，避免 use-after-free。
+	opusMu sync.Mutex
+
+	// 编码卸载：音频实时回调线程只做拷贝入队（原实现把 cgo 建编码器、
+	// 逐样本 unsafe 转换与 Opus Feed 全放在回调线程，与「实时线程绝不
+	// 阻塞」的项目经验冲突），Opus 编码移至独立 goroutine。
+	encQueue chan []byte   // 待编码帧（每帧 20ms float32 立体声 ≈ 7.7KB）
+	encDone  chan struct{} // Stop 关闭后编码 goroutine 排空队列退出
+
 	mu          sync.Mutex
 	isRunning   atomic.Bool
 	isTestTone  bool // 当前来源为占位测试音（无真实虚拟声卡时的回退）
@@ -90,6 +96,7 @@ type Engine struct {
 	dbgZeroChunks atomic.Uint64
 	dbgBytes      atomic.Int64
 	dbgFrames     atomic.Uint64
+	dbgDropped    atomic.Uint64 // 编码队列满被丢弃的最旧帧数（异步编码卸载后新增）
 }
 
 func NewEngine(kind AudioKind, mode CaptureMode, deviceIndex int, onChunk func([]byte)) *Engine {
@@ -142,9 +149,14 @@ func (e *Engine) Start() error {
 	if !e.isRunning.CompareAndSwap(false, true) {
 		return nil
 	}
+	// 编码卸载队列与消费者随本次运行创建（Stop 关 encDone 收尾）
+	e.encQueue = make(chan []byte, 8)
+	e.encDone = make(chan struct{})
+	go e.encodeLoop()
 	if err := e.start(); err != nil {
 		// 失败路径回滚 isRunning：否则引擎永久卡在「已运行」，后续 Start 假成功
 		e.isRunning.Store(false)
+		close(e.encDone) // 让编码 goroutine 随之退出
 		// 设备未启动成功的失败路径里，malgo 上下文可能已创建：清理避免泄漏
 		if e.device == nil && e.ctx != nil {
 			e.ctx.Uninit()
@@ -154,6 +166,47 @@ func (e *Engine) Start() error {
 		return err
 	}
 	return nil
+}
+
+// encodeLoop 在独立 goroutine 中消费编码队列：cgo 建编码器、逐样本 unsafe
+// 转换与 Opus Feed 都不再占用音频实时回调线程（2026-10-24 审查加固项 P6）。
+func (e *Engine) encodeLoop() {
+	tag := TagSystemAudioOpus
+	if e.kind == KindMic {
+		tag = TagMicAudioOpus
+	}
+	for frame := range e.encQueue {
+		e.opusMu.Lock()
+		// Stop 已销毁编码器（isRunning=false）后到达的迟到帧直接丢弃，
+		// 防止这里重建孤儿编码器（重建后无人销毁）
+		if !e.isRunning.Load() {
+			e.opusMu.Unlock()
+			continue
+		}
+		if e.opus == nil {
+			opus, err := NewOpusEncoder(func(packet []byte) {
+				buf := make([]byte, 4+len(packet))
+				copy(buf[:4], tag)
+				copy(buf[4:], packet)
+				e.onChunk(buf)
+			})
+			if err != nil {
+				util.Logf("[音频] Opus 编码器创建失败: %v", err)
+				e.opusMu.Unlock()
+				continue
+			}
+			e.opus = opus
+		}
+		// float32 字节流 → 样本 → Opus 编码（opus_encode 内部转 int16 工作格式）
+		f32 := make([]float32, len(frame)/4)
+		for i := range f32 {
+			f32[i] = float32(math.Float32frombits(*(*uint32)(unsafe.Pointer(&frame[i*4]))))
+		}
+		if err := e.opus.Feed(f32); err != nil {
+			util.Logf("[音频] Opus 编码失败: %v", err)
+		}
+		e.opusMu.Unlock()
+	}
 }
 
 func (e *Engine) start() error {
@@ -279,7 +332,7 @@ func (e *Engine) start() error {
 			kindName = "麦克风"
 		}
 		go func() {
-			var lastChunks, lastZero, lastBytes, lastFrames uint64
+			var lastChunks, lastZero, lastBytes, lastFrames, lastDropped uint64
 			for {
 				time.Sleep(2 * time.Second)
 				e.mu.Lock()
@@ -287,6 +340,7 @@ func (e *Engine) start() error {
 				z := e.dbgZeroChunks.Load()
 				b := uint64(e.dbgBytes.Load())
 				f := e.dbgFrames.Load()
+				d := e.dbgDropped.Load()
 				if c == lastChunks && lastBytes != 0 {
 					util.Logf("[音频诊断] %s 捕获已停止增长（chunks=%d）", kindName, c)
 					continue
@@ -300,9 +354,9 @@ func (e *Engine) start() error {
 				if nChunks > 0 {
 					zeroRatio = float64(z-lastZero) / float64(nChunks) * 100
 				}
-				util.Logf("[音频诊断] %s 捕获: %d chunks/2s, %d KB/2s, 平均 %d 帧/chunk, 全零 chunk %.0f%%",
-					kindName, nChunks, (b-lastBytes)/1024, avgFrames, zeroRatio)
-				lastChunks, lastZero, lastBytes, lastFrames = c, z, b, f
+				util.Logf("[音频诊断] %s 捕获: %d chunks/2s, %d KB/2s, 平均 %d 帧/chunk, 全零 chunk %.0f%%, 编码队列丢帧 %d",
+					kindName, nChunks, (b-lastBytes)/1024, avgFrames, zeroRatio, d-lastDropped)
+				lastChunks, lastZero, lastBytes, lastFrames, lastDropped = c, z, b, f, d
 			}
 		}()
 	}
@@ -406,6 +460,10 @@ func (e *Engine) Stop() {
 	// 不会新建孤儿编码器；其后 opusMu 互斥下销毁，与任何在途 Feed 不重叠
 	e.isRunning.Store(false)
 
+	// 关闭编码队列：编码 goroutine 排空剩余帧（Feed 前检查 isRunning，
+	// 迟到帧丢弃）后退出；close 与入队无竞争——设备已停、回调不再入队
+	close(e.encDone)
+
 	e.opusMu.Lock()
 	if e.opus != nil {
 		e.opus.Destroy()
@@ -416,9 +474,9 @@ func (e *Engine) Stop() {
 
 // emit 把 PCM 交付给订阅者：订阅门控、tag 前缀与诊断统计统一在此处理。
 // 供 miniaudio 回调与自研 WASAPI 捕获共用，保证两条路径行为一致。
-// emitPCM 把捕获到的 float32 PCM（交错立体声 48kHz）编码为 Opus 并交付
-// 给订阅者：订阅门控、诊断统计、Opus 编码与 tag 前缀统一在此处理。
-// miniaudio 回调、自研 WASAPI 捕获与测试音三条路径共用。
+// emitPCM 是音频实时回调线程的入口：只做订阅门控、诊断统计与拷贝入队，
+// Opus 编码（cgo 建编码器/逐样本转换/Feed）全部移至 encodeLoop goroutine
+// ——实时线程绝不执行重活，高负载下不会因编码超时产生音频毛刺。
 func (e *Engine) emitPCM(pcm []byte) {
 	if len(pcm) == 0 || e.onChunk == nil {
 		return
@@ -435,41 +493,27 @@ func (e *Engine) emitPCM(pcm []byte) {
 		e.dbgBytes.Add(int64(len(pcm)))
 		e.dbgFrames.Add(uint64(len(pcm) / 8))
 	}
-	var tag []byte
-	if e.kind == KindMic {
-		tag = TagMicAudioOpus
-	} else {
-		tag = TagSystemAudioOpus
-	}
-	// opusMu 保护编码器指针与 Feed：Stop 会并发销毁编码器，无锁使用是
-	// use-after-free（2026-10-24 审查发现的内存安全缺陷，已修复）。
-	// 仍然绝不碰 e.mu（音频实时线程死锁教训，见结构体注释）。
-	e.opusMu.Lock()
-	defer e.opusMu.Unlock()
-
 	if !e.isRunning.Load() {
 		return
 	}
-	if e.opus == nil {
-		opus, err := NewOpusEncoder(func(packet []byte) {
-			buf := make([]byte, 4+len(packet))
-			copy(buf[:4], tag)
-			copy(buf[4:], packet)
-			e.onChunk(buf)
-		})
-		if err != nil {
-			util.Logf("[音频] Opus 编码器创建失败: %v", err)
-			return
+	// 拷贝入队：miniaudio 回调返回后其内部缓冲可能被复用，异步编码前
+	// 必须持有副本。队列满（编码积压 >160ms）时丢最旧保时延，实时流
+	// 语义下 Opus 解码端 PLC 可平滑丢帧；不阻塞实时线程
+	frame := make([]byte, len(pcm))
+	copy(frame, pcm)
+	select {
+	case e.encQueue <- frame:
+	default:
+		// 丢最旧腾位：维持低时延优于保帧完整
+		select {
+		case <-e.encQueue:
+			e.dbgDropped.Add(1)
+		default:
 		}
-		e.opus = opus
-	}
-	// float32 字节流 → 样本 → Opus 编码（opus_encode 内部转 int16 工作格式）
-	f32 := make([]float32, len(pcm)/4)
-	for i := range f32 {
-		f32[i] = float32(math.Float32frombits(*(*uint32)(unsafe.Pointer(&pcm[i*4]))))
-	}
-	if err := e.opus.Feed(f32); err != nil {
-		util.Logf("[音频] Opus 编码失败: %v", err)
+		select {
+		case e.encQueue <- frame:
+		default:
+		}
 	}
 }
 

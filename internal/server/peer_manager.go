@@ -137,10 +137,15 @@ func (pm *PeerManager) ListPeers(viewerIP string) []UnifiedPeer {
 
 	result := make([]UnifiedPeer, 0, len(discPeers))
 	for _, dp := range discPeers {
-		if pm.discovery.IsSelf(dp.ID, dp.IP, dp.Port) || util.IsLocalIP(dp.IP) || util.IsLocalIP(dp.Target) {
+		// 手动添加的条目豁免（回环双实例调试）；isSelfUnlocked 语义由
+		// discovery.AddManualPeer 时把关，这里只豁免 IsLocalIP 过滤
+		if !dp.IsManual && (pm.discovery.IsSelf(dp.ID, dp.IP, dp.Port) || util.IsLocalIP(dp.IP) || util.IsLocalIP(dp.Target)) {
 			continue
 		}
-		if viewerIP != "" && viewerIP == viewerHost(dp.IP) {
+		// 按“查看者”剔除查看者自己（手机/外部浏览器接入被登记为入站对端，
+		// 不过滤就会在自己的列表里看到自己）；手动添加的条目豁免——
+		// 本机浏览器调试回环双实例时，手动添加的 127.0.0.1 对端必须可见
+		if viewerIP != "" && viewerIP == viewerHost(dp.IP) && !dp.IsManual {
 			continue
 		}
 
