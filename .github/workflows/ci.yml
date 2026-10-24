@@ -49,6 +49,23 @@ jobs:
           -ldflags "-s -w -extldflags '-framework UniformTypeIdentifiers'"
           -o /dev/null main.go
 
+      - name: 校验 vendored libopus（macos-amd64）与官方 bottle 一致
+        # 可复现性守护：仓库里的 x86_64 静态库必须能由 scripts/fetch-libopus-amd64.sh
+        # 从 Homebrew 官方 bottle 重新生成（sha256 校验内建于脚本）。
+        # 不一致说明仓库里的库被手工替换过，需用脚本产物更新。
+        run: |
+          set -e
+          ./scripts/fetch-libopus-amd64.sh "$RUNNER_TEMP/opus-amd64"
+          if cmp -s "$RUNNER_TEMP/opus-amd64/libopus.a" third_party/libopus/macos-amd64/libopus.a; then
+            echo "✅ vendored macos-amd64/libopus.a 与官方 bottle 产物一致"
+          else
+            echo "::error::vendored macos-amd64/libopus.a 与官方 bottle 产物不一致"
+            echo "本地手工编译的库不可复现，请用 CI artifact 或脚本产物替换："
+            echo "  ./scripts/fetch-libopus-amd64.sh third_party/libopus/macos-amd64"
+            ls -la third_party/libopus/macos-amd64/libopus.a "$RUNNER_TEMP/opus-amd64/libopus.a"
+            exit 1
+          fi
+
       - name: 打包 AnyDevice.app（arm64 + amd64 + universal）
         # build.sh 会做：前端构建（幂等）→ .app 组装（Info.plist 注入版本/
         # 许可文本/图标）→ ad-hoc 签名；runner 无 mingw 时自动跳过 Windows 交叉编译。
