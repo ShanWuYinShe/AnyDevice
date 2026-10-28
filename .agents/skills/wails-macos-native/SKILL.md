@@ -5,7 +5,7 @@ description: 本项目 AnyDevice 的 macOS Wails 原生窗口（AnyDevice.app）
 
 # AnyDevice macOS 原生窗口（Wails v2）事实与流程
 
-实测环境：macOS 15.8（arm64）、Wails v2.16.0、Go 1.27.3、2026-10-21。
+实测环境（2026-10-21）：macOS 15.8（arm64）、Wails v2.16.0、Go 1.27.3。
 
 ## 架构事实（改窗口/前端 WS 前必读）
 
@@ -16,9 +16,9 @@ description: 本项目 AnyDevice 的 macOS Wails 原生窗口（AnyDevice.app）
   但 WebSocket 不能经 AssetHandler 升级（Wails 对 Upgrade 返回 501），必须由前端显式连
   `ws://127.0.0.1:<port>`，端口取自 `/api/self` 的 `port`（`frontend/src/lib/state.svelte.js` 的
   `isDesktopShell()/resolveWsBase()`）。
-- 历史根因（2026-10-18 曾误判为"裸二进制窗口不稳定"）：`wails://wails/` 的
-  `location.host === "wails"` 非空，旧代码拼出 `ws://wails/ws` 必然 1006 失败；
-  页面本身能正常加载。判断桌面壳要按 `location.protocol`（非 http/https）或
+- **反模式：不要用 `location.host` 判断是否桌面壳。** `wails://wails/` 的
+  `location.host === "wails"` 非空，据此拼出 `ws://wails/ws` 必然 1006 失败（页面本身能正常加载，
+  曾因此误判成「裸二进制窗口不稳定」）。判断桌面壳要按 `location.protocol`（非 http/https）或
   `location.hostname === "wails.localhost"`。
 
 ## macOS 音频无声的根因（WKWebView 无 AudioDecoder）
@@ -35,7 +35,7 @@ description: 本项目 AnyDevice 的 macOS Wails 原生窗口（AnyDevice.app）
   `/api/peers → mapping.rx_system_audio_kbps / rx_mic_audio_kbps`（对端推流到本机的
   网络字节率，按 peer 独立，2 秒窗口）。不要用前端自己数的 WS 接收字节：原生窗口收到的是
   解码后的 float32 PCM（约 375 KB/s），会把 Opus 的真实带宽（约 16 KB/s）放大 24 倍；
-  而且前端计数是全局的，多对端映射时所有卡片会显示同一个数。旧实现就是这两个坑。
+  而且前端计数是全局的，多对端映射时所有卡片会显示同一个数。
 
 ## 构建与打包
 
