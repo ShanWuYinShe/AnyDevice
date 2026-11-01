@@ -5,7 +5,7 @@ description: 本项目 AnyDevice 的 macOS Wails 原生窗口（AnyDevice.app）
 
 # AnyDevice macOS 原生窗口（Wails v2）事实与流程
 
-实测环境（2026-10-21）：macOS 15.8（arm64）、Wails v2.16.0、Go 1.27.3。
+环境（验证方式：`sw_vers`、`wails version`、`go version`）：macOS 15.8（arm64）、Wails v2.16.0、Go 1.27.3。
 
 ## 架构事实（改窗口/前端 WS 前必读）
 
@@ -18,15 +18,15 @@ description: 本项目 AnyDevice 的 macOS Wails 原生窗口（AnyDevice.app）
   `isDesktopShell()/resolveWsBase()`）。
 - **反模式：不要用 `location.host` 判断是否桌面壳。** `wails://wails/` 的
   `location.host === "wails"` 非空，据此拼出 `ws://wails/ws` 必然 1006 失败（页面本身能正常加载，
-  曾因此误判成「裸二进制窗口不稳定」）。判断桌面壳要按 `location.protocol`（非 http/https）或
+  据此判断会误判成「裸二进制窗口不稳定」）。判断桌面壳要按 `location.protocol`（非 http/https）或
   `location.hostname === "wails.localhost"`。
 
 ## macOS 音频无声的根因（WKWebView 无 AudioDecoder）
 
 - WKWebView 实测：`typeof AudioDecoder === "undefined"`，`VideoDecoder` 存在，
   `isSecureContext === true`、AudioWorklet 可用。Safari 浏览器同样没有 AudioDecoder。
-- 旧协议只发 Opus（AUPS/AUPM）时，这类客户端"有码率但无声"。
-- 本项目的修复：前端 `set_mapping` 带 `pcm: typeof AudioDecoder === "undefined"`；
+- 只发 Opus（AUPS/AUPM）时，这类客户端"有码率但无声"。
+- 现行做法：前端 `set_mapping` 带 `pcm: typeof AudioDecoder === "undefined"`；
   服务端 `hub.go` 按客户端能力路由，`peer_manager.go` 在转发对端音频时用
   `internal/audio/opus_decoder.go`（cgo libopus）解码成 float32 PCM（AUDS/AUDM）
   只发给声明 pcm 的客户端；有 AudioDecoder 的客户端（Chrome/WebView2）仍收 Opus。
