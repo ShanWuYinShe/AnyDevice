@@ -77,6 +77,7 @@
 4. 在「本机共享」里关闭某项后，即使对端仍订阅，对应 `*_engine`/`*_capture` 也应为 `false`（共享开关真正门控采集，而不只是改发现广播）；
 5. Windows 上怀疑影响游戏帧率时：任务管理器/Process Explorer 分别看 `any_device.exe` 与 `msedgewebview2.exe`（Wails 窗口的 WebView2 子进程）的 CPU/GPU；再按「只开着不映射 → 映射系统声 → 映射键鼠」逐项对比，并用 PresentMon/CapFrameX 对比帧时间而不是只看平均帧率；把窗口最小化再测可区分「窗口/GPU 合成」与「采集/推流」的影响；
 6. 只作为**提供方**（把本机声音/键鼠共享给别的设备）时，可用 `-no-ui` 无窗口运行，彻底去掉桌面窗口与 WebView2 的合成开销，再用手机/另一台电脑的浏览器打开 `http://<本机IP>:8080` 操作。
+7. 远端设备/浏览器连接本机 UI 时，连接动作本身不应启动采集：`sys_audio_engine`/`mic_audio_engine`/`mouse_capture`/`keyboard_capture` 应保持 `false`（现代对端立即发送订阅声明；旧版对端最多 500ms 后按默认全订阅兜底，之后才启动）。
 
 **音频延迟显示（判断延迟在发送端还是接收端）**：
 1. 映射音频后，对端卡片的声音行会出现延迟 chip（如 `≈142ms`），悬停可见分项：

@@ -57,10 +57,23 @@ type Client struct {
 	mouseEnabled    bool
 	keyboardEnabled bool
 	isLocal         bool // 本机回环 UI 客户端（127.0.0.1 / 本机网卡地址发起）
-	mu              sync.RWMutex
+
+	// 远端连接的「默认全订阅」宽限状态（见 armLegacySubs）：
+	// 旧版对端不发 set_mapping，需要兜底全开；但立即全开会让按需启停退化成
+	// 「连接即开设备」——每次连接都启动音频设备/安装键鼠钩子并跑满 idleGrace。
+	legacyPending bool        // 宽限定时器尚未触发、也未收到显式订阅
+	explicitSubs  bool        // 已收到过显式 set_mapping（新旧协议均算）
+	closed        bool        // 已从 hub 注销
+	legacyTimer   *time.Timer // 宽限定时器
+	mu            sync.RWMutex
 }
 
 var clientSeq uint64
+
+// legacySubsGrace 远端新连接的默认全订阅宽限期：宽限期内收到显式 set_mapping
+// 则以它为准（现代前端 onopen 立即发送），旧版对端则在宽限期后兜底全开
+// （最多晚 500ms 收到数据，可接受）。
+const legacySubsGrace = 500 * time.Millisecond
 
 // ParseDeviceType detects friendly device name from User-Agent string.
 func ParseDeviceType(ua string) string {
@@ -139,15 +152,29 @@ func (h *Hub) Run() {
 			atomic.StoreInt64(&h.clientCount, int64(len(h.clients)))
 			h.mu.Unlock()
 			h.notifySubscribers()
+			// 远端连接先不订阅，宽限期后若仍未收到显式 set_mapping 再兜底全开
+			h.armLegacySubs(client)
 
 		case client := <-h.unregister:
 			h.mu.Lock()
+			registered := false
 			if _, ok := h.clients[client]; ok {
+				registered = true
 				delete(h.clients, client)
 				close(client.send)
 				atomic.StoreInt64(&h.clientCount, int64(len(h.clients)))
 			}
 			h.mu.Unlock()
+			if registered {
+				// 先持 h.mu 再取 client.mu（与 notifySubscribers 的锁序一致，避免死锁）
+				client.mu.Lock()
+				client.closed = true
+				if client.legacyTimer != nil {
+					client.legacyTimer.Stop()
+					client.legacyTimer = nil
+				}
+				client.mu.Unlock()
+			}
 			h.notifySubscribers()
 
 		case <-h.updateSubs:
@@ -271,6 +298,39 @@ func (h *Hub) Run() {
 	}
 }
 
+// armLegacySubs 为远端连接安排「默认全订阅」宽限：
+// 旧版对端不发 set_mapping，需要兜底全开；但立即全开会让按需启停退化成
+// 「连接即开设备」（每次连接启动音频设备 + 安装键鼠钩子，还要跑满 5–8s
+// 空闲宽限才停）。宽限期内收到显式 set_mapping 则完全以它为准。
+func (h *Hub) armLegacySubs(client *Client) {
+	if client == nil || client.isLocal {
+		return
+	}
+	client.mu.Lock()
+	client.legacyPending = true
+	client.legacyTimer = time.AfterFunc(legacySubsGrace, func() {
+		h.applyLegacySubs(client)
+	})
+	client.mu.Unlock()
+}
+
+// applyLegacySubs 宽限期到点：只有「仍在线、未收到显式订阅」的旧版对端才兜底全开。
+func (h *Hub) applyLegacySubs(client *Client) {
+	client.mu.Lock()
+	if client.closed || client.explicitSubs || !client.legacyPending {
+		client.mu.Unlock()
+		return
+	}
+	client.legacyPending = false
+	client.legacyTimer = nil
+	client.sysAudioEnabled = true
+	client.micAudioEnabled = true
+	client.mouseEnabled = true
+	client.keyboardEnabled = true
+	client.mu.Unlock()
+	h.notifySubscribers()
+}
+
 func (h *Hub) notifySubscribers() {
 	h.mu.RLock()
 	var sysAudioCount, micAudioCount, mouseCount, keyboardCount int
@@ -373,6 +433,30 @@ func (h *Hub) BroadcastKeyboard(event []byte) {
 
 // PCMAudioClientCount 返回声明了 PCM 音频能力的客户端数（诊断用）：
 // 这些客户端没有 WebCodecs AudioDecoder，对端音频会以 float32 PCM 下发。
+// pcmClientCount 返回「需要 PCM 形态 + 订阅了指定流」的客户端数。
+// 转发端据此决定是否解码 Opus：没有 PCM 客户端时（本机 UI 是 Chrome/WebView2
+// 自带 AudioDecoder，或根本没人映射）解码纯属浪费 CPU 与每帧 7.7KB 分配。
+func (h *Hub) pcmClientCount(sys bool) int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	count := 0
+	for client := range h.clients {
+		client.mu.RLock()
+		need := client.audioPCM && ((sys && client.sysAudioEnabled) || (!sys && client.micAudioEnabled))
+		client.mu.RUnlock()
+		if need {
+			count++
+		}
+	}
+	return count
+}
+
+// PCMSysAudioClientCount 返回需要系统声 PCM 形态的订阅客户端数。
+func (h *Hub) PCMSysAudioClientCount() int { return h.pcmClientCount(true) }
+
+// PCMMicAudioClientCount 返回需要麦克风 PCM 形态的订阅客户端数。
+func (h *Hub) PCMMicAudioClientCount() int { return h.pcmClientCount(false) }
+
 func (h *Hub) PCMAudioClientCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -425,25 +509,16 @@ func ewmaInt64(v *atomic.Int64, cur int64) {
 }
 
 // NewClient constructs a new connected client.
-// local 表示连接是否来自本机（回环/本机 IP 打开的 UI 窗口）：
-//   - 本机 UI 默认不订阅音频/鼠标/键盘，由前端通过 set_mapping 按需开启，
-//     避免本机捕获引擎在无人消费事件时 60Hz 空转轮询；
-//   - 局域网远端保持默认全订阅，兼容未升级的旧版本对端（无需握手即可收到数据）。
+// 所有新连接默认不订阅任何流，由前端/对端通过 set_mapping 按需开启：
+//   - 本机 UI 从不消费音频/键鼠流，默认订阅会驱动捕获引擎 60Hz 空转；
+//   - 远端旧版对端不发 set_mapping，由 hub 的 legacySubsGrace 宽限期兜底全开
+//     （见 armLegacySubs），避免「连接瞬间就启动音频设备/安装键鼠钩子」。
 func NewClient(hub *Hub, conn *websocket.Conn, remoteAddr, userAgent string, local bool) *Client {
 	remoteIP := remoteAddr
 	if idx := strings.LastIndex(remoteAddr, ":"); idx != -1 {
 		remoteIP = remoteAddr[:idx]
 	}
-	// 默认订阅：局域网远端全开（兼容旧对端：旧协议只有一个 audio 并集开关）；
-	// 本机 UI 全关（前端按需 set_mapping 开启）。新协议握手会立刻按
-	// sys_audio/mic_audio 分流，把不需要的流关掉。
-	sysAudioEnabled, micAudioEnabled, mouseEnabled, keyboardEnabled := true, true, true, true
-	if local {
-		sysAudioEnabled = false
-		micAudioEnabled = false
-		mouseEnabled = false
-		keyboardEnabled = false
-	}
+	sysAudioEnabled, micAudioEnabled, mouseEnabled, keyboardEnabled := false, false, false, false
 	return &Client{
 		id:              fmt.Sprintf("client-%d", atomic.AddUint64(&clientSeq, 1)),
 		hub:             hub,
@@ -469,6 +544,14 @@ func NewClient(hub *Hub, conn *websocket.Conn, remoteAddr, userAgent string, loc
 func (c *Client) applyMapping(audio, sysAudio, micAudio, mouse, keyboard, pcm *bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+
+	// 收到显式订阅即视为新协议客户端：取消旧版「默认全订阅」兜底
+	c.explicitSubs = true
+	c.legacyPending = false
+	if c.legacyTimer != nil {
+		c.legacyTimer.Stop()
+		c.legacyTimer = nil
+	}
 
 	if sysAudio != nil || micAudio != nil {
 		c.audioSplit = true

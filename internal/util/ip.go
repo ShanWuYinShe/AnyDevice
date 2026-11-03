@@ -35,9 +35,9 @@ var (
 	netCacheAt time.Time
 	netIPs     []IPInfo
 	netBcasts  []string
-	// netV6：本机 IPv6 地址（同时存含 zone 与去 zone 两种形式）。
-	// GetAllIPs 只收集 IPv4（广播/主 IP 选择语义均为 v4），IPv6 仅用于
-	// IsLocalIP 的本机判断——IPv6 直连访问时 RemoteAddr 是本机 v6 地址
+	// netV6：本机 IPv6 地址（仅无 zone 形式；带 zone 的查询在 IsLocalIP
+	// 里归一化后比较）。GetAllIPs 只收集 IPv4（广播/主 IP 选择语义均为 v4），
+	// IPv6 仅用于 IsLocalIP 的本机判断——IPv6 直连访问时 RemoteAddr 是本机 v6 地址
 	netV6 []string
 )
 
@@ -51,6 +51,24 @@ func refreshNetCacheLocked() {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return
+	}
+
+	// 本机 IPv6 收集：独立全地址枚举、不做 loopback 过滤——
+	// macOS lo0 上也有 fe80::1（链路本地），IsLocalIP 需要它；
+	// GetAllIPs/广播语义仍仅 IPv4，互不影响。
+	// 只枚举一次并去重：此前这段放在 IPv4 地址双层循环里，每遇到一个 IPv4
+	// 地址就重新枚举全部接口（O(N²) 系统调用），同一 v6 地址还会重复入表。
+	if v6addrs, err := net.InterfaceAddrs(); err == nil {
+		seen := make(map[string]bool, len(v6addrs))
+		for _, addr := range v6addrs {
+			if ipn, ok := addr.(*net.IPNet); ok {
+				s := ipn.IP.String()
+				if strings.Contains(s, ":") && !seen[s] {
+					seen[s] = true
+					netV6 = append(netV6, s)
+				}
+			}
+		}
 	}
 
 	bcastSet := make(map[string]bool)
@@ -93,19 +111,6 @@ func refreshNetCacheLocked() {
 				IfaceName: iface.Name,
 				IsVirtual: isVirt,
 			})
-
-			// 本机 IPv6 收集：独立全地址枚举、不做 loopback 过滤——
-			// macOS lo0 上也有 fe80::1（链路本地），IsLocalIP 需要它；
-			// GetAllIPs/广播语义仍仅 IPv4，互不影响
-			if v6addrs, err := net.InterfaceAddrs(); err == nil {
-				for _, addr := range v6addrs {
-					if ipn, ok := addr.(*net.IPNet); ok {
-						if s := ipn.IP.String(); strings.Contains(s, ":") {
-							netV6 = append(netV6, s)
-						}
-					}
-				}
-			}
 
 			// 定向广播地址 = 网段地址 | 反掩码；
 			// 点对点/无掩码接口、链路本地与全网广播没有意义，跳过。
@@ -153,6 +158,18 @@ func GetOutboundIP() string {
 		}
 	}
 	return ""
+}
+
+// localIPv6Snapshot 返回本机 IPv6 地址快照（与网卡缓存共用 netMu）。
+// IsLocalIP 会并发读，必须加锁取副本：此前直接遍历 netV6，与缓存刷新的写入
+// 构成数据竞争（go test -race 可复现），锁外读切片还可能读到半更新状态。
+func localIPv6Snapshot() []string {
+	netMu.Lock()
+	defer netMu.Unlock()
+	refreshNetCacheIfStaleLocked()
+	out := make([]string, len(netV6))
+	copy(out, netV6)
+	return out
 }
 
 // GetAllIPs returns all valid IPv4 addresses categorized by physical vs virtual.
@@ -281,7 +298,7 @@ func IsLocalIP(ipStr string) bool {
 		trimmed = trimmed[:i]
 	}
 	if strings.Contains(trimmed, ":") {
-		for _, v6 := range netV6 {
+		for _, v6 := range localIPv6Snapshot() {
 			if v6 == trimmed || v6 == ipStr {
 				return true
 			}

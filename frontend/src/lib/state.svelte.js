@@ -283,9 +283,12 @@ export async function connectWebSocket() {
     if (event.data instanceof ArrayBuffer) {
       // 接收速率统计：每 2 秒刷新到 audioRate（卡片可见）
       const nowMs = performance.now();
+      // 帧 tag 只解析一次：此前同一帧在速率统计与分发两处各做一次
+      // String.fromCharCode(...u8[4])，属于纯重复开销。
+      let tag = '';
       if (event.data.byteLength > 4) {
-        const t = String.fromCharCode(...new Uint8Array(event.data, 0, 4));
-        const rateStream = AUDIO_RATE_TAGS[t];
+        tag = String.fromCharCode(...new Uint8Array(event.data, 0, 4));
+        const rateStream = AUDIO_RATE_TAGS[tag];
         if (rateStream) audioRateBytes[rateStream] += event.data.byteLength;
       }
       if (nowMs - audioRateLast >= 2000) {
@@ -298,8 +301,7 @@ export async function connectWebSocket() {
         audioPlayState.text = 'ctx=' + audioContextState();
         refreshAudioCtxInfo();
       }
-      if (event.data.byteLength > 4) {
-        const tag = String.fromCharCode(...new Uint8Array(event.data, 0, 4));
+      if (tag) {
         if (tag === 'AUDS') {
           if (playState().system) {
             const pcm = event.data.slice(4);
@@ -474,8 +476,16 @@ export function startPolling() {
   refreshAudioCtxInfo();
   fetchSelf().then(fetchPeers);
   connectWebSocket();
-  const peersTimer = setInterval(fetchPeers, 1200);
-  const selfTimer = setInterval(fetchSelf, 5000);
+  // 窗口隐藏/最小化时暂停 HTTP 轮询：页面不可见时刷新 UI 没有意义，可减少
+  // 与游戏同机时的后台开销；音频播放不受影响（WS 流与 AudioWorklet 照常）。
+  const peersTimer = setInterval(() => {
+    if (document.hidden) return;
+    fetchPeers();
+  }, 1200);
+  const selfTimer = setInterval(() => {
+    if (document.hidden) return;
+    fetchSelf();
+  }, 5000);
   return () => {
     clearInterval(peersTimer);
     clearInterval(selfTimer);

@@ -30,6 +30,9 @@ go build -tags wails,desktop,production -o any_device main.go   # 免打包的�
   音频设备与键鼠钩子只在有订阅者时启动，订阅归零并超过宽限期后停止/卸载（见 `internal/audio/capture.go`、
   `internal/mouse/event.go`、`internal/keyboard/event.go` 的 `StartSupervisor`）。
 - **系统声与麦克风分开订阅**：`set_mapping` 的 `sys_audio`/`mic_audio` 分别驱动两路采集；`audio` 仅为旧版对端并集兼容。
+- **连接动作本身不得启动采集**：任何 WS 连接（含手机浏览器打开 UI、对端重连）默认不订阅任何流；
+  旧版对端不发 `set_mapping` 时由 500ms 宽限兜底全开（`internal/server/hub.go` 的 `armLegacySubs`），
+  不得为了兼容旧端在 `NewClient` 里直接默认全订阅（会让每次连接都 churn 音频设备与键鼠钩子）。
 - **「本机共享」开关必须门控采集**：关闭后即使仍有对端订阅也要立即停止对应采集/卸载钩子（`Engine.SetEnabled`），不得只改发现广播。
 - Opus 编码复杂度保持 5（128kbps 下听感不变、CPU 更低）；音频采集线程保持 miniaudio 默认优先级（降优先级收益可忽略、满载时有 overrun 断音风险）。
 - 新增常驻线程/定时器/系统钩子前，先评估对游戏帧时间的影响；`/api/status` 暴露各引擎运行状态供验证。

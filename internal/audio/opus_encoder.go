@@ -51,6 +51,7 @@ import "C"
 
 import (
 	"fmt"
+	"math"
 	"unsafe"
 )
 
@@ -75,7 +76,14 @@ type OpusEncoder struct {
 
 // NewOpusEncoder 创建 48kHz 立体声 128kbps 音频编码器（复杂度 5）。
 func NewOpusEncoder(onPacket func([]byte)) (*OpusEncoder, error) {
-	e := &OpusEncoder{onPacket: onPacket, packet: make([]byte, opusMaxPacket)}
+	// accum 预分配两帧容量：采集链路按 10ms 块喂入，20ms 编码后剩余 10ms
+	// 留在缓冲里；固定容量 + 原地左移可避免每帧重新分配（旧实现每次编码后
+	// 用 e.accum = e.accum[N:] 前移，容量很快耗尽并反复扩容）。
+	e := &OpusEncoder{
+		onPacket: onPacket,
+		packet:   make([]byte, opusMaxPacket),
+		accum:    make([]float32, 0, opusFrameSize*opusChannels*2),
+	}
 	var errCode C.int
 	e.enc = C.opus_encoder_create(opusSampleRate, opusChannels, opusApplication, (*C.int)(&errCode))
 	if errCode != 0 || e.enc == nil {
@@ -109,12 +117,44 @@ func (e *OpusEncoder) Feed(samples []float32) error {
 		return nil
 	}
 	e.accum = append(e.accum, samples...)
-	for len(e.accum) >= opusFrameSize*opusChannels {
-		frame := e.accum[:opusFrameSize*opusChannels]
-		if err := e.encodeFrame(frame); err != nil {
+	return e.drain()
+}
+
+// FeedF32LE 直接消费小端 float32 字节流（采集链路格式），按 20ms 帧切分编码。
+// 采集回调拿到的就是该格式：直接追加转换后的样本，省掉每帧一份 []float32
+// 中转分配（10ms 立体声 3.8KB，两路流约 0.75MB/s 的堆分配与一次整帧拷贝）。
+// 字节序：仅支持小端平台（amd64/arm64/386 等；本项目 vendored libopus 也只
+// 覆盖 darwin/windows/linux 的 x86_64 与 aarch64）。
+func (e *OpusEncoder) FeedF32LE(b []byte) error {
+	if e.enc == nil || len(b) < 4 {
+		return nil
+	}
+	n := len(b) / 4
+	need := len(e.accum) + n
+	if need > cap(e.accum) {
+		grown := make([]float32, len(e.accum), need+opusFrameSize*opusChannels)
+		copy(grown, e.accum)
+		e.accum = grown
+	}
+	start := len(e.accum)
+	e.accum = e.accum[:need]
+	for i := 0; i < n; i++ {
+		bits := uint32(b[i*4]) | uint32(b[i*4+1])<<8 | uint32(b[i*4+2])<<16 | uint32(b[i*4+3])<<24
+		e.accum[start+i] = math.Float32frombits(bits)
+	}
+	return e.drain()
+}
+
+// drain 把积攒的采样按 20ms 帧编码，剩余不足一帧的样本原地左移到缓冲头部
+// （不重新分配：容量在构造时已按两帧预分配，正常喂入不会扩容）。
+func (e *OpusEncoder) drain() error {
+	frameSamples := opusFrameSize * opusChannels
+	for len(e.accum) >= frameSamples {
+		if err := e.encodeFrame(e.accum[:frameSamples]); err != nil {
 			return err
 		}
-		e.accum = e.accum[opusFrameSize*opusChannels:]
+		copy(e.accum, e.accum[frameSamples:])
+		e.accum = e.accum[:len(e.accum)-frameSamples]
 	}
 	return nil
 }

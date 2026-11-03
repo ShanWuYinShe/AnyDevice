@@ -481,6 +481,15 @@ func (pm *PeerManager) forwardPeerAudio(pc *peerConnection, data []byte) {
 		return
 	}
 	tag := string(data[:4])
+	// 只有确实存在需要 PCM 形态的订阅客户端时才解码：本机 UI 是 Chrome/WebView2
+	// （自带 WebCodecs AudioDecoder）或当前没有人映射该流时，解码纯属浪费 CPU
+	// 与每帧 7.7KB 分配，直接按 Opus 转发即可（PCM 客户端由 hub 侧继续收 Opus）。
+	needPCM := (tag == "AUPS" && pm.hub.PCMSysAudioClientCount() > 0) ||
+		(tag == "AUPM" && pm.hub.PCMMicAudioClientCount() > 0)
+	if !needPCM {
+		pm.hub.BroadcastAudio(data)
+		return
+	}
 	dec := pc.decoders[tag]
 	if dec == nil {
 		d, err := audio.NewOpusDecoder()
@@ -687,7 +696,13 @@ func (pm *PeerManager) runPeerConnection(sessionCtx context.Context, peerID, tar
 				return
 			case <-ticker.C:
 				if pingPending.Load() {
-					continue // 上一个 ping 未回，跳过本轮
+					// 上一个 ping 未回：超过 6s（两个周期）视为 pong 丢失（对端忙/丢包），
+					// 复位后重新测量，避免 net_rtt_ms 永久停留在陈旧值直到重连。
+					if time.Since(time.Unix(0, pingSentAt.Load())) > 6*time.Second {
+						pingPending.Store(false)
+					} else {
+						continue
+					}
 				}
 				pingSentAt.Store(time.Now().UnixNano())
 				pingPending.Store(true)

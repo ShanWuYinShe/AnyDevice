@@ -25,6 +25,23 @@ var (
 	logFilePath string
 )
 
+// fileThenStdout 先写日志文件，再尽力写 stdout。
+// 不能用 io.MultiWriter：它在遇到第一个写错误时就返回，而 Windows GUI 子系统
+// 下 os.Stdout 是无效句柄（写必失败）——会导致日志文件永远收不到任何内容，
+// 引擎初始化失败等关键信息全部丢失（用户无从排查）。
+type fileThenStdout struct {
+	file   io.Writer
+	stdout io.Writer
+}
+
+func (w fileThenStdout) Write(p []byte) (int, error) {
+	n, err := w.file.Write(p)
+	if w.stdout != nil {
+		_, _ = w.stdout.Write(p) // 尽力而为：GUI 下 stdout 无效属预期，忽略错误
+	}
+	return n, err
+}
+
 // BuildTime 构建时间标识（构建脚本用 -ldflags -X 注入），
 // 用于 UI/API 确认运行的是哪个版本。
 var BuildTime = "dev"
@@ -54,7 +71,7 @@ func InitLogFile() string {
 			continue
 		}
 		logMu.Lock()
-		logWriter = io.MultiWriter(os.Stdout, f)
+		logWriter = fileThenStdout{file: f, stdout: os.Stdout}
 		logFilePath = path
 		logMu.Unlock()
 		Logf("[系统] 日志文件: %s", path)

@@ -9,7 +9,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
 	"github.com/gen2brain/malgo"
 
@@ -97,7 +96,7 @@ type Engine struct {
 	opusMu sync.Mutex
 
 	// 编码卸载：音频实时回调线程只做拷贝入队（原实现把 cgo 建编码器、
-	// 逐样本 unsafe 转换与 Opus Feed 全放在回调线程，与「实时线程绝不
+	// 逐样本转换与 Opus Feed 全放在回调线程，与「实时线程绝不
 	// 阻塞」的项目经验冲突），Opus 编码移至独立 goroutine。
 	encQueue chan queuedFrame // 待编码帧（含采集时间戳，用于发送端延迟统计）
 	encDone  chan struct{}    // Stop 关闭后编码 goroutine 排空队列退出
@@ -421,12 +420,9 @@ func (e *Engine) encodeLoop(queue <-chan queuedFrame, done <-chan struct{}) {
 			}
 			e.opus = opus
 		}
-		// float32 字节流 → 样本 → Opus 编码（opus_encode 内部转 int16 工作格式）
-		f32 := make([]float32, len(frame.data)/4)
-		for i := range f32 {
-			f32[i] = float32(math.Float32frombits(*(*uint32)(unsafe.Pointer(&frame.data[i*4]))))
-		}
-		if err := e.opus.Feed(f32); err != nil {
+		// float32 小端字节流直接进编码器：省掉每帧一份 []float32 中转分配
+		// （opus_encode 内部仍按 float 入口编码，不做位模式转换）
+		if err := e.opus.FeedF32LE(frame.data); err != nil {
 			util.Logf("[音频] Opus 编码失败: %v", err)
 		}
 		// 发送端延迟分项：采集回调 → 编码完成（含 20ms 组帧与队列等待）。
