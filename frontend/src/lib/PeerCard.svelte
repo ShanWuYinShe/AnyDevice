@@ -1,7 +1,7 @@
 <script>
   import Icon from './Icon.svelte';
   import {
-    telemetry, audioRate, audioPlayState,
+    telemetry, audioRate, audioPlayState, audioStats,
     openRenamePeer, toggleMapping, primeAudio, resumeAudio, formatOs,
   } from './state.svelte.js';
 
@@ -46,6 +46,7 @@
     '对端广播的音频协议为 ' + (String(peer.provides?.audio_format || '') || '（空，疑似更早的 int16 版本）')
   );
 
+  const osLower = $derived(String(peer.os || '').toLowerCase());
   const osLabel = $derived(formatOs(peer.os));
   const deviceIcon = $derived(
     osLower === 'ios' || osLower === 'android' ? 'phone'
@@ -60,6 +61,85 @@
         ? (String(mapping.connection_status).includes('error') ? '连接失败' : '连接中')
         : ''
   );
+
+  // —— 播放链路延迟估算（分侧定位：对端采集/编码/发送 · 网络 · 本机缓冲/输出） ——
+  // 数据来源：mapping.net_rtt_ms 与 mapping.sender_{sys,mic}_latency（后端新增字段，
+  // 旧版对端缺失=undefined，必须容错——缺字段时只显示本机侧+网络分项）；
+  // audioStats（本机 AudioWorklet 水位 + AudioContext 输出延迟，见 state.svelte.js）。
+  // 注意：各段耗时相加只是估算，不是端到端时钟同步测量（title 里注明）。
+  function numOr0(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function buildLatency(stream) {
+    const sender = stream === 'mic' ? mapping.sender_mic_latency : mapping.sender_sys_latency;
+    const stats = audioStats[stream] || {};
+    // running 为 false 时该流采集未运行，采集端三项不计入
+    const senderRunning = !!(sender && sender.running);
+    const senderMs = senderRunning
+      ? numOr0(sender.chunk_ms) + numOr0(sender.encode_ms) + numOr0(sender.send_ms)
+      : 0;
+    const netRtt = numOr0(mapping.net_rtt_ms);
+    const netMs = netRtt / 2; // RTT 单程 = /2
+    const bufferMs = numOr0(stats.bufferMs);
+    const outputMs = numOr0(audioStats.outputMs);
+    return {
+      sender, // null/undefined = 旧版对端未上报
+      senderRunning,
+      netKnown: netRtt > 0, // 契约：0/缺失 = 网络延迟未知
+      chunkMs: numOr0(sender && sender.chunk_ms),
+      encodeMs: numOr0(sender && sender.encode_ms),
+      sendMs: numOr0(sender && sender.send_ms),
+      senderMs,
+      netMs,
+      bufferMs,
+      outputMs,
+      underflows: numOr0(stats.underflows),
+      totalMs: Math.round(senderMs + netMs + bufferMs + outputMs),
+    };
+  }
+
+  const sysLatency = $derived(buildLatency('sys'));
+  const micLatency = $derived(buildLatency('mic'));
+
+  // 延迟 chip 的多行 title：分项明细 + 计算口径 + 欠载含义
+  function latencyTitle(label, l) {
+    const parts = [];
+    if (l.senderRunning) {
+      parts.push(
+        '采集块 ' + Math.round(l.chunkMs) + 'ms',
+        '编码 ' + Math.round(l.encodeMs) + 'ms',
+        '发送 ' + Math.round(l.sendMs) + 'ms'
+      );
+    }
+    parts.push(
+      l.netKnown ? '网络 ' + Math.round(l.netMs) + 'ms' : '网络 未知',
+      '播放缓冲 ' + Math.round(l.bufferMs) + 'ms',
+      '输出 ' + Math.round(l.outputMs) + 'ms'
+    );
+    const lines = [
+      '估算总延迟 ~' + l.totalMs + 'ms（' + label + '）',
+      parts.join(' + '),
+    ];
+    if (!l.sender) {
+      lines.push('对端未上报采集端延迟（旧版对端），仅计网络与本机播放侧');
+    } else if (!l.senderRunning) {
+      lines.push('对端该流当前未采集（running=false），采集端延迟不计入');
+    }
+    if (!l.netKnown) {
+      lines.push('网络 RTT 未知（旧服务端或尚未测速），网络延迟按 0 计');
+    }
+    lines.push('播放欠载 ' + l.underflows + ' 次（本机负载高时会重新预缓冲；数字持续增长说明接收端吃力）');
+    lines.push('估算值，非端到端时钟同步测量；输出延迟部分环境不可测时按 0 计');
+    return lines.join('\n');
+  }
+
+  // 欠载计数的 title：说明「持续增长 = 接收端负载高、在反复重新预缓冲」
+  function underflowTitle(l) {
+    return '播放欠载 ' + l.underflows + ' 次：环形缓冲被抽空后重新预缓冲（会短暂静音）。'
+      + '数字持续增长说明接收端（本机）负载高、在反复重新预缓冲，与对端采集无关。';
+  }
 
   const cursorText = $derived(String(telemetry.cursor[peer.id] || '').replace(/^●\s*/, ''));
   const keyboardText = $derived(String(telemetry.keyboard[peer.id] || '').replace(/^●\s*/, ''));
@@ -157,6 +237,11 @@
               <span class="meta-dot" aria-hidden="true"></span>
               <span>{connectionText}</span>
             {/if}
+            <span class="meta-dot" aria-hidden="true"></span>
+            <span class="mono latency-chip" title={latencyTitle('系统声音', sysLatency)}>≈{sysLatency.totalMs}ms</span>
+            {#if sysLatency.underflows > 0}
+              <span class="latency-warn" title={underflowTitle(sysLatency)}>欠载 {sysLatency.underflows}</span>
+            {/if}
             {#if audioSuspended}
               <button class="link-btn" onclick={resumeAudio}>点击恢复播放</button>
             {/if}
@@ -199,6 +284,11 @@
             <span title={audioPlayState.text}>正在收听</span>
             <span class="meta-dot" aria-hidden="true"></span>
             <span class="mono" title={audioRateTitle}>{micRateKBps} KB/s</span>
+            <span class="meta-dot" aria-hidden="true"></span>
+            <span class="mono latency-chip" title={latencyTitle('麦克风', micLatency)}>≈{micLatency.totalMs}ms</span>
+            {#if micLatency.underflows > 0}
+              <span class="latency-warn" title={underflowTitle(micLatency)}>欠载 {micLatency.underflows}</span>
+            {/if}
           {:else}
             <span>把对端的麦克风拾音映射到本机播放</span>
           {/if}

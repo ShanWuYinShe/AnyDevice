@@ -148,7 +148,7 @@ func TestSupervisorDisabledGate(t *testing.T) {
 // 按需启停会反复 Start/Stop，泄漏会在长时间运行中持续堆积 goroutine。
 func TestEncodeLoopExitsOnStop(t *testing.T) {
 	e := NewEngine(KindSystem, ModeCapture, -1, func([]byte) {})
-	e.encQueue = make(chan []byte, 8)
+	e.encQueue = make(chan queuedFrame, 8)
 	e.encDone = make(chan struct{})
 	e.isRunning.Store(true)
 

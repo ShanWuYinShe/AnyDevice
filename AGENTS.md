@@ -33,6 +33,9 @@ go build -tags wails,desktop,production -o any_device main.go   # 免打包的�
 - **「本机共享」开关必须门控采集**：关闭后即使仍有对端订阅也要立即停止对应采集/卸载钩子（`Engine.SetEnabled`），不得只改发现广播。
 - Opus 编码复杂度保持 5（128kbps 下听感不变、CPU 更低）；音频采集线程保持 miniaudio 默认优先级（降优先级收益可忽略、满载时有 overrun 断音风险）。
 - 新增常驻线程/定时器/系统钩子前，先评估对游戏帧时间的影响；`/api/status` 暴露各引擎运行状态供验证。
+- **延迟分项字段契约**：发送端经 `audio_stats` 文本消息上报 `{chunk_ms,encode_ms,send_ms,running}`，
+  接收端写入 `/api/peers` 的 `mapping.sender_{sys,mic}_latency` 与 `mapping.net_rtt_ms`；
+  前端按「发送端分项 + RTT/2 + 播放缓冲 + 输出延迟」估算总延迟（标注「估算」）。改字段名/语义须两端同改并保留旧版兼容。
 
 ## 维护提醒
 

@@ -1,6 +1,9 @@
 // 全局响应式状态（Svelte 5 runes 模块）：数据轮询、WebSocket 流、订阅同步
 import { api } from './api.js';
-import { ensureAudioContext, playPCM, skipPCM, decodeOpus, audioContextState } from './audio.js';
+import {
+  ensureAudioContext, playPCM, skipPCM, decodeOpus, audioContextState,
+  onStreamStats, getPlaybackLatencyMs, getOutputLatencyMs, getAudioContextInfo,
+} from './audio.js';
 
 // —— 可变状态（对象属性形式，跨模块保持响应式） ——
 export const selfState = $state({ data: null }); // /api/self：本机信息
@@ -177,6 +180,45 @@ let audioRateLast = 0;
 // 播放链路状态描述（AudioContext 是否被系统挂起等）
 export const audioPlayState = $state({ text: '未创建' });
 
+// 播放链路延迟/水位（卡片展示用）：由 AudioWorklet 每 ~0.5s 上报后刷新，
+// 不额外起定时器。bufferMs 为环形缓冲水位换算的毫秒数；outputMs 为
+// AudioContext 输出延迟（baseLatency + outputLatency）；ctxState/sampleRate
+// 用于区分「未点击播放」与「被系统挂起」。
+export const audioStats = $state({
+  sys: { bufferMs: 0, filled: 0, underflows: 0, overflows: 0 },
+  mic: { bufferMs: 0, filled: 0, underflows: 0, overflows: 0 },
+  outputMs: 0,
+  ctxState: '未创建',
+  sampleRate: 48000,
+});
+
+// 刷新 AudioContext 概况（状态/采样率/输出延迟）：只在已有刷新点调用
+// （2s 一次码率刷新、resume/prime），不新增高频定时器。
+function refreshAudioCtxInfo() {
+  const info = getAudioContextInfo();
+  audioStats.ctxState = info.state;
+  audioStats.sampleRate = info.sampleRate;
+  audioStats.outputMs = Math.round(getOutputLatencyMs());
+}
+
+// onStreamStats 只注册一次：startPolling 可能被重复调用（组件重新挂载、
+// 后续轮询重连等），audio.js 是回调单槽，重复注册会互相覆盖。
+let statsHooked = false;
+function hookStreamStats() {
+  if (statsHooked) return;
+  statsHooked = true;
+  onStreamStats((s) => {
+    const key = s.stream === 'mic' ? 'mic' : 'sys';
+    const bucket = audioStats[key];
+    bucket.filled = s.filled;
+    bucket.underflows = s.underflows;
+    bucket.overflows = s.overflows;
+    // 水位 → 毫秒沿用 audio.js 的唯一换算口径（48kHz）
+    bucket.bufferMs = Math.round(getPlaybackLatencyMs(key));
+    refreshAudioCtxInfo();
+  });
+}
+
 // 是否为 Wails 原生桌面窗口：
 //   darwin/linux 的页面 origin 是 wails://wails（自定义 scheme，由 Wails
 //   的 WKWebView/WKURLSchemeHandler 承载，不是本项目真正的 HTTP 服务端）；
@@ -254,6 +296,7 @@ export async function connectWebSocket() {
         audioRateLast = nowMs;
         // 同步刷新播放器状态（缓冲水位/欠载次数实时可见）
         audioPlayState.text = 'ctx=' + audioContextState();
+        refreshAudioCtxInfo();
       }
       if (event.data.byteLength > 4) {
         const tag = String.fromCharCode(...new Uint8Array(event.data, 0, 4));
@@ -318,13 +361,18 @@ export async function connectWebSocket() {
 export function resumeAudio() {
   ensureAudioContext();
   audioPlayState.text = 'ctx=' + audioContextState();
-  setTimeout(() => { audioPlayState.text = 'ctx=' + audioContextState(); }, 600);
+  refreshAudioCtxInfo();
+  setTimeout(() => {
+    audioPlayState.text = 'ctx=' + audioContextState();
+    refreshAudioCtxInfo();
+  }, 600);
 }
 
 export function primeAudio() {
   ensureAudioContext();
   // 播放链路状态对外可见：AudioContext 是否被系统挂起（无声排查关键线索）
   audioPlayState.text = 'ctx=' + audioContextState();
+  refreshAudioCtxInfo();
 }
 
 // —— 映射与改名操作 ——
@@ -422,6 +470,8 @@ export async function saveSelfSettings(payload) {
 
 // —— 生命周期：轮询定时器（供组件 onMount/onDestroy 调用） ——
 export function startPolling() {
+  hookStreamStats(); // 播放水位/延迟接入 UI 状态（重复调用由 guard 兜底）
+  refreshAudioCtxInfo();
   fetchSelf().then(fetchPeers);
   connectWebSocket();
   const peersTimer = setInterval(fetchPeers, 1200);

@@ -99,8 +99,8 @@ type Engine struct {
 	// 编码卸载：音频实时回调线程只做拷贝入队（原实现把 cgo 建编码器、
 	// 逐样本 unsafe 转换与 Opus Feed 全放在回调线程，与「实时线程绝不
 	// 阻塞」的项目经验冲突），Opus 编码移至独立 goroutine。
-	encQueue chan []byte   // 待编码帧（每帧 20ms float32 立体声 ≈ 7.7KB）
-	encDone  chan struct{} // Stop 关闭后编码 goroutine 排空队列退出
+	encQueue chan queuedFrame // 待编码帧（含采集时间戳，用于发送端延迟统计）
+	encDone  chan struct{}    // Stop 关闭后编码 goroutine 排空队列退出
 
 	// mu 只串行化 Start/Stop 生命周期；音频回调线程绝不碰它。
 	mu        sync.Mutex
@@ -123,6 +123,31 @@ type Engine struct {
 	dbgBytes      atomic.Int64
 	dbgFrames     atomic.Uint64
 	dbgDropped    atomic.Uint64 // 编码队列满被丢弃的最旧帧数（异步编码卸载后新增）
+
+	// 发送端延迟统计（atomic，ms，EWMA 平滑）：供对端/UI 展示「采集端」分项。
+	//   latChunkMs  = 采集块时长（设备回调周期，约 10ms，代表采集缓冲粒度）
+	//   latEncodeMs = 采集回调 → Opus 编码完成（含 20ms 组帧与队列等待）
+	latChunkMs  atomic.Int64
+	latEncodeMs atomic.Int64
+}
+
+// queuedFrame 是待编码的一帧 PCM 及其采集时间：编码卸载到独立 goroutine 后，
+// 仍能统计「采集回调 → 编码完成」的链路延迟（发送端延迟分项）。
+type queuedFrame struct {
+	data       []byte
+	capturedAt time.Time
+}
+
+// ewmaAtomic 用 1/4 步长对 atomic 值做指数平滑（0 表示尚未有样本），
+// 避免单帧抖动让 UI 上的延迟数字乱跳。
+func ewmaAtomic(v *atomic.Int64, cur int64) {
+	if cur < 0 {
+		cur = 0
+	}
+	if prev := v.Load(); prev != 0 {
+		cur = (prev*3 + cur) / 4
+	}
+	v.Store(cur)
 }
 
 func NewEngine(kind AudioKind, mode CaptureMode, deviceIndex int, onChunk func([]byte)) *Engine {
@@ -339,8 +364,10 @@ func (e *Engine) Start() error {
 	// 队列/退出信号以参数传给 encodeLoop：按需启停 Stop→Start 时旧编码
 	// goroutine 可能尚未退出，若它继续读 e.encQueue/e.encDone 字段就会与
 	// Start 的重新赋值构成数据竞争。
-	e.encQueue = make(chan []byte, 8)
+	e.encQueue = make(chan queuedFrame, 8)
 	e.encDone = make(chan struct{})
+	e.latChunkMs.Store(0)
+	e.latEncodeMs.Store(0)
 	go e.encodeLoop(e.encQueue, e.encDone)
 	if err := e.start(); err != nil {
 		// 失败路径回滚 isRunning：否则引擎永久卡在「已运行」，后续 Start 假成功
@@ -359,13 +386,13 @@ func (e *Engine) Start() error {
 
 // encodeLoop 在独立 goroutine 中消费编码队列：cgo 建编码器、逐样本 unsafe
 // 转换与 Opus Feed 都不再占用音频实时回调线程（2026-10-24 审查加固项 P6）。
-func (e *Engine) encodeLoop(queue <-chan []byte, done <-chan struct{}) {
+func (e *Engine) encodeLoop(queue <-chan queuedFrame, done <-chan struct{}) {
 	tag := TagSystemAudioOpus
 	if e.kind == KindMic {
 		tag = TagMicAudioOpus
 	}
 	for {
-		var frame []byte
+		var frame queuedFrame
 		select {
 		case <-done:
 			// Stop 关闭编码通道：立即退出，绝不常驻（否则每次「按需启停」
@@ -395,13 +422,16 @@ func (e *Engine) encodeLoop(queue <-chan []byte, done <-chan struct{}) {
 			e.opus = opus
 		}
 		// float32 字节流 → 样本 → Opus 编码（opus_encode 内部转 int16 工作格式）
-		f32 := make([]float32, len(frame)/4)
+		f32 := make([]float32, len(frame.data)/4)
 		for i := range f32 {
-			f32[i] = float32(math.Float32frombits(*(*uint32)(unsafe.Pointer(&frame[i*4]))))
+			f32[i] = float32(math.Float32frombits(*(*uint32)(unsafe.Pointer(&frame.data[i*4]))))
 		}
 		if err := e.opus.Feed(f32); err != nil {
 			util.Logf("[音频] Opus 编码失败: %v", err)
 		}
+		// 发送端延迟分项：采集回调 → 编码完成（含 20ms 组帧与队列等待）。
+		// 在 opusMu 内更新：Stop 复位统计前会先等本锁，避免在途写入覆盖复位值。
+		ewmaAtomic(&e.latEncodeMs, time.Since(frame.capturedAt).Milliseconds())
 		e.opusMu.Unlock()
 	}
 }
@@ -688,6 +718,11 @@ func (e *Engine) Stop() {
 		e.opus = nil
 	}
 	e.opusMu.Unlock()
+
+	// 复位延迟统计（放在 opusMu 释放之后）：停止后 UI 不应再显示上一次运行的
+	// 采集端数字；在途 encodeLoop 的 EWMA 写也在 opusMu 内，先等锁可保证不覆盖。
+	e.latChunkMs.Store(0)
+	e.latEncodeMs.Store(0)
 }
 
 // emit 把 PCM 交付给订阅者：订阅门控、tag 前缀与诊断统计统一在此处理。
@@ -714,11 +749,15 @@ func (e *Engine) emitPCM(pcm []byte) {
 	if !e.isRunning.Load() {
 		return
 	}
+	// 延迟统计：采集块时长（设备回调周期）＝采集缓冲粒度
+	if frames := len(pcm) / FrameSize; frames > 0 {
+		ewmaAtomic(&e.latChunkMs, int64(frames)*1000/SampleRate)
+	}
 	// 拷贝入队：miniaudio 回调返回后其内部缓冲可能被复用，异步编码前
 	// 必须持有副本。队列满（编码积压 >160ms）时丢最旧保时延，实时流
 	// 语义下 Opus 解码端 PLC 可平滑丢帧；不阻塞实时线程
-	frame := make([]byte, len(pcm))
-	copy(frame, pcm)
+	frame := queuedFrame{data: make([]byte, len(pcm)), capturedAt: time.Now()}
+	copy(frame.data, pcm)
 	select {
 	case e.encQueue <- frame:
 	default:
@@ -733,6 +772,15 @@ func (e *Engine) emitPCM(pcm []byte) {
 		default:
 		}
 	}
+}
+
+// LatencyStats 返回本路采集的发送端延迟分项（ms，EWMA 平滑）：
+//   - chunkMs：采集块时长（设备回调周期，约 10ms，代表采集缓冲粒度）；
+//   - encodeMs：采集回调 → Opus 编码完成（含 20ms 组帧与队列等待）。
+//
+// 引擎未运行/无数据时为 0。供 /api/status 诊断与对端延迟展示使用。
+func (e *Engine) LatencyStats() (chunkMs, encodeMs int) {
+	return int(e.latChunkMs.Load()), int(e.latEncodeMs.Load())
 }
 
 // AudioFormat 返回本机音频链路对外广播的协议描述。
@@ -778,6 +826,8 @@ func (e *Engine) startTestTone() {
 				if atomic.LoadInt64(&e.subscribers) <= 0 {
 					continue
 				}
+				// 延迟统计：占位测试音是 20ms 一块（不走 Opus 编码，encode=0）
+				ewmaAtomic(&e.latChunkMs, int64(framesPerChunk)*1000/SampleRate)
 				for i := 0; i < framesPerChunk; i++ {
 					// 占位测试音使用「每 1.5 秒一短哔（660Hz，260ms）」的模式：
 					// 与真实声音/环境噪声截然不同，一听即知是占位信号，

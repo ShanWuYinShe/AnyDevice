@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"any_device/internal/audio"
@@ -37,6 +40,15 @@ type PeerMappingState struct {
 	// PCM（约 375 KB/s），比真实网络码率大 24 倍，会把带宽显示成假的。
 	RxSystemAudioKBps int `json:"rx_system_audio_kbps"`
 	RxMicAudioKBps    int `json:"rx_mic_audio_kbps"`
+
+	// 网络延迟：与对端 WebSocket 的 ping RTT（ms，每 ~3s 更新；0=未知）。
+	// 单程网络延迟约 RTT/2（LAN 上通常 <5ms）。
+	NetRttMs int `json:"net_rtt_ms"`
+
+	// 对端（发送端）上报的音频链路延迟分项；nil=旧版对端未上报。
+	// UI 用它区分「延迟发生在发送端（采集/编码/发送队列）」还是本机接收端。
+	SenderSysLatency *SenderLatencyStats `json:"sender_sys_latency,omitempty"`
+	SenderMicLatency *SenderLatencyStats `json:"sender_mic_latency,omitempty"`
 
 	// Backward compatibility fields
 	PlayAudioLocal bool `json:"play_audio_local"`
@@ -181,6 +193,9 @@ func (pm *PeerManager) AddManualPeer(target, name string) (UnifiedPeer, error) {
 	if dp == nil {
 		return UnifiedPeer{}, fmt.Errorf("无法添加该地址 (不能添加本机作为对端设备)")
 	}
+	// 手动添加没有发现广播，能力（provides）为空会让 UI 禁用全部映射按钮；
+	// 异步拉取对端 /api/self 补全，失败静默（对端可能尚未就绪）。
+	go pm.probeManualPeer(dp.ID, dp.Target)
 	return UnifiedPeer{
 		ID:       dp.ID,
 		Name:     dp.Name,
@@ -196,6 +211,36 @@ func (pm *PeerManager) AddManualPeer(target, name string) (UnifiedPeer, error) {
 		LastSeen: dp.LastSeen.Format("15:04:05"),
 		IsManual: true,
 	}, nil
+}
+
+// probeManualPeer 异步探测手动添加对端的能力信息（/api/self → provides/OS），
+// 让「手动添加 IP」也能正常显示对端能力并映射（此前 provides 为空导致按钮全禁用）。
+func (pm *PeerManager) probeManualPeer(peerID, target string) {
+	if pm.discovery == nil || target == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+target+"/api/self", nil)
+	if err != nil {
+		return
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+	var self struct {
+		OS       string                       `json:"os"`
+		Provides discovery.DeviceCapabilities `json:"provides"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&self); err != nil {
+		return
+	}
+	pm.discovery.UpdatePeerCapabilities(peerID, self.OS, self.Provides)
 }
 
 // RenamePeer assigns a custom name or alias to a peer.
@@ -355,6 +400,35 @@ func (pm *PeerManager) disconnect(peerID string) {
 		mapping.ConnectionStatus = "disconnected"
 	}
 	pm.mu.Unlock()
+}
+
+// setNetRtt 写入与对端的 WebSocket ping RTT（ms）。
+func (pm *PeerManager) setNetRtt(peerID string, ms int) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	if m, ok := pm.mappings[peerID]; ok {
+		m.NetRttMs = ms
+	}
+}
+
+// audioStatsMsg 对端 audio_stats 文本消息：发送端延迟分项（按流）。
+type audioStatsMsg struct {
+	Sys *SenderLatencyStats `json:"sys"`
+	Mic *SenderLatencyStats `json:"mic"`
+}
+
+// applySenderLatency 解析对端上报的延迟分项并写入映射状态（/api/peers 暴露给 UI）。
+func (pm *PeerManager) applySenderLatency(peerID string, data []byte) {
+	var msg audioStatsMsg
+	if err := json.Unmarshal(data, &msg); err != nil {
+		return
+	}
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	if m, ok := pm.mappings[peerID]; ok {
+		m.SenderSysLatency = msg.Sys
+		m.SenderMicLatency = msg.Mic
+	}
 }
 
 // setRxRates 把服务端统计的对端推流码率写入映射状态（UI 轮询 /api/peers 读取）。
@@ -582,6 +656,49 @@ func (pm *PeerManager) runPeerConnection(sessionCtx context.Context, peerID, tar
 	pm.mu.Unlock()
 	_ = connObj.writeJSON(pm.mappingHandshake(snap))
 
+	// 网络 RTT：每 ~3s 发一个 WebSocket ping，pong 回包时更新 mapping.net_rtt_ms。
+	// WriteControl 可与其它写并发（gorilla 允许），会话结束由 pingCtx 停止。
+	// 注意：这是纯网络往返，不含采集/编码/播放缓冲，用于把「网络」从延迟分项里拆出来。
+	var pingSentAt atomic.Int64
+	var pingPending atomic.Bool
+	conn.SetPongHandler(func(string) error {
+		if pingPending.CompareAndSwap(true, false) {
+			// 向上取整到 1ms：回环/LAN 常为亚毫秒，0 在契约里表示「未知」，
+			// 不能用 0 表达「已测到且 <1ms」。
+			rttMs := int(math.Ceil(float64(time.Since(time.Unix(0, pingSentAt.Load()))) / float64(time.Millisecond)))
+			if rttMs < 1 {
+				rttMs = 1
+			}
+			pm.setNetRtt(peerID, rttMs)
+			if util.DebugAudio() {
+				util.Logf("[延迟] 对端 %s 网络 RTT=%dms", peerID, rttMs)
+			}
+		}
+		return nil
+	})
+	pingCtx, pingCancel := context.WithCancel(context.Background())
+	defer pingCancel()
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-pingCtx.Done():
+				return
+			case <-ticker.C:
+				if pingPending.Load() {
+					continue // 上一个 ping 未回，跳过本轮
+				}
+				pingSentAt.Store(time.Now().UnixNano())
+				pingPending.Store(true)
+				if err := conn.WriteControl(websocket.PingMessage, []byte("rtt"), time.Now().Add(3*time.Second)); err != nil {
+					pingPending.Store(false)
+					util.Logf("[延迟] 对端 %s RTT ping 发送失败: %v", peerID, err)
+				}
+			}
+		}
+	}()
+
 	// 对端连接断开：释放本机注入的按钮与按键，防止卡在“按住”状态
 	defer mouse.ReleaseAllButtons()
 	defer keyboard.ReleaseAll()
@@ -629,6 +746,10 @@ func (pm *PeerManager) runPeerConnection(sessionCtx context.Context, peerID, tar
 			}
 			m.RxSystemAudioKBps = 0
 			m.RxMicAudioKBps = 0
+			// 延迟分项随连接失效：旧值会让 UI 显示过期数字
+			m.NetRttMs = 0
+			m.SenderSysLatency = nil
+			m.SenderMicLatency = nil
 		}
 		pm.mu.Unlock()
 	}()
@@ -706,7 +827,10 @@ func (pm *PeerManager) runPeerConnection(sessionCtx context.Context, peerID, tar
 			}
 			_ = json.Unmarshal(data, &baseEvt)
 
-			if (baseEvt.Type == "" || baseEvt.Type == "mouse") && curMapping.ExecuteMouseLocal {
+			if baseEvt.Type == "audio_stats" {
+				// 对端（发送端）上报的延迟分项：写入 mapping 供 UI 展示
+				pm.applySenderLatency(peerID, data)
+			} else if (baseEvt.Type == "" || baseEvt.Type == "mouse") && curMapping.ExecuteMouseLocal {
 				var evt mouse.MouseEvent
 				if err := json.Unmarshal(data, &evt); err == nil {
 					// Execute remote mouse movements & clicks directly on local OS!

@@ -184,6 +184,10 @@ func NewServer(port int, initialIP string, hub *Hub, systemAudioEngine *audio.En
 	// 连接断开后最多 5 秒即在列表中显示离线（此前依赖 7 秒超时且重连会堆积条目）。
 	go s.reconcileInboundLoop()
 
+	// 发送端延迟分项上报：每 2s 把「采集块/编码/发送队列」推给音频订阅客户端，
+	// 接收端据此在 UI 显示「对端采集端」延迟（排查延迟发生在哪一端）。
+	go s.audioLatencyLoop()
+
 	// 对端节点身份回调：对端主动连接时通过握手上报自己的节点 ID，
 	// 据此把入站档案归并到正确的设备（跨 IP 场景按 IP 归并会失效，
 	// 节点 ID 是设备唯一权威身份）。
@@ -192,6 +196,54 @@ func NewServer(port int, initialIP string, hub *Hub, systemAudioEngine *audio.En
 	})
 
 	return s
+}
+
+// SenderLatencyStats 发送端单路延迟分项（ms）。
+// 语义：chunk=采集块时长（设备回调周期）；encode=采集回调→编码完成；
+// send=服务端广播队列→WebSocket 写完成；running=该流采集引擎是否在跑。
+type SenderLatencyStats struct {
+	ChunkMs  int  `json:"chunk_ms"`
+	EncodeMs int  `json:"encode_ms"`
+	SendMs   int  `json:"send_ms"`
+	Running  bool `json:"running"`
+}
+
+// audioLatencyLoop 周期性把发送端延迟分项推给音频订阅客户端（JSON 文本消息）：
+// 接收端 peer_manager 解析后写入 /api/peers 的 mapping，UI 据此显示延迟分项。
+// 无人订阅音频时不发送（空闲零空转）。
+func (s *Server) audioLatencyLoop() {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		sysSubs, micSubs, _, _ := s.hub.SubscriberCounts()
+		if sysSubs == 0 && micSubs == 0 {
+			continue
+		}
+		if data := s.buildAudioLatencyStats(sysSubs > 0, micSubs > 0); data != nil {
+			s.hub.BroadcastAudioStats(data)
+		}
+	}
+}
+
+// buildAudioLatencyStats 生成 {"type":"audio_stats","sys":{...},"mic":{...}}。
+// 只包含有订阅者的流；引擎未运行时 running=false（接收端据此不把该流计入总延迟）。
+func (s *Server) buildAudioLatencyStats(includeSys, includeMic bool) []byte {
+	sendMs := s.hub.AudioSendLatencyMs()
+	payload := map[string]interface{}{"type": "audio_stats"}
+	if includeSys && s.systemAudioEngine != nil {
+		chunkMs, encodeMs := s.systemAudioEngine.LatencyStats()
+		payload["sys"] = SenderLatencyStats{chunkMs, encodeMs, sendMs, s.systemAudioEngine.IsRunning()}
+	}
+	if includeMic && s.micAudioEngine != nil {
+		chunkMs, encodeMs := s.micAudioEngine.LatencyStats()
+		payload["mic"] = SenderLatencyStats{chunkMs, encodeMs, sendMs, s.micAudioEngine.IsRunning()}
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		util.Logf("[音频] 生成延迟统计失败: %v", err)
+		return nil
+	}
+	return data
 }
 
 // reconcileInboundLoop 周期性把当前连接集合同步给发现服务。
@@ -545,6 +597,15 @@ func (s *Server) buildRoutes() http.Handler {
 			micDev = s.micAudioEngine.DeviceName()
 		}
 		sysAudioSubs, micAudioSubs, mouseSubs, keyboardSubs := s.hub.SubscriberCounts()
+		// 发送端延迟分项（诊断/验证用，UI 卡片数据来自对端上报的 /api/peers）
+		sysChunkMs, sysEncodeMs := 0, 0
+		if s.systemAudioEngine != nil {
+			sysChunkMs, sysEncodeMs = s.systemAudioEngine.LatencyStats()
+		}
+		micChunkMs, micEncodeMs := 0, 0
+		if s.micAudioEngine != nil {
+			micChunkMs, micEncodeMs = s.micAudioEngine.LatencyStats()
+		}
 		status := map[string]interface{}{
 			"audio_subs":        sysAudioSubs + micAudioSubs,
 			"sys_audio_subs":    sysAudioSubs,
@@ -554,15 +615,21 @@ func (s *Server) buildRoutes() http.Handler {
 			"keyboard_subs":     keyboardSubs,
 			// 采集设备/系统钩子的真实运行状态：无人订阅时应全为 false
 			//（按需启停生效，空闲时不占音频设备与全局钩子）。
-			"sys_audio_engine":    s.systemAudioEngine != nil && s.systemAudioEngine.IsRunning(),
-			"mic_audio_engine":    s.micAudioEngine != nil && s.micAudioEngine.IsRunning(),
-			"mouse_capture":       s.mouseEngine != nil && s.mouseEngine.IsRunning(),
-			"keyboard_capture":    s.keyboardEngine != nil && s.keyboardEngine.IsRunning(),
-			"clients":             s.hub.ClientCount(),
-			"peers_count":         len(s.peerMgr.ListPeers("")),
-			"bytes_sent":          s.hub.TotalBytesSent(),
-			"sample_rate":         audio.SampleRate,
-			"channels":            audio.Channels,
+			"sys_audio_engine": s.systemAudioEngine != nil && s.systemAudioEngine.IsRunning(),
+			"mic_audio_engine": s.micAudioEngine != nil && s.micAudioEngine.IsRunning(),
+			"mouse_capture":    s.mouseEngine != nil && s.mouseEngine.IsRunning(),
+			"keyboard_capture": s.keyboardEngine != nil && s.keyboardEngine.IsRunning(),
+			"clients":          s.hub.ClientCount(),
+			"peers_count":      len(s.peerMgr.ListPeers("")),
+			"bytes_sent":       s.hub.TotalBytesSent(),
+			"sample_rate":      audio.SampleRate,
+			"channels":         audio.Channels,
+			// 延迟分项（发送端）：采集块 + 编码 + 广播队列写完成
+			"sys_audio_chunk_ms":  sysChunkMs,
+			"sys_audio_encode_ms": sysEncodeMs,
+			"mic_audio_chunk_ms":  micChunkMs,
+			"mic_audio_encode_ms": micEncodeMs,
+			"audio_send_ms":       s.hub.AudioSendLatencyMs(),
 			"device_name":         sysDev,
 			"system_audio_device": sysDev,
 			"mic_device":          micDev,

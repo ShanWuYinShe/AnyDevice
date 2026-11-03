@@ -18,6 +18,9 @@ import (
 type OutMessage struct {
 	isBinary bool
 	data     []byte
+	// queuedAt 音频消息入 hub 广播队列的时间：writePump 用它统计
+	// 「服务端队列 → WebSocket 写完成」延迟（发送端延迟分项之一）。
+	queuedAt time.Time
 }
 
 // InboundClientInfo represents public status of a connected client.
@@ -89,6 +92,7 @@ func ParseDeviceType(ua string) string {
 type Hub struct {
 	clients           map[*Client]bool
 	audioBroadcast    chan audioPacket
+	audioStats        chan []byte
 	mouseBroadcast    chan []byte
 	keyboardBroadcast chan []byte
 	register          chan *Client
@@ -98,7 +102,9 @@ type Hub struct {
 
 	totalBytesSent uint64
 	clientCount    int64
-	onSubsChanged  func(sysAudioSubs, micAudioSubs, mouseSubs, keyboardSubs int)
+	// latSendUs：音频「广播队列 → WS 写完成」延迟（µs，EWMA）。
+	latSendUs     atomic.Int64
+	onSubsChanged func(sysAudioSubs, micAudioSubs, mouseSubs, keyboardSubs int)
 	// onNodeIdentity 在对端通过握手上报自己的节点身份时触发
 	// （remoteIP=连接源 IP，nodeID=对端节点 ID，nodeName=对端广播名），
 	// 服务端据此把入站档案归并到正确的设备（跨 IP 场景按 IP 归并会失效）。
@@ -114,6 +120,7 @@ func NewHub(onSubsChanged func(sysAudioSubs, micAudioSubs, mouseSubs, keyboardSu
 	return &Hub{
 		clients:           make(map[*Client]bool),
 		audioBroadcast:    make(chan audioPacket, 128),
+		audioStats:        make(chan []byte, 8),
 		mouseBroadcast:    make(chan []byte, 64),
 		keyboardBroadcast: make(chan []byte, 64),
 		register:          make(chan *Client),
@@ -146,9 +153,29 @@ func (h *Hub) Run() {
 		case <-h.updateSubs:
 			h.notifySubscribers()
 
+		case data := <-h.audioStats:
+			// 发送端延迟统计（文本消息）：只发给音频订阅客户端；
+			// 接收端 peer_manager 解析后写入 mapping，前端忽略未知文本类型。
+			msg := OutMessage{isBinary: false, data: data}
+			h.mu.RLock()
+			for client := range h.clients {
+				client.mu.RLock()
+				want := client.sysAudioEnabled || client.micAudioEnabled
+				client.mu.RUnlock()
+				if !want {
+					continue
+				}
+				select {
+				case client.send <- msg:
+				default:
+				}
+			}
+			h.mu.RUnlock()
+
 		case pkt := <-h.audioBroadcast:
-			opusMsg := OutMessage{isBinary: true, data: pkt.chunk}
-			pcmMsg := OutMessage{isBinary: true, data: pkt.pcmChunk}
+			recvAt := time.Now()
+			opusMsg := OutMessage{isBinary: true, data: pkt.chunk, queuedAt: recvAt}
+			pcmMsg := OutMessage{isBinary: true, data: pkt.pcmChunk, queuedAt: recvAt}
 			// 音频能力路由：
 			//   - pcmChunk 非空（对端转发的音频，同时提供 Opus 与 PCM 两种形态）：
 			//     无 AudioDecoder 的客户端（Wails macOS WKWebView / Safari）收 PCM，
@@ -370,6 +397,33 @@ func (h *Hub) TotalBytesSent() uint64 {
 	return atomic.LoadUint64(&h.totalBytesSent)
 }
 
+// AudioSendLatencyMs 返回音频「广播队列 → WebSocket 写完成」的平滑延迟（ms）。
+// 属于发送端延迟分项（不含采集、编码与网络传输）。
+func (h *Hub) AudioSendLatencyMs() int {
+	return int(h.latSendUs.Load() / 1000)
+}
+
+// BroadcastAudioStats 把发送端延迟统计（JSON 文本消息）推给音频订阅客户端：
+// 接收端 peer_manager 解析后写入 mapping，供 UI 展示「采集端」延迟分项。
+// 未知类型的文本消息会被前端忽略，对旧版接收端安全。
+func (h *Hub) BroadcastAudioStats(data []byte) {
+	select {
+	case h.audioStats <- data:
+	default:
+	}
+}
+
+// ewmaInt64 1/4 步长指数平滑（0=尚无样本），避免单帧抖动让延迟数字乱跳。
+func ewmaInt64(v *atomic.Int64, cur int64) {
+	if cur < 0 {
+		cur = 0
+	}
+	if prev := v.Load(); prev != 0 {
+		cur = (prev*3 + cur) / 4
+	}
+	v.Store(cur)
+}
+
 // NewClient constructs a new connected client.
 // local 表示连接是否来自本机（回环/本机 IP 打开的 UI 窗口）：
 //   - 本机 UI 默认不订阅音频/鼠标/键盘，由前端通过 set_mapping 按需开启，
@@ -495,6 +549,10 @@ func (c *Client) writePump() {
 
 			if err := w.Close(); err != nil {
 				return
+			}
+			// 发送端延迟分项：广播队列 → WS 写完成（EWMA，跨客户端平滑）
+			if msg.isBinary && !msg.queuedAt.IsZero() {
+				ewmaInt64(&c.hub.latSendUs, time.Since(msg.queuedAt).Microseconds())
 			}
 
 		case <-ticker.C:

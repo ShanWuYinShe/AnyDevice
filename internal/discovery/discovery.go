@@ -260,6 +260,24 @@ func (s *Service) IsSelf(id, ip string, port int) bool {
 	return s.isSelfUnlocked(id, ip, port)
 }
 
+// UpdatePeerCapabilities 用对端 /api/self 的探测结果补全「手动添加」对端的能力信息。
+// 手动添加没有发现广播，默认能力声明里 audio_format 为空——协议防呆会因此禁用
+// 音频映射；探测同时补全真实 OS 与设备名。只对手动条目生效，返回是否更新成功。
+func (s *Service) UpdatePeerCapabilities(peerID, os string, provides DeviceCapabilities) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dp, ok := s.peers[peerID]
+	if !ok || !dp.IsManual {
+		return false
+	}
+	dp.Provides = provides
+	// 手动条目占位值 "remote"、复用入站档案的 "web" 都不是真实系统，探测成功后覆盖
+	if os != "" && (dp.OS == "" || dp.OS == "remote" || dp.OS == "web") {
+		dp.OS = os
+	}
+	return true
+}
+
 // UpdateProvides 更新本机对外广播的能力集合。
 // audioFormat 由调用方传入（唯一事实来源在 internal/audio），
 // 避免这里再硬编码协议标识导致广播与真实链路不一致。

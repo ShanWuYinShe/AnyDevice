@@ -807,6 +807,44 @@ main {
   white-space: nowrap;
 }
 
+/* 播放链路延迟估算 chip（映射后出现）：mono 小号、低对比度，title 提供完整分项。
+ * flex: none 保证窄卡片下不被压缩成省略号；≤560px 时随 .cap-desc 的 flex-wrap
+ * 自然折行，不挤占右侧操作按钮。 */
+.latency-chip {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  height: 18px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text-2);
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* 播放欠载计数：仅该路 underflows > 0 时出现（warn 色 + 文本，不只靠颜色表达） */
+.latency-warn {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  height: 18px;
+  padding: 0 9px;
+  border: 1px solid rgba(251, 191, 36, 0.32);
+  border-radius: 999px;
+  background: rgba(251, 191, 36, 0.1);
+  color: var(--amber);
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: help;
+}
+
 .cap-btn {
   display: inline-flex;
   align-items: center;

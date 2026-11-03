@@ -114,10 +114,56 @@ const streamStats = {
 };
 let workletError = '';
 
+// —— 播放链路延迟可观测数据（供状态层/UI 展示） ——
+// AudioWorklet 每 ~0.5s 上报一次水位统计；这里把「缓冲水位 → 毫秒」的换算与
+// AudioContext 输出延迟统一收口，UI 侧不重复推导采样率常量。
+// 采样率固定 48kHz（ensureAudioContext 以 sampleRate: 48000 创建）。
+const SAMPLE_RATE = 48000;
+
+// 统计回调单槽：状态层在 startPolling 注册一次（多次注册后者覆盖）
+let statsCallback = null;
+
+// onStreamStats 注册 worklet 统计回调：cb({ stream, filled, cap, underflows, overflows })
+export function onStreamStats(cb) {
+  statsCallback = typeof cb === 'function' ? cb : null;
+}
+
+// getStreamStats 返回某路环形缓冲统计的副本（外部只读，避免直接改内部状态）
+export function getStreamStats(stream) {
+  const s = streamStats[stream === 'mic' ? 'mic' : 'sys'];
+  return { filled: s.filled, cap: s.cap, underflows: s.underflows, overflows: s.overflows };
+}
+
+// getPlaybackLatencyMs 播放缓冲延迟（ms）= 当前水位帧数 / 48000 * 1000
+export function getPlaybackLatencyMs(stream) {
+  return (getStreamStats(stream).filled / SAMPLE_RATE) * 1000;
+}
+
+// getOutputLatencyMs 音频输出链路延迟（ms）：baseLatency + outputLatency。
+// WKWebView/Safari 等环境可能不提供这些字段（undefined），按 0 处理，不抛错。
+export function getOutputLatencyMs() {
+  if (!audioCtx) return 0;
+  const base = Number(audioCtx.baseLatency);
+  const output = Number(audioCtx.outputLatency);
+  return ((Number.isFinite(base) ? base : 0) + (Number.isFinite(output) ? output : 0)) * 1000;
+}
+
+// getAudioContextInfo AudioContext 概况：状态 / 采样率 / 是否已创建
+export function getAudioContextInfo() {
+  return {
+    state: audioCtx ? audioCtx.state : '未创建',
+    sampleRate: audioCtx ? audioCtx.sampleRate : SAMPLE_RATE,
+    hasCtx: !!audioCtx,
+  };
+}
+
 // 诊断快照：播放链路状态（UI 卡片显示）
 export function audioContextState() {
   if (!audioCtx) return '未创建（未点击过播放）';
   let text = audioCtx.state + ' @ ' + audioCtx.sampleRate + 'Hz';
+  // 顺带显示输出延迟（部分环境不可测时为 0，不显示）
+  const outMs = getOutputLatencyMs();
+  if (outMs > 0) text += ' | 输出 ' + outMs.toFixed(1) + 'ms';
   if (workletError) return text + ' | AudioWorklet 加载失败: ' + workletError;
   const s = streamStats.sys;
   if (s.cap > 0) {
@@ -164,6 +210,18 @@ export function ensureAudioContext() {
             streamStats[key].cap = m.cap;
             streamStats[key].underflows = m.underflows;
             streamStats[key].overflows = m.overflows;
+            // 转发给 UI 状态层；回调异常不能打断音频线程消息链，必须吞掉
+            if (statsCallback) {
+              try {
+                statsCallback({
+                  stream: key,
+                  filled: m.filled,
+                  cap: m.cap,
+                  underflows: m.underflows,
+                  overflows: m.overflows,
+                });
+              } catch (_) { /* UI 回调异常不影响音频播放 */ }
+            }
           }
         };
         node.connect(audioCtx.destination);

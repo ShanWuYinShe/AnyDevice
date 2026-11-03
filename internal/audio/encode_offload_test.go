@@ -23,7 +23,7 @@ func TestEncodeOffload(t *testing.T) {
 	e.SetSubscribers(1)
 
 	// 手动进入运行态并启动编码消费者（等价 Start 的卸载初始化）
-	e.encQueue = make(chan []byte, 8)
+	e.encQueue = make(chan queuedFrame, 8)
 	e.encDone = make(chan struct{})
 	e.isRunning.Store(true)
 	go e.encodeLoop(e.encQueue, e.encDone)
@@ -71,7 +71,7 @@ func TestEncodeOffload(t *testing.T) {
 // isRunning=false 时 encodeLoop 直接丢弃帧（P1 修复的对称保护）。
 func TestEncodeOffloadLateFrame(t *testing.T) {
 	e := NewEngine(KindSystem, ModeCapture, -1, func([]byte) {})
-	e.encQueue = make(chan []byte, 8)
+	e.encQueue = make(chan queuedFrame, 8)
 	e.encDone = make(chan struct{})
 	e.isRunning.Store(true)
 	go e.encodeLoop(e.encQueue, e.encDone)
@@ -118,7 +118,7 @@ func BenchmarkEmitPCMOverhead(b *testing.B) {
 	var sink atomic.Int64
 	e := NewEngine(KindSystem, ModeCapture, -1, func([]byte) { sink.Add(1) })
 	e.SetSubscribers(1)
-	e.encQueue = make(chan []byte, 8)
+	e.encQueue = make(chan queuedFrame, 8)
 	e.encDone = make(chan struct{})
 	e.isRunning.Store(true)
 	go e.encodeLoop(e.encQueue, e.encDone)
