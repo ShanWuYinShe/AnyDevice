@@ -2,7 +2,6 @@ package mouse
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -31,6 +30,7 @@ type MouseEvent struct {
 	RightDown    bool    `json:"right_down"`            // Right button state
 	MiddleDown   bool    `json:"middle_down"`           // Middle button state
 	WheelDelta   int     `json:"wheel_delta,omitempty"` // 滚轮增量（正=向上），仅 Action=="wheel" 时有效
+	WheelUnit    string  `json:"wheel_unit,omitempty"`  // 增量单位：notch(120/格) / line(行)；旧版对端为空，按对端 OS 推断
 	Timestamp    int64   `json:"timestamp"`             // Unix millisecond timestamp
 }
 
@@ -230,7 +230,9 @@ func (e *Engine) loop(ctx context.Context) {
 			return
 		}
 		if util.DebugKeys() && evt.Action != "move" {
-			fmt.Printf("[鼠标捕获] %s (%.3f, %.3f)\n", evt.Action, evt.X, evt.Y)
+			// 走 util.Logf 而非 stdout：.app 双击启动时 stdout 不可见，
+			// 日志文件是唯一排查通道（与音频/执行端调试输出一致）
+			util.Logf("[鼠标捕获] %s (%.3f, %.3f)", evt.Action, evt.X, evt.Y)
 		}
 		if e.onEvent != nil {
 			e.onEvent(evt)

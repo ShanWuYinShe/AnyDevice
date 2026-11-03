@@ -259,6 +259,7 @@ func SimulateButton(btn string, down bool) {
 }
 
 func SimulateScroll(dy int) {
+	// dy 已是本机注入单位（行），跨平台换算见 WheelDeltaForLocal
 	C.sim_mouse_scroll(C.int(dy))
 }
 
@@ -303,8 +304,9 @@ func msTapCallback(proxy C.CGEventTapProxy, etype C.CGEventType, event C.CGEvent
 		evt.Action = "move"
 	case C.kCGEventScrollWheel:
 		evt.Action = "wheel"
-		// deltaAxis1：正 = 向上
+		// deltaAxis1：正 = 向上；单位为行
 		evt.WheelDelta = int(C.CGEventGetIntegerValueField(event, C.kCGScrollWheelEventDeltaAxis1))
+		evt.WheelUnit = WheelUnitLine
 	case C.kCGEventLeftMouseDown:
 		evt.Action, evt.Button = "down", "left"
 	case C.kCGEventLeftMouseUp:

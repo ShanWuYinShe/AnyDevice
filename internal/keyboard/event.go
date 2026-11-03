@@ -2,7 +2,6 @@ package keyboard
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -211,7 +210,8 @@ func (e *Engine) loop(ctx context.Context) {
 			return
 		}
 		if util.DebugKeys() {
-			fmt.Printf("[键盘捕获] %s %s (键码 %#x)\n", evt.Action, evt.Key, evt.KeyCode)
+			// 同鼠标：写日志文件，.app 窗口形态下 stdout 不可见
+			util.Logf("[键盘捕获] %s %s (键码 %#x)", evt.Action, evt.Key, evt.KeyCode)
 		}
 		if e.onEvent != nil {
 			e.onEvent(evt)

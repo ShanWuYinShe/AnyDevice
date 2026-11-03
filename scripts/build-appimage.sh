@@ -16,7 +16,7 @@ case "$ARCH" in
     arm64) LD_ARCH="aarch64" ;;
     *) echo "不支持的架构: $ARCH（可用 amd64/arm64）"; exit 1 ;;
 esac
-VERSION=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' main.go)
+VERSION=$(git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo "0.0.0-dev")
 BUILD_TIME=$(date +%Y%m%d-%H%M)
 APP_NAME="AnyDevice"
 APPDIR="build/AppDir-${ARCH}"
@@ -26,7 +26,7 @@ echo ">>> 构建 Linux ${ARCH} 二进制（版本 ${VERSION}）..."
 mkdir -p bin
 CGO_ENABLED=1 GOOS=linux GOARCH="${ARCH}" \
     go build -tags "wails,desktop,production" \
-    -ldflags "-s -w -X any_device/internal/util.BuildTime=${BUILD_TIME}" \
+    -ldflags "-s -w -X main.Version=${VERSION} -X any_device/internal/util.BuildTime=${BUILD_TIME}" \
     -o "bin/any_device_linux_${ARCH}" main.go
 
 echo ">>> 准备 AppDir..."

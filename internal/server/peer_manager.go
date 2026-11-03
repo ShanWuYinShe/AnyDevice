@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -83,6 +84,25 @@ type peerConnection struct {
 	// 本机 UI 客户端（Wails macOS WKWebView / Safari）没有 WebCodecs
 	// AudioDecoder，转发对端音频时需要服务端先解码成 PCM 再下发。
 	decoders map[string]*audio.OpusDecoder
+	// peerOS 对端 OS：旧版对端没有 wheel_unit 字段时，用它推断滚轮单位。
+	peerOS string
+	// wheelAccum 滚轮余量：Windows notch 增量换算成 macOS 行单位时累积
+	// （精度触控板的 1/40 增量会累积到一格再滚）。仅本机为 macOS 时使用。
+	wheelAccum int
+}
+
+// peerOS 返回对端 OS（用于旧版对端缺少 wheel_unit 时推断滚轮单位）。
+// 仅在建立连接时调用一次，不在高频路径上。
+func (pm *PeerManager) peerOS(peerID string) string {
+	if pm.discovery == nil {
+		return ""
+	}
+	for _, p := range pm.discovery.GetPeers() {
+		if p.ID == peerID {
+			return p.OS
+		}
+	}
+	return ""
 }
 
 // writeJSON 对对端连接的串行化写入口：所有 WriteJSON 必须经此发送。
@@ -651,6 +671,7 @@ func (pm *PeerManager) runPeerConnection(sessionCtx context.Context, peerID, tar
 		cancel:    cancel,
 		startTime: time.Now(),
 		decoders:  make(map[string]*audio.OpusDecoder),
+		peerOS:    pm.peerOS(peerID),
 	}
 	// 连接建立即声明本端需要的流订阅（此前依赖对端默认全开；
 	// 现在对端把默认订阅收紧后，必须显式握手，否则收不到任何流）。
@@ -853,14 +874,19 @@ func (pm *PeerManager) runPeerConnection(sessionCtx context.Context, peerID, tar
 						util.Logf("[鼠标链路] 收到对端鼠标 %s (%.2f, %.2f)\n", evt.Action, evt.X, evt.Y)
 					}
 					if evt.Action == "wheel" {
-						// 滚轮同步：正 = 向上；限幅防异常/恶意对端发超大增量
-						delta := evt.WheelDelta
-						if delta > maxWheelDelta {
-							delta = maxWheelDelta
-						} else if delta < -maxWheelDelta {
-							delta = -maxWheelDelta
+						// 滚轮同步：正 = 向上；限幅防异常/恶意对端发超大增量。
+						// 单位换算：Windows 捕获为 notch（120/格，精度触控板可能是
+						// 1/40 细分值）、macOS 为 line（行）；旧版对端无 wheel_unit
+						// 时按对端 OS 推断。本机注入端再换算成自己的单位。
+						raw := evt.WheelDelta
+						if raw > maxWheelDelta {
+							raw = maxWheelDelta
+						} else if raw < -maxWheelDelta {
+							raw = -maxWheelDelta
 						}
-						mouse.SimulateScroll(delta)
+						if delta := mouse.WheelDeltaForLocal(evt.WheelUnit, raw, runtime.GOOS, connObj.peerOS, &connObj.wheelAccum); delta != 0 {
+							mouse.SimulateScroll(delta)
+						}
 					} else {
 						mouse.SimulateAbsolute(clampUnit(evt.X), clampUnit(evt.Y))
 						if evt.Action == "down" || evt.Action == "up" {

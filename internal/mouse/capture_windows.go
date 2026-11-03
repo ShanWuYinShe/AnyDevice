@@ -129,6 +129,8 @@ func msHookProc(code int32, wParam uintptr, lParam uintptr) (rc uintptr) {
 					evt.Action = "wheel"
 					// mouseData 高 16 位为有符号滚轮增量（正 = 向上）
 					evt.WheelDelta = int(int16(uint16(ms.MouseData >> 16)))
+					// 单位 = notch（120/格；精度触控板可能是 1/40 等细分值，单位相同）
+					evt.WheelUnit = WheelUnitNotch
 				default:
 					ret, _, _ := procCallNextHookEx.Call(msHookHandle, uintptr(code), wParam, lParam)
 					return ret
@@ -333,6 +335,7 @@ func SimulateButton(btn string, down bool) {
 
 // SimulateScroll triggers mouse wheel vertical scrolling (SendInput).
 func SimulateScroll(dy int) {
+	// dy 已是本机注入单位（120/格，含高精度细分值），跨平台换算见 WheelDeltaForLocal
 	sendMouseButton(mOUSEEVENTF_WHEEL, 0, 0, uint32(dy))
 }
 

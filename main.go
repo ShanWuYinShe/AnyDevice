@@ -27,9 +27,9 @@ var Version = "dev"
 
 func main() {
 	port := flag.Int("port", 8080, "Web & WebSocket server port")
-	mode := flag.String("mode", "auto", "Audio capture mode: 'auto', 'loopback', 'capture', or 'test-tone'")
-	customIP := flag.String("ip", "", "Manually specify primary LAN IP (useful when multiple virtual NICs exist)")
-	deviceIdx := flag.Int("device", -1, "Select specific audio device index (use -list to view)")
+	mode := flag.String("mode", "auto", "Audio capture mode: only 'test-tone' is effective (requires ANY_DEVICE_TEST_TONE=1); other values are accepted for compatibility")
+	customIP := flag.String("ip", "", "Manually specify the LAN IP advertised to peers (listening stays on all interfaces)")
+	deviceIdx := flag.Int("device", -1, "Select system-audio device index on Windows (use -list to view)")
 	listDevices := flag.Bool("list", false, "List all available audio devices and exit")
 	listNics := flag.Bool("list-nics", false, "List all network interfaces and IP addresses and exit")
 	noQR := flag.Bool("no-qr", false, "Disable printing QR code to the terminal")
@@ -253,5 +253,5 @@ func printDeviceList() {
 		fmt.Printf("[%s #%d] %s%s\n", d.Type, d.Index, d.Name, tag)
 	}
 	fmt.Println("------------------------------------------------------------------")
-	fmt.Println("使用示例: any_device -mode capture -device 0")
+	fmt.Println("使用示例: any_device -device 0（Windows 系统声设备选择）")
 }
