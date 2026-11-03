@@ -7,14 +7,17 @@ macOS Wails 桌面应用（Go + 前端）。本文件只做项目特有补充，
 ```bash
 bun run --cwd frontend build   # 前端产物到 internal/web/dist（随后 go build 嵌入）
 ./scripts/build.sh             # macOS：Wails 原生窗口 → bin/AnyDevice.app（含 Info.plist 打包）
-go build -tags wails,desktop,production -o any_device main.go   # 免打包的裸二进制（仅调试）
+go build -tags wails,desktop,production \
+    -ldflags "-s -w -extldflags '-framework UniformTypeIdentifiers'" \
+    -o any_device main.go   # 免打包的裸二进制（仅调试；macOS 缺 extldflags 会链接失败）
 ```
 
 - **发布产物必须是 `.app` 包**：裸二进制没有 `Info.plist`，ATS 本地网络例外与麦克风用途声明都不生效，
   WKWebView 里的 WebSocket/麦克风会直接失败。
-- **无标签 `go build` 会回退成浏览器 `--app` 独立窗口模式**（`desktop_browser.go`），只适合调试，别当发布态验证。
+- **无标签 `go build` 会回退成浏览器 `--app` 独立窗口模式**（`desktop_browser.go`；macOS 无 Chrome/Edge 时回退 `webview_go`/WKWebView），只适合调试，别当发布态验证。
 - macOS 架构由 `MAC_ARCH=arm64|amd64|universal` 选择；版本号取自 `git describe --tags`（tag 即版本，不用改文件）。
-- 三个脚本：`build.sh`、`build-appimage.sh`、`fetch-libopus-*.sh`（libopus 静态库拉取）。
+- 三个脚本：`build.sh`（macOS .app + Windows 交叉编译）、`build-appimage.sh`（Linux AppImage）、
+  `fetch-libopus-amd64.sh`（从 Homebrew bottle 重建 macOS amd64 静态库，CI 校验可复现性）。
 
 ## skill 索引（改对应模块前先加载对应 skill）
 

@@ -9,11 +9,11 @@ description: 本项目 AnyDevice 的 macOS Wails 原生窗口（AnyDevice.app）
 
 ## 架构事实（改窗口/前端 WS 前必读）
 
-- 桌面壳：`internal/ui/desktop_wails.go`（build tag `wails`，macOS+Windows 共用）；
+- 桌面壳：`internal/ui/desktop_wails.go`（build tag `wails`，macOS/Windows/Linux 共用）；
   无标签 `go build` 走 `desktop_browser.go` 的浏览器 --app 回退，仅调试用。
-- Wails 窗口页面 origin：macOS = `wails://wails/`、Windows = `http://wails.localhost/`；
+- Wails 窗口页面 origin：macOS/Linux = `wails://wails/`、Windows = `http://wails.localhost/`；
   **都不是本服务的 HTTP 端口**。相对 `fetch('/api/...')` 经 AssetHandler 直达服务 handler（可用、无 CORS），
-  但 WebSocket 不能经 AssetHandler 升级（Wails 对 Upgrade 返回 501），必须由前端显式连
+  但 WebSocket 不能经 AssetHandler 升级（`pkg/assetserver` 对 `isWebSocket` 请求返回 501），必须由前端显式连
   `ws://127.0.0.1:<port>`，端口取自 `/api/self` 的 `port`（`frontend/src/lib/state.svelte.js` 的
   `isDesktopShell()/resolveWsBase()`）。
 - **反模式：不要用 `location.host` 判断是否桌面壳。** `wails://wails/` 的
@@ -30,26 +30,31 @@ description: 本项目 AnyDevice 的 macOS Wails 原生窗口（AnyDevice.app）
   服务端 `hub.go` 按客户端能力路由，`peer_manager.go` 在转发对端音频时用
   `internal/audio/opus_decoder.go`（cgo libopus）解码成 float32 PCM（AUDS/AUDM）
   只发给声明 pcm 的客户端；有 AudioDecoder 的客户端（Chrome/WebView2）仍收 Opus。
-- 诊断：`GET /api/status` 的 `audio_pcm_clients` 显示当前走 PCM 的客户端数。
-- **码率显示口径（易错）**：卡片上的 KB/s 必须用服务端统计的
+- 诊断：`GET /api/status` 的 `audio_pcm_clients` 显示**声明需要 PCM 下发**的客户端数（不论当前是否在订阅音频）。
+- **码率显示口径（易错）**：卡片上的 KB/s 优先用服务端统计的
   `/api/peers → mapping.rx_system_audio_kbps / rx_mic_audio_kbps`（对端推流到本机的
   网络字节率，按 peer 独立，2 秒窗口）。不要用前端自己数的 WS 接收字节：原生窗口收到的是
   解码后的 float32 PCM（约 375 KB/s），会把 Opus 的真实带宽（约 16 KB/s）放大 24 倍；
-  而且前端计数是全局的，多对端映射时所有卡片会显示同一个数。
+  而且前端计数是全局的，多对端映射时所有卡片会显示同一个数。前端仅在
+  `mapping.rx_*_kbps` 缺失（旧服务端）时才回退到自数的 `audioRate`（与对端版本无关）。
 
 ## 构建与打包
 
 - 一律用 `./scripts/build.sh`：macOS 产出 `bin/AnyDevice.app`
   （`Contents/MacOS/any_device` + 由根目录 `Info.plist` 注入版本号的 plist），
   再 `codesign -s - -f bin/AnyDevice.app`（ad-hoc）；Windows 产出 Wails exe + portable。
-- 编译标签必须 `wails,desktop,production`（缺 `production` 会在运行时直接报错），
+- 编译标签必须 `wails,production`：缺 `production` 时 Wails 的 `CreateApp` 直接返回
+  「Wails applications will not build without the correct build tags.」，`wails.Run` 失败、
+  窗口不出现且进程随即退出，但**编译不报错**（极易误判成窗口起不来）。`desktop` 是 Wails
+  模板惯例标签，本项目代码里没有对应构建约束（可留可去）；
   darwin 外部链接需要 `-extldflags '-framework UniformTypeIdentifiers'`（v2.16 用 UTType）。
 - `Info.plist` 必须有：`CFBundleExecutable/Identifier/Name/Version/ShortVersion`、
   `NSHighResolutionCapable`、`NSAppTransportSecurity{NSAllowsLocalNetworking}`、
   `NSMicrophoneUsageDescription`（缺了 TCC 不授权甚至终止进程）、`NSLocalNetworkUsageDescription`。
-- 音频 Opus 用仓库 vendored 静态库（`third_party/libopus/macos-arm64/libopus.a`，opus 1.6.1；
-  Windows 用 `win64/libopus.a`），cgo 链接后无外部 dylib —— 分发 `.app` 不需要用户安装
-  Homebrew/opus。验证：`otool -L bin/AnyDevice.app/Contents/MacOS/any_device | grep -i opus` 应为空。
+- 音频 Opus 用仓库 vendored 静态库（`third_party/libopus/macos-arm64/libopus.a` 与
+  `macos-amd64/libopus.a`，均为 opus 1.6.1；Windows 用 `win64/libopus.a`），cgo 链接后
+  无外部 dylib —— 分发 `.app` 不需要用户安装 Homebrew/opus；universal 包由 build.sh 用
+  `lipo` 合并两份单架构产物。验证：`otool -L bin/AnyDevice.app/Contents/MacOS/any_device | grep -i opus` 应为空。
   许可（BSD-3-Clause）在 `third_party/libopus/COPYING`，build.sh 会随 .app 放到
   `Contents/Resources/third_party/libopus-COPYING`。
 - ad-hoc 签名身份随每次构建变化：重新构建后「辅助功能」授权可能失效，需要重新勾选 `AnyDevice.app`。
@@ -67,7 +72,8 @@ description: 本项目 AnyDevice 的 macOS Wails 原生窗口（AnyDevice.app）
 
 ## 多显示器验证（本机 2 屏，左外接 2560×1440 + 内置 1440×900）
 
-- 不要用全屏 `screencapture` 判断窗口是否出现（只会截主屏，容易漏掉另一块屏上的窗口）。
+- 不要用全屏 `screencapture` 判断窗口是否出现：默认是**每屏截一个文件**（不是只截主屏，容易误判漏窗口）；
+  `-m` 才是只截主屏。要精确验证某个窗口，用窗口 ID 截图（见下）。
 - 正确做法：用 CoreGraphics 列窗口拿 `kCGWindowNumber`，再按窗口 ID 截图：
   `screencapture -x -o -l <windowID> out.png`（多屏/任意屏都能精确截到窗口）。
   Swift 片段可用 `CGWindowListCopyWindowInfo(.optionAll)` + `screencapture -l`。
