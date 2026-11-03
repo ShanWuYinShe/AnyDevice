@@ -31,17 +31,20 @@ export function playState() {
     mic: peerState.list.some((p) => p.mapping && p.mapping.play_mic_audio_local),
   };
 }
-// 目标订阅组合：只有真正开启了映射才向服务端订阅对应流（本机客户端默认不订阅）
+// 目标订阅组合：只有真正开启了映射才向服务端订阅对应流（本机客户端默认不订阅）。
+// sys/mic 分开声明：只映射系统声时服务端不必采集/下发麦克风流。
 export function targetSubs() {
   const play = playState();
   return {
-    audio: play.system || play.mic,
+    audio: play.system || play.mic, // 旧协议并集字段（兼容旧服务端）
+    sys: play.system,
+    mic: play.mic,
     mouse: peerState.list.some((p) => p.mapping && p.mapping.execute_mouse_local),
     keyboard: peerState.list.some((p) => p.mapping && p.mapping.execute_keyboard_local),
   };
 }
 
-let lastSubs = { audio: null, mouse: null, keyboard: null };
+let lastSubs = { audio: null, sys: null, mic: null, mouse: null, keyboard: null };
 
 export function openModal(id) {
   uiState.modal = id;
@@ -130,17 +133,21 @@ export async function fetchPeers() {
 export function sendSubscriptions() {
   if (!connState.wsOpen) return;
   const t = targetSubs();
-  if (lastSubs.audio === t.audio && lastSubs.mouse === t.mouse && lastSubs.keyboard === t.keyboard) return;
+  if (lastSubs.audio === t.audio && lastSubs.sys === t.sys && lastSubs.mic === t.mic
+    && lastSubs.mouse === t.mouse && lastSubs.keyboard === t.keyboard) return;
   // pcm：客户端没有 WebCodecs AudioDecoder（Wails macOS WKWebView / Safari）时
   // 声明 true，服务端把对端音频解码成 float32 PCM 再下发（见 server/hub.go）。
+  // sys_audio/mic_audio 为新协议分流订阅；audio 是旧协议并集字段。
   ws.send(JSON.stringify({
     action: 'set_mapping',
     audio: t.audio,
+    sys_audio: t.sys,
+    mic_audio: t.mic,
     mouse: t.mouse,
     keyboard: t.keyboard,
     pcm: typeof AudioDecoder === 'undefined',
   }));
-  lastSubs = { audio: t.audio, mouse: t.mouse, keyboard: t.keyboard };
+  lastSubs = { audio: t.audio, sys: t.sys, mic: t.mic, mouse: t.mouse, keyboard: t.keyboard };
 }
 
 // —— WebSocket 音频与遥测流 ——
@@ -301,7 +308,7 @@ export async function connectWebSocket() {
     connState.wsOpen = false;
     report('ws_close', 'code=' + (e && e.code) + ' reason=' + (e && e.reason) + ' wasClean=' + (e && e.wasClean));
     // 重连后服务端订阅回到默认值：重置已发送标记，onopen 时重新同步
-    lastSubs = { audio: null, mouse: null, keyboard: null };
+    lastSubs = { audio: null, sys: null, mic: null, mouse: null, keyboard: null };
     reconnectTimer = setTimeout(connectWebSocket, 2000);
   };
 }

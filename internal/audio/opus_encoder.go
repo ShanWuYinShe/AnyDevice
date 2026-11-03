@@ -73,7 +73,7 @@ type OpusEncoder struct {
 	packet   []byte
 }
 
-// NewOpusEncoder 创建 48kHz 立体声 128kbps 音频编码器。
+// NewOpusEncoder 创建 48kHz 立体声 128kbps 音频编码器（复杂度 5）。
 func NewOpusEncoder(onPacket func([]byte)) (*OpusEncoder, error) {
 	e := &OpusEncoder{onPacket: onPacket, packet: make([]byte, opusMaxPacket)}
 	var errCode C.int
@@ -85,7 +85,10 @@ func NewOpusEncoder(onPacket func([]byte)) (*OpusEncoder, error) {
 		C.opus_encoder_destroy(e.enc)
 		return nil, fmt.Errorf("设置比特率失败: %d", int(rc))
 	}
-	if rc := C.ctl_complexity(unsafe.Pointer(e.enc), 8); rc < 0 {
+	// 复杂度 5：Opus 默认复杂度偏高（libopus 默认 10，此处原为 8），而实时
+	// 串流只需要「够好的语音/音乐质量」；降到 5 可明显减少编码 CPU（游戏满载
+	// 时对其它程序的抢占更小），128kbps 下的听感差异基本不可辨。
+	if rc := C.ctl_complexity(unsafe.Pointer(e.enc), 5); rc < 0 {
 		C.opus_encoder_destroy(e.enc)
 		return nil, fmt.Errorf("设置复杂度失败: %d", int(rc))
 	}

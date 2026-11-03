@@ -41,8 +41,8 @@ func opusChunkForTest(t *testing.T, tag []byte) []byte {
 // AUPM→AUDM），而有解码能力的客户端仍收原始 Opus 包。
 func TestForwardPeerAudioRoutesPCMToAudioDecoderlessClients(t *testing.T) {
 	hub := NewHub(nil)
-	pcmClient := &Client{send: make(chan OutMessage, 16), audioEnabled: true, audioPCM: true}
-	opusClient := &Client{send: make(chan OutMessage, 16), audioEnabled: true}
+	pcmClient := &Client{send: make(chan OutMessage, 16), sysAudioEnabled: true, micAudioEnabled: true, audioPCM: true}
+	opusClient := &Client{send: make(chan OutMessage, 16), sysAudioEnabled: true, micAudioEnabled: true}
 	hub.clients[pcmClient] = true
 	hub.clients[opusClient] = true
 	go hub.Run()
@@ -85,8 +85,8 @@ func TestForwardPeerAudioRoutesPCMToAudioDecoderlessClients(t *testing.T) {
 // 无解码能力的客户端不应收到无法解码的 Opus 帧（避免每帧一次失败解码）。
 func TestOpusOnlyBroadcastSkippedForPCMClients(t *testing.T) {
 	hub := NewHub(nil)
-	pcmClient := &Client{send: make(chan OutMessage, 16), audioEnabled: true, audioPCM: true}
-	opusClient := &Client{send: make(chan OutMessage, 16), audioEnabled: true}
+	pcmClient := &Client{send: make(chan OutMessage, 16), sysAudioEnabled: true, micAudioEnabled: true, audioPCM: true}
+	opusClient := &Client{send: make(chan OutMessage, 16), sysAudioEnabled: true, micAudioEnabled: true}
 	hub.clients[pcmClient] = true
 	hub.clients[opusClient] = true
 	go hub.Run()
@@ -105,6 +105,71 @@ func TestOpusOnlyBroadcastSkippedForPCMClients(t *testing.T) {
 	case msg := <-pcmClient.send:
 		t.Fatalf("无解码能力客户端不应收到 Opus 帧，实际收到 %q", string(msg.data[:4]))
 	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// TestAudioStreamSplitRouting：系统声与麦克风按流独立订阅——只订阅系统声的
+// 客户端不应收到麦克风流（对应「只映射系统声时服务端不采麦克风」）。
+func TestAudioStreamSplitRouting(t *testing.T) {
+	hub := NewHub(nil)
+	sysOnly := &Client{send: make(chan OutMessage, 16), sysAudioEnabled: true}
+	micOnly := &Client{send: make(chan OutMessage, 16), micAudioEnabled: true}
+	hub.clients[sysOnly] = true
+	hub.clients[micOnly] = true
+	go hub.Run()
+
+	hub.BroadcastAudio(opusChunkForTest(t, audio.TagSystemAudioOpus))
+	select {
+	case msg := <-sysOnly.send:
+		if got := string(msg.data[:4]); got != string(audio.TagSystemAudioOpus) {
+			t.Fatalf("系统声订阅者应收到 %q，实际 %q", audio.TagSystemAudioOpus, got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("系统声订阅者未收到系统声")
+	}
+	select {
+	case msg := <-micOnly.send:
+		t.Fatalf("只订阅麦克风的客户端不应收到系统声，实际 %q", string(msg.data[:4]))
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	hub.BroadcastAudio(opusChunkForTest(t, audio.TagMicAudioOpus))
+	select {
+	case msg := <-micOnly.send:
+		if got := string(msg.data[:4]); got != string(audio.TagMicAudioOpus) {
+			t.Fatalf("麦克风订阅者应收到 %q，实际 %q", audio.TagMicAudioOpus, got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("麦克风订阅者未收到麦克风")
+	}
+	select {
+	case msg := <-sysOnly.send:
+		t.Fatalf("只订阅系统声的客户端不应收到麦克风，实际 %q", string(msg.data[:4]))
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// TestApplyMappingSplitAndLegacy：新协议按流订阅、旧协议 audio 并集兼容，
+// 且分流模式一旦建立不会被旧字段覆盖。
+func TestApplyMappingSplitAndLegacy(t *testing.T) {
+	b := func(v bool) *bool { return &v }
+
+	c := &Client{}
+	c.applyMapping(b(true), b(true), b(false), b(false), b(false), nil)
+	if !c.sysAudioEnabled || c.micAudioEnabled {
+		t.Fatalf("新协议分流订阅错误: sys=%v mic=%v", c.sysAudioEnabled, c.micAudioEnabled)
+	}
+
+	legacy := &Client{}
+	legacy.applyMapping(b(true), nil, nil, nil, nil, nil)
+	if !legacy.sysAudioEnabled || !legacy.micAudioEnabled {
+		t.Fatalf("旧协议 audio 并集应同时开系统声与麦克风: sys=%v mic=%v",
+			legacy.sysAudioEnabled, legacy.micAudioEnabled)
+	}
+
+	c.applyMapping(b(false), nil, nil, nil, nil, nil)
+	if !c.sysAudioEnabled {
+		t.Fatalf("分流模式后旧 audio 字段不应覆盖 sys_audio")
 	}
 }
 

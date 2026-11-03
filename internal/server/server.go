@@ -499,6 +499,9 @@ func (s *Server) buildRoutes() http.Handler {
 				micDev = s.micAudioEngine.DeviceName()
 			}
 			s.discovery.UpdateProvides(sysAudioVal, micAudioVal, mouseVal, keyboardVal, sysDev, micDev, audioFormatOf())
+			// 「本机共享」开关必须真正门控采集：关闭某项后立即停止对应采集/钩子，
+			// 而不只是改发现广播（否则关掉共享麦克风仍会被对端订阅触发采集）。
+			s.applyProvidesToEngines(sysAudioVal, micAudioVal, mouseVal, keyboardVal)
 			json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
 			return
 		}
@@ -541,12 +544,20 @@ func (s *Server) buildRoutes() http.Handler {
 		if s.micAudioEngine != nil {
 			micDev = s.micAudioEngine.DeviceName()
 		}
-		audioSubs, mouseSubs, keyboardSubs := s.hub.SubscriberCounts()
+		sysAudioSubs, micAudioSubs, mouseSubs, keyboardSubs := s.hub.SubscriberCounts()
 		status := map[string]interface{}{
-			"audio_subs":          audioSubs,
-			"audio_pcm_clients":   s.hub.PCMAudioClientCount(),
-			"mouse_subs":          mouseSubs,
-			"keyboard_subs":       keyboardSubs,
+			"audio_subs":        sysAudioSubs + micAudioSubs,
+			"sys_audio_subs":    sysAudioSubs,
+			"mic_audio_subs":    micAudioSubs,
+			"audio_pcm_clients": s.hub.PCMAudioClientCount(),
+			"mouse_subs":        mouseSubs,
+			"keyboard_subs":     keyboardSubs,
+			// 采集设备/系统钩子的真实运行状态：无人订阅时应全为 false
+			//（按需启停生效，空闲时不占音频设备与全局钩子）。
+			"sys_audio_engine":    s.systemAudioEngine != nil && s.systemAudioEngine.IsRunning(),
+			"mic_audio_engine":    s.micAudioEngine != nil && s.micAudioEngine.IsRunning(),
+			"mouse_capture":       s.mouseEngine != nil && s.mouseEngine.IsRunning(),
+			"keyboard_capture":    s.keyboardEngine != nil && s.keyboardEngine.IsRunning(),
 			"clients":             s.hub.ClientCount(),
 			"peers_count":         len(s.peerMgr.ListPeers("")),
 			"bytes_sent":          s.hub.TotalBytesSent(),
@@ -557,8 +568,9 @@ func (s *Server) buildRoutes() http.Handler {
 			"mic_device":          micDev,
 			"current_ip":          s.GetCurrentIP(),
 			"primary_url":         s.GetCurrentURL(),
-			"mouse_active":        true,
-			"keyboard_active":     true,
+			// 兼容旧字段：改为真实运行状态，避免与 *_capture 字段矛盾
+			"mouse_active":    s.mouseEngine != nil && s.mouseEngine.IsRunning(),
+			"keyboard_active": s.keyboardEngine != nil && s.keyboardEngine.IsRunning(),
 		}
 		json.NewEncoder(w).Encode(status)
 	})
@@ -640,6 +652,23 @@ func noCache(next http.Handler) http.Handler {
 func (s *Server) Start() error {
 	addr := fmt.Sprintf(":%d", s.port)
 	return http.ListenAndServe(addr, s.SetupRoutes())
+}
+
+// applyProvidesToEngines 把「本机共享」开关同步到采集引擎/捕获钩子。
+// 关闭后即使仍有对端订阅，对应引擎也会立即停止（隐私与 CPU 双重收益）。
+func (s *Server) applyProvidesToEngines(sysAudio, micAudio, mouse, keyboard bool) {
+	if s.systemAudioEngine != nil {
+		s.systemAudioEngine.SetEnabled(sysAudio)
+	}
+	if s.micAudioEngine != nil {
+		s.micAudioEngine.SetEnabled(micAudio)
+	}
+	if s.mouseEngine != nil {
+		s.mouseEngine.SetEnabled(mouse)
+	}
+	if s.keyboardEngine != nil {
+		s.keyboardEngine.SetEnabled(keyboard)
+	}
 }
 
 // audioFormatOf 返回本机音频链路的协议标识（唯一事实来源在 internal/audio）。

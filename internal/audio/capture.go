@@ -67,6 +67,26 @@ type Engine struct {
 	deviceIndex int
 	onChunk     func([]byte)
 
+	// 按需启停（空闲零空转）：采集设备只在有订阅者时运行。
+	// 订阅数由 hub 回调经 SetSubscribers 写入；supervisor goroutine 独占
+	// Start/Stop 调用权（malgo 初始化/停止是阻塞调用，绝不能放在 hub
+	// 广播循环里），订阅归零后延迟 idleGrace 再停——避免映射开关抖动
+	// 导致音频设备反复初始化，也避免短暂的订阅空窗打断正在播放的音频。
+	supWake     chan struct{} // 订阅数变化唤醒（容量 1，合并重复通知）
+	supDone     chan struct{} // 关闭后 supervisor 退出
+	supExited   chan struct{} // supervisor 退出完成（StopSupervisor 等待）
+	supStarted  atomic.Bool
+	supOnce     sync.Once
+	supStopOnce sync.Once
+	idleGrace   time.Duration // 订阅归零后延迟多久停采集
+	retryDelay  time.Duration // 启动失败后的重试间隔
+	startFn     func() error  // 测试可替换（默认 e.Start）
+	stopFn      func()        // 测试可替换（默认 e.Stop）
+	defName     string        // 未启动时的展示名（来自默认设备枚举）
+	// enabled 对应 UI「本机共享」开关：关闭后即使仍有对端订阅也不采集
+	// （此前该开关只改发现广播，关掉共享麦克风仍会被采集——隐私与 CPU 双输）。
+	enabled atomic.Bool
+
 	ctx       *malgo.AllocatedContext
 	device    *malgo.Device
 	cancelGen context.CancelFunc
@@ -82,9 +102,15 @@ type Engine struct {
 	encQueue chan []byte   // 待编码帧（每帧 20ms float32 立体声 ≈ 7.7KB）
 	encDone  chan struct{} // Stop 关闭后编码 goroutine 排空队列退出
 
-	mu          sync.Mutex
-	isRunning   atomic.Bool
-	isTestTone  bool // 当前来源为占位测试音（无真实虚拟声卡时的回退）
+	// mu 只串行化 Start/Stop 生命周期；音频回调线程绝不碰它。
+	mu        sync.Mutex
+	isRunning atomic.Bool
+	// isTestTone 用 atomic：onChunk（编码 goroutine）会查询它，若与 Stop 的
+	// e.mu 互斥会形成 Stop(持 mu 等 opusMu) ↔ encodeLoop(持 opusMu 等 mu)
+	// 的死锁环。
+	isTestTone atomic.Bool // 当前来源为占位测试音（无真实虚拟声卡时的回退）
+	// nameMu 只保护设备展示名：HTTP/UI 高频读取，不能与阻塞的 Start/Stop 抢 mu。
+	nameMu      sync.Mutex
 	devName     string
 	subscribers int64 // 音频订阅数（atomic）：无订阅者时引擎静默，避免空转生成与广播 PCM
 
@@ -103,31 +129,189 @@ func NewEngine(kind AudioKind, mode CaptureMode, deviceIndex int, onChunk func([
 	if kind == "" {
 		kind = KindSystem
 	}
-	return &Engine{
+	e := &Engine{
 		kind:        kind,
 		mode:        mode,
 		deviceIndex: deviceIndex,
 		onChunk:     onChunk,
+		supWake:     make(chan struct{}, 1),
+		supDone:     make(chan struct{}),
+		supExited:   make(chan struct{}),
+		idleGrace:   8 * time.Second,
+		retryDelay:  5 * time.Second,
 	}
+	if kind == KindMic {
+		e.defName = "麦克风输入（按需启用）"
+	} else {
+		e.defName = "系统扬声器输出（按需启用）"
+	}
+	e.startFn = e.Start
+	e.stopFn = e.Stop
+	e.enabled.Store(true)
+	return e
+}
+
+// SetEnabled 由「本机共享」设置驱动：关闭后即使仍有对端订阅也立即停止采集，
+// 重新打开且仍有订阅时自动恢复采集。
+func (e *Engine) SetEnabled(v bool) {
+	e.enabled.Store(v)
+	e.wakeSupervisor()
+}
+
+// wantActive 报告当前是否应该采集：有订阅者且本机共享未关闭。
+func (e *Engine) wantActive() bool {
+	return atomic.LoadInt64(&e.subscribers) > 0 && e.enabled.Load()
 }
 
 // SetSubscribers 由 hub 在音频订阅数变化时回调更新；<=0 表示当前无人订阅音频。
+// 会唤醒 supervisor 按需启停采集设备（本函数不做阻塞操作，可在 hub 循环中调用）。
 func (e *Engine) SetSubscribers(n int64) {
 	atomic.StoreInt64(&e.subscribers, n)
+	e.wakeSupervisor()
+}
+
+// wakeSupervisor 非阻塞地通知 supervisor「订阅数变了」。
+func (e *Engine) wakeSupervisor() {
+	select {
+	case e.supWake <- struct{}{}:
+	default:
+	}
+}
+
+// StartSupervisor 启动按需启停监督 goroutine（幂等）。
+// 启动后采集设备不再由调用方直接 Start：订阅数 > 0 才启动，归零 idleGrace 后停止。
+func (e *Engine) StartSupervisor() {
+	e.supOnce.Do(func() {
+		e.supStarted.Store(true)
+		go e.supervise()
+	})
+}
+
+// StopSupervisor 停止监督 goroutine 并等待其退出（幂等）。
+// 之后由调用方按需执行最终的 Stop() 释放资源。
+func (e *Engine) StopSupervisor() {
+	if !e.supStarted.Load() {
+		return
+	}
+	e.supStopOnce.Do(func() { close(e.supDone) })
+	<-e.supExited
+}
+
+// supervise 是采集设备的唯一启停决策者：订阅数 > 0 → 启动采集；
+// 订阅归零 → 延迟 idleGrace 后停止采集。启动失败按 retryDelay 重试
+// （不热循环重试，避免设备不可用时反而持续占 CPU）。
+func (e *Engine) supervise() {
+	defer close(e.supExited)
+
+	var idleTimer, retryTimer *time.Timer
+	var idleC, retryC <-chan time.Time
+	stopIdle := func() {
+		if idleTimer != nil {
+			idleTimer.Stop()
+			idleTimer, idleC = nil, nil
+		}
+	}
+	stopRetry := func() {
+		if retryTimer != nil {
+			retryTimer.Stop()
+			retryTimer, retryC = nil, nil
+		}
+	}
+	startIfIdle := func() {
+		if e.isRunning.Load() {
+			return
+		}
+		if err := e.startFn(); err != nil {
+			util.Logf("[音频] %s采集启动失败（%v），%v 后重试", e.kindName(), err, e.retryDelay)
+			stopRetry()
+			retryTimer = time.NewTimer(e.retryDelay)
+			retryC = retryTimer.C
+		}
+	}
+
+	for {
+		select {
+		case <-e.supDone:
+			stopIdle()
+			stopRetry()
+			return
+		case <-e.supWake:
+			if e.wantActive() {
+				stopIdle()
+				stopRetry()
+				startIfIdle()
+				continue
+			}
+			stopRetry()
+			// 本机共享被关闭：立即停止采集（隐私优先，不等宽限期）
+			if !e.enabled.Load() {
+				stopIdle()
+				if e.isRunning.Load() {
+					util.Logf("[音频] 本机共享已关闭，停止%s采集", e.kindName())
+					e.stopFn()
+				}
+				continue
+			}
+			// 订阅归零：若采集仍在跑，安排延迟停止
+			if e.isRunning.Load() && idleTimer == nil {
+				idleTimer = time.NewTimer(e.idleGrace)
+				idleC = idleTimer.C
+			}
+		case <-idleC:
+			idleTimer, idleC = nil, nil
+			if atomic.LoadInt64(&e.subscribers) <= 0 && e.isRunning.Load() {
+				util.Logf("[音频] 无订阅者，停止%s采集（空闲零空转）", e.kindName())
+				e.stopFn()
+			}
+		case <-retryC:
+			retryTimer, retryC = nil, nil
+			if e.wantActive() {
+				startIfIdle()
+			}
+		}
+	}
+}
+
+// kindName 返回日志用的流名称。
+func (e *Engine) kindName() string {
+	if e.kind == KindMic {
+		return "麦克风"
+	}
+	return "系统声"
+}
+
+// SetDefaultName 设置未启动时的展示名（启动后会被真实设备名覆盖）。
+// 用于「按需启动」场景：应用启动时采集设备尚未打开，UI/发现广播仍需要
+// 一个人类可读的设备名。
+func (e *Engine) SetDefaultName(name string) {
+	if name == "" {
+		return
+	}
+	e.nameMu.Lock()
+	e.defName = name
+	e.nameMu.Unlock()
 }
 
 // DeviceName returns the active audio source name.
 func (e *Engine) DeviceName() string {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.devName
+	e.nameMu.Lock()
+	defer e.nameMu.Unlock()
+	if e.devName != "" {
+		return e.devName
+	}
+	return e.defName
+}
+
+// IsRunning 报告采集设备当前是否在运行（诊断用）。
+func (e *Engine) IsRunning() bool {
+	return e.isRunning.Load()
 }
 
 // setDevName 线程安全地写入当前音频源名称。
 func (e *Engine) setDevName(name string) {
-	e.mu.Lock()
+	e.nameMu.Lock()
 	e.devName = name
-	e.mu.Unlock()
+	e.nameMu.Unlock()
 }
 
 // Kind returns whether this engine captures system output or mic input.
@@ -137,10 +321,10 @@ func (e *Engine) Kind() AudioKind {
 
 // Start begins capturing or generating audio.
 //
-// 重要：本函数在检查 isRunning 后立即释放 e.mu——后续的 miniaudio
-// 初始化是阻塞调用，期间音频回调线程可能已启动并调用 emit（需要
-// 竞争统计锁），持锁初始化曾导致回调线程与主线程互等死锁。
-// isRunning 仅在成功后加锁写入。
+// 重要：本函数不持 e.mu（e.mu 只保护 Stop 的生命周期串行化）——miniaudio
+// 初始化是阻塞调用，期间音频回调线程可能已启动并调用 emit；历史上持锁
+// 初始化曾导致回调线程与主线程互等死锁。运行态由 isRunning（atomic）表达，
+// 启停调用方由 supervisor 串行化。
 // 已知微泄漏：malgo DeviceInfo.ID.Pointer() 每次调用 C.CBytes 分配且
 // vendored malgo 无释放入口（third_party/malgo/device_info.go）——InitDevice
 // 同步复制 ID 后指针即无用，每次 Start 残留数十字节，量级可忽略，不做
@@ -149,10 +333,15 @@ func (e *Engine) Start() error {
 	if !e.isRunning.CompareAndSwap(false, true) {
 		return nil
 	}
-	// 编码卸载队列与消费者随本次运行创建（Stop 关 encDone 收尾）
+	// 每次运行重新判定来源：上一次运行若是占位测试音，本次必须先复位
+	e.isTestTone.Store(false)
+	// 编码卸载队列与消费者随本次运行创建（Stop 关 encDone 收尾）。
+	// 队列/退出信号以参数传给 encodeLoop：按需启停 Stop→Start 时旧编码
+	// goroutine 可能尚未退出，若它继续读 e.encQueue/e.encDone 字段就会与
+	// Start 的重新赋值构成数据竞争。
 	e.encQueue = make(chan []byte, 8)
 	e.encDone = make(chan struct{})
-	go e.encodeLoop()
+	go e.encodeLoop(e.encQueue, e.encDone)
 	if err := e.start(); err != nil {
 		// 失败路径回滚 isRunning：否则引擎永久卡在「已运行」，后续 Start 假成功
 		e.isRunning.Store(false)
@@ -170,12 +359,20 @@ func (e *Engine) Start() error {
 
 // encodeLoop 在独立 goroutine 中消费编码队列：cgo 建编码器、逐样本 unsafe
 // 转换与 Opus Feed 都不再占用音频实时回调线程（2026-10-24 审查加固项 P6）。
-func (e *Engine) encodeLoop() {
+func (e *Engine) encodeLoop(queue <-chan []byte, done <-chan struct{}) {
 	tag := TagSystemAudioOpus
 	if e.kind == KindMic {
 		tag = TagMicAudioOpus
 	}
-	for frame := range e.encQueue {
+	for {
+		var frame []byte
+		select {
+		case <-done:
+			// Stop 关闭编码通道：立即退出，绝不常驻（否则每次「按需启停」
+			// 都会泄漏一个编码 goroutine，长期运行会持续堆积）
+			return
+		case frame = <-queue:
+		}
 		e.opusMu.Lock()
 		// Stop 已销毁编码器（isRunning=false）后到达的迟到帧直接丢弃，
 		// 防止这里重建孤儿编码器（重建后无人销毁）
@@ -235,6 +432,10 @@ func (e *Engine) start() error {
 	}
 
 	// Try hardware capture via malgo
+	//
+	// 线程优先级保持 miniaudio 默认（HIGHEST）：实测采集线程稳态 CPU 仅约
+	// 0.5% 单核，降优先级对游戏帧率几乎无感，却会在 CPU 满载时拉长调度延迟
+	// 导致 WASAPI overrun（断音）——收益/风险不成比例，故不调。
 	ctx, err := malgo.InitContext(nil, malgo.ContextConfig{}, nil)
 	if err != nil {
 		util.Logf("[Audio] Malgo context init failed for %s: %v\n", e.kind, err)
@@ -287,7 +488,7 @@ func (e *Engine) start() error {
 						break
 					}
 				}
-				if e.devName == "麦克风输入" && len(devices) > 0 {
+				if e.DeviceName() == "麦克风输入" && len(devices) > 0 {
 					e.setDevName(devices[0].Name())
 					deviceConfig.Capture.DeviceID = devices[0].ID.Pointer()
 				}
@@ -312,9 +513,12 @@ func (e *Engine) start() error {
 				}
 			}
 		} else {
-			// macOS / Linux: Try finding virtual loopback device
-			e.autoSelectVirtualDevice(&deviceConfig, devType)
-			if e.devName == "" {
+			// macOS / Linux: Try finding virtual loopback device。
+			// 注意：必须用返回值判断「本次是否找到虚拟设备」，不能看 e.devName——
+			// devName 是展示名且 Stop 后不清空，按需启停的第二次 Start 会因上次
+			// 回退写入的「未安装虚拟声卡」名字而误判为已找到设备，继续用
+			// Capture 设备初始化 → 把默认麦克风当作系统声采集推流（隐私事故）。
+			if !e.autoSelectVirtualDevice(&deviceConfig, devType) {
 				// No virtual audio driver installed on macOS -> run test tone for system audio
 				// Do NOT capture user microphone!
 				e.setDevName("系统扬声器 (未安装虚拟声卡，无法捕获原声)")
@@ -331,11 +535,21 @@ func (e *Engine) start() error {
 		if e.kind == KindMic {
 			kindName = "麦克风"
 		}
+		// done 以局部变量捕获：按需启停 Stop→Start 时本次运行的诊断 goroutine
+		// 可能尚未退出，读 e.encDone 字段会与下一次 Start 的赋值构成数据竞争。
+		done := e.encDone
 		go func() {
+			// 诊断 goroutine 随本次运行退出（Stop 关闭 encDone）：按需启停
+			// 会反复 Start/Stop，不能每次泄漏一个 2s ticker 死循环。
+			ticker := time.NewTicker(2 * time.Second)
+			defer ticker.Stop()
 			var lastChunks, lastZero, lastBytes, lastFrames, lastDropped uint64
 			for {
-				time.Sleep(2 * time.Second)
-				e.mu.Lock()
+				select {
+				case <-done:
+					return
+				case <-ticker.C:
+				}
 				c := e.dbgChunks.Load()
 				z := e.dbgZeroChunks.Load()
 				b := uint64(e.dbgBytes.Load())
@@ -396,7 +610,10 @@ func (e *Engine) start() error {
 	return nil
 }
 
-func (e *Engine) autoSelectVirtualDevice(config *malgo.DeviceConfig, devType malgo.DeviceType) {
+// autoSelectVirtualDevice 在非 Windows 平台寻找虚拟回环设备并写入 config。
+// 返回 true 表示找到并已配置；false 表示本机没有虚拟回环设备（调用方必须
+// 回退为测试音/不可用，绝不能退化为采集默认麦克风）。
+func (e *Engine) autoSelectVirtualDevice(config *malgo.DeviceConfig, devType malgo.DeviceType) bool {
 	var listType malgo.DeviceType
 	if devType == malgo.Loopback {
 		listType = malgo.Playback
@@ -406,7 +623,7 @@ func (e *Engine) autoSelectVirtualDevice(config *malgo.DeviceConfig, devType mal
 
 	devices, err := e.ctx.Devices(listType)
 	if err != nil {
-		return
+		return false
 	}
 
 	for _, d := range devices {
@@ -419,9 +636,10 @@ func (e *Engine) autoSelectVirtualDevice(config *malgo.DeviceConfig, devType mal
 			} else {
 				config.Capture.DeviceID = d.ID.Pointer()
 			}
-			return
+			return true
 		}
 	}
+	return false
 }
 
 // Stop stops capture or test tone.
@@ -527,9 +745,7 @@ func (e *Engine) AudioFormat() string {
 // IsTestTone 报告当前系统声来源是否为占位测试音。
 // 测试音仅用于远程接收端确认链路，不应广播给本机 UI 播放。
 func (e *Engine) IsTestTone() bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.isTestTone
+	return e.isTestTone.Load()
 }
 
 // startTestTone 启动占位测试音（仅调试用，默认关闭）。
@@ -541,9 +757,7 @@ func (e *Engine) startTestTone() {
 			"如需链路调试占位音，设置 ANY_DEVICE_TEST_TONE=1")
 		return
 	}
-	e.mu.Lock()
-	e.isTestTone = true
-	e.mu.Unlock()
+	e.isTestTone.Store(true)
 	ctx, cancel := context.WithCancel(context.Background())
 	e.cancelGen = cancel
 

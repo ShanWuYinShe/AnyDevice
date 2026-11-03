@@ -41,8 +41,13 @@
   - 本机 UI 客户端若没有 WebCodecs `AudioDecoder`（macOS Wails 窗口的 WKWebView、Safari），服务端在转发对端音频时自动解码成 float32 PCM 再下发，**原生窗口内播放不会因浏览器内核缺解码器而无声**；
   - 有解码能力的客户端（Chrome/Edge/WebView2）仍收 Opus，局域网带宽不受影响（`/api/status` 的 `audio_pcm_clients` 可查看当前声明走 PCM 的客户端数）；
   - 设备卡片上的「接收码率」是**对端推流到本机的真实网络字节率**（服务端按对端逐条统计，`/api/peers` 的 `mapping.rx_*_kbps`，不同对端互不混淆）：Opus 约 16 KB/s，旧版对端 PCM 约 350–380 KB/s；本机把 Opus 解码成 PCM 播放的部分不计入该数字，所以原生窗口与浏览器看到的是同一个网络码率。
-- **按需订阅，空闲零空转**：
-  - 本机 UI 窗口默认不订阅音频/鼠标/键盘流，只有真正开启映射时才通过 `set_mapping` 动态订阅；无人订阅时音频捕获引擎静默，显著降低空闲 CPU 与网络开销。
+- **按需订阅，空闲零空转（真·按需启停）**：
+  - 本机 UI 窗口默认不订阅音频/鼠标/键盘流，只有真正开启映射时才通过 `set_mapping` 动态订阅；
+  - **无人订阅时不打开音频设备、不安装系统级输入钩子**：应用启动只做设备枚举与服务监听，采集引擎与 `WH_MOUSE_LL`/`WH_KEYBOARD_LL`（macOS `CGEventTap`）在第一个订阅到达时才启动，订阅归零并超过宽限期（音频 8s、键鼠 5s）后自动停止/卸载；
+  - **系统声与麦克风分开订阅**：只映射系统声时不会同时打开麦克风采集（Windows 采集 APO/降噪处理会白耗 CPU，麦克风常驻采集也是隐私问题）；旧版对端仍按 `audio` 并集语义兼容；
+  - **「本机共享」开关真正门控采集**：关闭系统声/麦克风/鼠标/键盘共享后，即使仍有对端订阅也会立即停止对应采集/卸载钩子（此前该开关只改发现广播）；
+  - Opus 编码复杂度 5（128kbps 下听感不变、CPU 更低）；音频采集线程保持 miniaudio 默认优先级——实测降优先级对游戏帧率几乎无感，却可能在 CPU 满载时导致采集 overrun（断音），收益/风险不成比例；
+  - 诊断：`/api/status` 的 `sys_audio_engine`/`mic_audio_engine`/`mouse_capture`/`keyboard_capture` 直接反映各采集引擎与钩子的运行状态，无人订阅时应全为 `false`；日志会输出「无订阅者，停止…采集/卸载…钩子（空闲零空转）」。
 - **纯系统原生驱动（事件驱动捕获）**：
   - 音频：Windows WASAPI Loopback / macOS CoreAudio / Linux PipeWire。
   - 鼠标/键盘捕获参照 Deskflow 的事件驱动模型：Windows 低级钩子（`WH_MOUSE_LL`/`WH_KEYBOARD_LL`）、macOS `CGEventTap`（只听模式），实时捕获移动、按键、滚轮，未授权时自动回退轮询模式；
@@ -64,6 +69,14 @@
 | `ANY_DEVICE_KB_DEBUG=1` | 键鼠链路诊断：捕获端发出的事件、执行端收到的事件与模拟执行 |
 
 **日志位置**：原生窗口没有控制台，日志同时写入文件——macOS `.app` 形态写入用户配置目录 `~/Library/Application Support/AnyDevice/any_device.log`（包内文件受代码签名保护，禁止写入）；Windows / 裸二进制写入可执行文件同目录的 `any_device.log`。界面左下角会显示日志实际路径。
+
+**性能 / 与其他程序共存的自查**：
+1. 无人映射时 `curl -s http://127.0.0.1:8080/api/status`（端口按实际）应看到 `sys_audio_engine`、`mic_audio_engine`、`mouse_capture`、`keyboard_capture` 全为 `false`——此时应用不占用音频设备、不安装全局输入钩子；
+2. 开启映射后对应字段变 `true`，关闭映射后约 5–8 秒回到 `false`（宽限期用于避免映射开关抖动导致设备反复初始化）；
+3. 只映射系统声时 `mic_audio_subs` 应为 0、`mic_audio_engine` 应为 `false`（不采麦克风）；
+4. 在「本机共享」里关闭某项后，即使对端仍订阅，对应 `*_engine`/`*_capture` 也应为 `false`（共享开关真正门控采集，而不只是改发现广播）；
+5. Windows 上怀疑影响游戏帧率时：任务管理器/Process Explorer 分别看 `any_device.exe` 与 `msedgewebview2.exe`（Wails 窗口的 WebView2 子进程）的 CPU/GPU；再按「只开着不映射 → 映射系统声 → 映射键鼠」逐项对比，并用 PresentMon/CapFrameX 对比帧时间而不是只看平均帧率；把窗口最小化再测可区分「窗口/GPU 合成」与「采集/推流」的影响；
+6. 只作为**提供方**（把本机声音/键鼠共享给别的设备）时，可用 `-no-ui` 无窗口运行，彻底去掉桌面窗口与 WebView2 的合成开销，再用手机/另一台电脑的浏览器打开 `http://<本机IP>:8080` 操作。
 
 **音频映射无声时的自查**：
 1. `ANY_DEVICE_AUDIO_DEBUG=1` 启动捕获端与播放端——若捕获端显示「本段全零静音」或速率极低，说明捕获设备上确实没有声音在播放（WASAPI Loopback 只捕获默认输出设备上正在播放的声音）；

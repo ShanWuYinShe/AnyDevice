@@ -9,7 +9,7 @@ import (
 )
 
 func TestPeerManagerAndAPIs(t *testing.T) {
-	hub := NewHub(func(a, m, k int) {})
+	hub := NewHub(func(a, b, m, k int) {})
 	s := NewServer(8080, "127.0.0.1", hub, nil, nil, nil, nil)
 	handler := s.SetupRoutes()
 
@@ -148,7 +148,7 @@ func TestPeerManagerAndAPIs(t *testing.T) {
 // TestViewerSelfFiltering 回归测试：手机/外部浏览器打开 UI 时，
 // 自己的入站条目不得出现在自己的设备列表里（用户报告的“列表一直显示自己”）。
 func TestViewerSelfFiltering(t *testing.T) {
-	hub := NewHub(func(a, m, k int) {})
+	hub := NewHub(func(a, b, m, k int) {})
 	s := NewServer(8080, "127.0.0.1", hub, nil, nil, nil, nil)
 	handler := s.SetupRoutes()
 
@@ -190,22 +190,31 @@ func TestViewerSelfFiltering(t *testing.T) {
 	}
 }
 
-// TestMappingHandshake 校验订阅声明内容：音频取系统声/麦克风的并集，
-// 并携带本机节点身份（供对端归并设备档案）。
+// TestMappingHandshake 校验订阅声明内容：audio 取系统声/麦克风并集（旧协议
+// 兼容），sys_audio/mic_audio 为按流订阅（新协议），并携带本机节点身份
+// （供对端归并设备档案）。
 func TestMappingHandshake(t *testing.T) {
-	hub := NewHub(func(a, m, k int) {})
+	hub := NewHub(func(a, b, m, k int) {})
 	s := NewServer(8080, "127.0.0.1", hub, nil, nil, nil, nil)
 	m := PeerMappingState{PlaySystemAudioLocal: true, ExecuteKeyboardLocal: true}
 	h := s.peerMgr.mappingHandshake(m)
-	if h["audio"] != true || h["mouse"] != false || h["keyboard"] != true {
+	if h["audio"] != true || h["sys_audio"] != true || h["mic_audio"] != false ||
+		h["mouse"] != false || h["keyboard"] != true {
 		t.Fatalf("unexpected handshake: %+v", h)
 	}
 	if h["node_id"] == "" || h["node_name"] == "" {
 		t.Fatalf("handshake must carry node identity: %+v", h)
 	}
+	// 只映射麦克风：sys_audio 必须为 false，对端据此不必采集系统声
+	m2 := PeerMappingState{PlayMicAudioLocal: true}
+	h2 := s.peerMgr.mappingHandshake(m2)
+	if h2["sys_audio"] != false || h2["mic_audio"] != true || h2["audio"] != true {
+		t.Fatalf("mic-only mapping handshake wrong: %+v", h2)
+	}
 	m3 := PeerMappingState{}
 	h3 := s.peerMgr.mappingHandshake(m3)
-	if h3["audio"] != false || h3["mouse"] != false || h3["keyboard"] != false {
+	if h3["audio"] != false || h3["sys_audio"] != false || h3["mic_audio"] != false ||
+		h3["mouse"] != false || h3["keyboard"] != false {
 		t.Fatalf("empty mapping must subscribe nothing: %+v", h3)
 	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -87,28 +88,31 @@ func main() {
 	// 音频引擎在 hub 之后才创建，先声明变量供下方闭包引用（与上方 hub 变量同模式）
 	var systemAudioEngine *audio.Engine
 	var micAudioEngine *audio.Engine
-	hub = server.NewHub(func(audioSubs, mouseSubs, keyboardSubs int) {
+	hub = server.NewHub(func(sysAudioSubs, micAudioSubs, mouseSubs, keyboardSubs int) {
 		mouseEngine.SetSubscribers(int64(mouseSubs))
 		keyboardEngine.SetSubscribers(int64(keyboardSubs))
-		// 将音频订阅数回传给两个音频引擎：无订阅者时引擎静默，避免空转生成 PCM
+		// 系统声与麦克风分别按各自订阅数按需启停：只映射系统声时不再
+		// 同时打开麦克风采集（Windows 采集 APO/降噪处理会白耗 CPU，且
+		// 麦克风常驻采集是隐私问题）。
 		if systemAudioEngine != nil {
-			systemAudioEngine.SetSubscribers(int64(audioSubs))
+			systemAudioEngine.SetSubscribers(int64(sysAudioSubs))
 		}
 		if micAudioEngine != nil {
-			micAudioEngine.SetSubscribers(int64(audioSubs))
+			micAudioEngine.SetSubscribers(int64(micAudioSubs))
 		}
 	})
 	go hub.Run()
 
-	mouseEngine.Start()
-	defer mouseEngine.Stop()
-
-	keyboardEngine.Start()
-	defer keyboardEngine.Stop()
+	// 键鼠捕获按订阅数按需安装/卸载系统级钩子：无人映射键鼠时不常驻
+	// WH_MOUSE_LL/WH_KEYBOARD_LL（常驻全局钩子会让全系统输入事件都绕经
+	// 本进程，高回报率鼠标下明显增加系统开销）。
+	mouseEngine.StartSupervisor()
+	keyboardEngine.StartSupervisor()
 
 	// 3. Initialize Audio Engines (Independent System Output & Microphone Input)
 	// 系统声回调：占位测试音只广播给远程订阅端——本机 UI 播放测试音没有意义
 	// （会听到系统提示音般的周期性"滴滴"），远程映射本机系统声时仍需测试音确认链路。
+	sysDefaultName, micDefaultName := audio.DefaultDeviceNames(devices)
 	systemAudioEngine = audio.NewEngine(audio.KindSystem, audio.CaptureMode(*mode), *deviceIdx, func(data []byte) {
 		if systemAudioEngine != nil && systemAudioEngine.IsTestTone() {
 			hub.BroadcastAudioRemoteOnly(data)
@@ -116,22 +120,26 @@ func main() {
 		}
 		hub.BroadcastAudio(data)
 	})
-	go func() {
-		if err := systemAudioEngine.Start(); err != nil {
-			util.Logf("[Audio] 系统声音捕获初始化警告: %v", err)
-		}
-		util.Logf("[启动] 系统声音引擎: %s", systemAudioEngine.DeviceName())
-	}()
-	defer systemAudioEngine.Stop()
+	systemAudioEngine.SetDefaultName(sysDefaultName)
+	systemAudioEngine.StartSupervisor()
 
 	micAudioEngine = audio.NewEngine(audio.KindMic, audio.CaptureMode(*mode), -1, hub.BroadcastAudio)
-	go func() {
-		if err := micAudioEngine.Start(); err != nil {
-			util.Logf("[Audio] 麦克风输入捕获初始化警告: %v\n", err)
-		}
-		util.Logf("[启动] 麦克风引擎: %s", micAudioEngine.DeviceName())
-	}()
-	defer micAudioEngine.Stop()
+	micAudioEngine.SetDefaultName(micDefaultName)
+	micAudioEngine.StartSupervisor()
+
+	// 统一收尾：先停监督 goroutine（不再有人启停采集），再释放资源。
+	// 幂等；错误退出路径也会调用，避免 os.Exit 跳过 defer 留下设备/钩子。
+	stopAll := func() {
+		systemAudioEngine.StopSupervisor()
+		systemAudioEngine.Stop()
+		micAudioEngine.StopSupervisor()
+		micAudioEngine.Stop()
+		mouseEngine.StopSupervisor()
+		mouseEngine.Stop()
+		keyboardEngine.StopSupervisor()
+		keyboardEngine.Stop()
+	}
+	defer stopAll()
 
 	// 4. Network & URL Information (Using OS routing resolution to skip virtual adapters)
 	primaryIP := util.GetPrimaryIP(*customIP)
@@ -160,22 +168,20 @@ func main() {
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", *port))
 	if err != nil {
 		util.Logf("[Fatal] 端口 %d 监听失败（可能已被其他实例占用）: %v", *port, err)
-		// 此时各引擎已启动，os.Exit 会跳过 defer——手动清理再退出
-		mouseEngine.Stop()
-		keyboardEngine.Stop()
-		systemAudioEngine.Stop()
-		micAudioEngine.Stop()
+		// 此时各引擎已就绪，os.Exit 会跳过 defer——手动清理再退出
+		stopAll()
 		os.Exit(1)
 	}
 	go func() {
-		if err := http.Serve(ln, srv.SetupRoutes()); err != nil && err != http.ErrServerClosed {
+		err := http.Serve(ln, srv.SetupRoutes())
+		// 正常退出（-no-ui 收到信号后主动 Close 监听）时 Serve 返回
+		// net.ErrClosed；这不是错误，不能打 [Fatal] 也不能 exit 1——否则会
+		// 跳过优雅收尾、留下 Windows 下未释放的 WASAPI/COM 资源。
+		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			// os.Exit 会跳过所有 defer（各引擎 Stop、Windows 下 WASAPI/COM
 			// 释放）——失败路径手动走一遍与正常退出相同的清理再退出
 			util.Logf("[Fatal] HTTP server error: %v", err)
-			systemAudioEngine.Stop()
-			micAudioEngine.Stop()
-			mouseEngine.Stop()
-			keyboardEngine.Stop()
+			stopAll()
 			os.Exit(1)
 		}
 	}()
@@ -210,10 +216,7 @@ func main() {
 	}
 
 	fmt.Println("\n正在停止 AnyDevice 服务...")
-	systemAudioEngine.Stop()
-	micAudioEngine.Stop()
-	mouseEngine.Stop()
-	keyboardEngine.Stop()
+	stopAll()
 	fmt.Println("服务已安全退出。")
 }
 

@@ -289,14 +289,18 @@ func (pm *PeerManager) SetMapping(peerID string, playSystemAudio, playMicAudio, 
 }
 
 // mappingHandshake 依据本地映射决策生成发给对端的握手声明：
-//   - 订阅部分（audio/mouse/keyboard）：对端 hub 按此决定是否把它的
-//     音频/鼠标/键盘流转发给本连接；
+//   - 订阅部分（audio/sys_audio/mic_audio/mouse/keyboard）：对端 hub 按此决定
+//     是否把对应流转发给本连接。sys_audio/mic_audio 是新协议的按流订阅——
+//     只映射系统声时对端不必采集麦克风（省 CPU、避免麦克风常驻）；
+//     audio 仍发并集，供旧版对端读取（旧协议只有一个 audio 开关）；
 //   - 身份部分（node_id/node_name）：让对端把本连接归并到本机的设备档案，
 //     避免“同一台设备因自动发现/主动连接出现多条目”。
 func (pm *PeerManager) mappingHandshake(m PeerMappingState) map[string]interface{} {
 	return map[string]interface{}{
 		"action":    "set_mapping",
 		"audio":     m.PlaySystemAudioLocal || m.PlayMicAudioLocal || m.PlayAudioLocal,
+		"sys_audio": m.PlaySystemAudioLocal || m.PlayAudioLocal,
+		"mic_audio": m.PlayMicAudioLocal,
 		"mouse":     m.ExecuteMouseLocal,
 		"keyboard":  m.ExecuteKeyboardLocal,
 		"node_id":   pm.discovery.ID(),

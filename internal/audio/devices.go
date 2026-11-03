@@ -2,6 +2,7 @@ package audio
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/gen2brain/malgo"
@@ -63,6 +64,39 @@ func ListAllDevices() ([]DeviceInfo, error) {
 	}
 
 	return result, nil
+}
+
+// DefaultDeviceNames 依据已枚举的设备列表给出「按需启动」场景下的展示名。
+// 采集设备在无人订阅时不会打开，因此应用启动时需要一个人类可读的名字用于
+// UI 与发现广播（启动后会被真实设备名覆盖）。
+//   - 麦克风：默认采集设备名；
+//   - 系统声：Windows 走默认播放设备的 WASAPI Loopback，故取默认播放设备名；
+//     macOS/Linux 需要虚拟回环设备（BlackHole 等），有则显示其名称，
+//     没有则如实显示「按需启用」（此时系统声捕获本身不可用）。
+func DefaultDeviceNames(devices []DeviceInfo) (sysName, micName string) {
+	sysName = "系统扬声器输出（按需启用）"
+	micName = "麦克风输入（按需启用）"
+	for _, d := range devices {
+		if d.Type == "capture" && d.IsDefault && !d.IsVirtual && micName == "麦克风输入（按需启用）" {
+			micName = d.Name
+		}
+	}
+	if runtime.GOOS == "windows" {
+		for _, d := range devices {
+			if d.Type == "playback" && d.IsDefault {
+				sysName = "系统输出 [" + d.Name + "]"
+				break
+			}
+		}
+		return sysName, micName
+	}
+	for _, d := range devices {
+		if d.IsVirtual {
+			sysName = "系统输出 [" + d.Name + "]"
+			break
+		}
+	}
+	return sysName, micName
 }
 
 // isVirtualDeviceName checks if the device name matches common virtual audio devices.

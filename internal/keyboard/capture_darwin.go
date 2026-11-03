@@ -121,6 +121,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf16"
 	"unsafe"
@@ -279,8 +280,10 @@ func getPressedKeys() map[string]int {
 	return pressed
 }
 
-// kbEventCh 事件钩子 → Go 消费循环的事件通道（安装钩子时创建）
-var kbEventCh chan KeyEvent
+// kbEventCh 事件钩子 → Go 消费循环的事件通道（安装钩子时创建）。
+// 用 atomic.Pointer：按需启停 Stop→Start 时旧 tap 回调可能在新一轮安装后
+// 才返回，直接读写包级 chan 变量是数据竞争。
+var kbEventCh atomic.Pointer[chan KeyEvent]
 
 // kbTimeNow 供钩子回调取时间戳（避免在 //export 里重复 import 逻辑）
 var kbTimeNow = func() int64 { return time.Now().UnixMilli() }
@@ -297,7 +300,8 @@ func kbTapCallback(proxy C.CGEventTapProxy, etype C.CGEventType, event C.CGEvent
 	if C.CGEventGetIntegerValueField(event, C.kCGEventSourceUserData) == C.int64_t(0x414E5944) {
 		return event
 	}
-	if kbEventCh == nil {
+	ch := kbEventCh.Load()
+	if ch == nil {
 		return event
 	}
 
@@ -336,7 +340,7 @@ func kbTapCallback(proxy C.CGEventTapProxy, etype C.CGEventType, event C.CGEvent
 	// 非阻塞投递（事件钩子回调必须快速返回，否则系统会移除钩子）
 	friendly := FriendlyKeyName(keyName)
 	select {
-	case kbEventCh <- KeyEvent{
+	case *ch <- KeyEvent{
 		Type:      "keyboard",
 		Action:    action,
 		Key:       keyName,
@@ -354,7 +358,7 @@ func kbTapCallback(proxy C.CGEventTapProxy, etype C.CGEventType, event C.CGEvent
 // 返回 false 表示未授权或安装失败，调用方回退轮询差分模式。
 func runEventCapture(ctx context.Context, emit func(KeyEvent)) bool {
 	events := make(chan KeyEvent, 256)
-	kbEventCh = events
+	kbEventCh.Store(&events)
 
 	// install 与 run 必须在同一线程：CFRunLoopSource 挂在「安装时线程」的
 	// runloop 上，而 CFRunLoopRun 运行的是「当前线程」的 runloop。此前 install
@@ -362,7 +366,9 @@ func runEventCapture(ctx context.Context, emit func(KeyEvent)) bool {
 	// 迁移后 source 与 runloop 错位——钩子装上却收不到事件且完全静默失效。
 	// LockOSThread 把 install→run→stop 整个生命周期钉死在同一 OS 线程。
 	installed := make(chan bool, 1)
+	tapExited := make(chan struct{})
 	go func() {
+		defer close(tapExited)
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 		ok := C.kbTapInstall() == 1
@@ -391,10 +397,21 @@ func runEventCapture(ctx context.Context, emit func(KeyEvent)) bool {
 		C.kbTapHalt()
 	}()
 
+	// waitTapExit 等待 tap 线程完成 msTapStop 再返回（按需启停需要 Stop→Start
+	// 时旧 tap 已彻底卸载）。
+	waitTapExit := func() {
+		select {
+		case <-tapExited:
+		case <-time.After(2 * time.Second):
+			fmt.Println("[键盘捕获] CGEventTap 停止等待超时（继续，避免卡死退出路径）")
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			C.kbTapHalt()
+			waitTapExit()
 			return true
 		case evt := <-events:
 			emit(evt)

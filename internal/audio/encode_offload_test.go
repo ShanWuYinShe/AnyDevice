@@ -26,7 +26,7 @@ func TestEncodeOffload(t *testing.T) {
 	e.encQueue = make(chan []byte, 8)
 	e.encDone = make(chan struct{})
 	e.isRunning.Store(true)
-	go e.encodeLoop()
+	go e.encodeLoop(e.encQueue, e.encDone)
 	defer func() {
 		e.isRunning.Store(false)
 		close(e.encDone)
@@ -74,7 +74,7 @@ func TestEncodeOffloadLateFrame(t *testing.T) {
 	e.encQueue = make(chan []byte, 8)
 	e.encDone = make(chan struct{})
 	e.isRunning.Store(true)
-	go e.encodeLoop()
+	go e.encodeLoop(e.encQueue, e.encDone)
 
 	// 模拟 Stop：先关运行闸（编码器从未创建，opus 恒 nil）
 	e.isRunning.Store(false)
@@ -93,6 +93,24 @@ func TestEncodeOffloadLateFrame(t *testing.T) {
 	}
 }
 
+// benchSignalFrame 生成真实信号帧（440Hz 正弦，立体声 float32 交错）。
+// Opus 对全零静音有快速路径，用静音做基准会低估编码成本约 2 倍以上。
+func benchSignalFrame(n int) []byte {
+	frame := make([]byte, n)
+	for i := 0; i < n/8; i++ {
+		v := float32(0.3 * math.Sin(2*math.Pi*440*float64(i)/48000))
+		bits := math.Float32bits(v)
+		for ch := 0; ch < 2; ch++ {
+			off := i*8 + ch*4
+			frame[off] = byte(bits)
+			frame[off+1] = byte(bits >> 8)
+			frame[off+2] = byte(bits >> 16)
+			frame[off+3] = byte(bits >> 24)
+		}
+	}
+	return frame
+}
+
 // ---- 量化基准：P6 编码卸载的收益验证 ----
 // BenchmarkEmitPCMOverhead 量度音频实时回调线程每帧的实际开销
 // （拷贝 + 入队，P6 改造后）。
@@ -103,12 +121,12 @@ func BenchmarkEmitPCMOverhead(b *testing.B) {
 	e.encQueue = make(chan []byte, 8)
 	e.encDone = make(chan struct{})
 	e.isRunning.Store(true)
-	go e.encodeLoop()
+	go e.encodeLoop(e.encQueue, e.encDone)
 	defer func() {
 		e.isRunning.Store(false)
 		close(e.encDone)
 	}()
-	frame := make([]byte, 7680) // 20ms 立体声 float32
+	frame := benchSignalFrame(7680) // 20ms 立体声 float32（真实信号，避免静音快速路径低估）
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		e.emitPCM(frame)
@@ -123,7 +141,7 @@ func BenchmarkOpusEncodeDirect(b *testing.B) {
 	var sink atomic.Int64
 	e := NewEngine(KindSystem, ModeCapture, -1, func([]byte) { sink.Add(1) })
 	e.SetSubscribers(1)
-	frame := make([]byte, 7680)
+	frame := benchSignalFrame(7680)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		e.opusMu.Lock()

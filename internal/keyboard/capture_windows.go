@@ -6,6 +6,7 @@ import (
 	"context"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -18,7 +19,7 @@ var (
 	kernel32                = syscall.NewLazyDLL("kernel32.dll")
 	procGetAsyncKeyState    = user32.NewProc("GetAsyncKeyState")
 	procSendInput           = user32.NewProc("SendInput")
-	procSetWindowsHooksExW  = user32.NewProc("SetWindowsHooksExW")
+	procSetWindowsHookExW   = user32.NewProc("SetWindowsHookExW")
 	procUnhookWindowsHookEx = user32.NewProc("UnhookWindowsHookEx")
 	procCallNextHookEx      = user32.NewProc("CallNextHookEx")
 	procGetMessageW         = user32.NewProc("GetMessageW")
@@ -141,10 +142,11 @@ type kbdllhookstruct struct {
 }
 
 var (
-	kbEventCh     chan KeyEvent
+	// kbEventCh 用 atomic.Pointer：按需启停 Stop→Start 时旧钩子线程可能仍在
+	// 投递事件，直接读写包级 chan 变量是数据竞争。
+	kbEventCh     atomic.Pointer[chan KeyEvent]
 	kbHookProcRef = syscall.NewCallback(kbHookProc) // 包级持有，防止回调被 GC 回收
 	kbHookHandle  uintptr
-	kbHookThread  uint32
 )
 
 // kbHookProc 低级键盘钩子回调：必须在数毫秒内返回，
@@ -156,7 +158,9 @@ func kbHookProc(code int32, wParam uintptr, lParam uintptr) (rc uintptr) {
 			rc = 0
 		}
 	}()
-	if code >= 0 {
+	// 最快路径：无订阅者时除转发给下一个钩子外什么都不做（覆盖订阅刚归零、
+	// 钩子尚未卸载的宽限期）。
+	if code >= 0 && atomic.LoadInt64(&activeSubs) > 0 {
 		kb := (*kbdllhookstruct)(unsafe.Pointer(lParam))
 		// 过滤本应用（或其它程序）注入的按键，防止捕获/注入无限回环
 		if kb.Flags&llkhfInjected == 0 {
@@ -175,10 +179,10 @@ func kbHookProc(code int32, wParam uintptr, lParam uintptr) (rc uintptr) {
 				if wParam == wM_KEYDOWN || wParam == wM_SYSKEYDOWN {
 					action = "down"
 				}
-				if kbEventCh != nil {
+				if ch := kbEventCh.Load(); ch != nil {
 					friendly := FriendlyKeyName(keyName)
 					select {
-					case kbEventCh <- KeyEvent{
+					case *ch <- KeyEvent{
 						Type:      "keyboard",
 						Action:    action,
 						Key:       keyName,
@@ -206,21 +210,24 @@ func runEventCapture(ctx context.Context, emit func(KeyEvent)) bool {
 			util.Logf("[键盘捕获] 事件钩子异常退出，已回退轮询模式: %v\n", r)
 		}
 	}()
-	for _, p := range []*syscall.LazyProc{procSetWindowsHooksExW, procUnhookWindowsHookEx, procCallNextHookEx, procGetMessageW, procPostThreadMessageW, procGetModuleHandleW, procGetCurrentThreadId} {
+	for _, p := range []*syscall.LazyProc{procSetWindowsHookExW, procUnhookWindowsHookEx, procCallNextHookEx, procGetMessageW, procPostThreadMessageW, procGetModuleHandleW, procGetCurrentThreadId} {
 		if err := p.Find(); err != nil {
 			util.Logf("[键盘捕获] 系统 API 不可用 (%v)，回退轮询模式\n", err)
 			return false
 		}
 	}
 	events := make(chan KeyEvent, 256)
-	kbEventCh = events
+	kbEventCh.Store(&events)
 	installed := make(chan bool, 1)
+	hookExited := make(chan struct{})
+	var hookTID uint32 // 本钩子线程 id（局部保存：避免重启时全局变量被新钩子覆盖）
 
 	go func() {
+		defer close(hookExited)
 		// 低级钩子要求常驻消息循环，必须独占 OS 线程
 		runtime.LockOSThread()
 		mod, _, _ := procGetModuleHandleW.Call(0)
-		hhk, _, _ := procSetWindowsHooksExW.Call(
+		hhk, _, _ := procSetWindowsHookExW.Call(
 			wH_KEYBOARD_LL, kbHookProcRef, mod, 0)
 		if hhk == 0 {
 			installed <- false
@@ -228,7 +235,7 @@ func runEventCapture(ctx context.Context, emit func(KeyEvent)) bool {
 		}
 		kbHookHandle = hhk
 		tid, _, _ := procGetCurrentThreadId.Call()
-		kbHookThread = uint32(tid)
+		hookTID = uint32(tid)
 		installed <- true
 
 		// 消息循环（钩子线程必需）
@@ -243,33 +250,46 @@ func runEventCapture(ctx context.Context, emit func(KeyEvent)) bool {
 		procUnhookWindowsHookEx.Call(hhk)
 	}()
 
+	// waitHookExit 等待钩子线程真正卸载后再返回（按需启停会 Stop→Start，
+	// 旧钩子未卸载就装新钩子会让全局钩子链出现重复项）。
+	waitHookExit := func() {
+		select {
+		case <-hookExited:
+		case <-time.After(2 * time.Second):
+			util.Logf("[键盘捕获] 钩子线程卸载超时（继续，避免卡死退出路径）")
+		}
+	}
+
 	select {
 	case ok := <-installed:
 		if !ok {
 			return false
 		}
+		util.Logf("[键盘捕获] 系统级键盘钩子已安装（事件驱动捕获）")
 	case <-ctx.Done():
 		// 早停窗口：钩子 goroutine 可能仍在安装流程中，必须等它的 installed
 		// 结果——若已安装成功，补发 WM_QUIT 让其退出 GetMessageW 并执行
 		// UnhookWindowsHookEx；否则 WH_KEYBOARD_LL 系统级钩子泄漏到进程退出
 		// （期间全系统键盘事件都过一遍僵尸钩子，2026-10-24 审查发现）。
 		ok := <-installed
-		if ok && kbHookThread != 0 {
-			procPostThreadMessageW.Call(uintptr(kbHookThread), wM_QUIT, 0, 0)
+		if ok && hookTID != 0 {
+			procPostThreadMessageW.Call(uintptr(hookTID), wM_QUIT, 0, 0)
+			waitHookExit()
 		}
 		return true
 	}
 
 	go func() {
 		<-ctx.Done()
-		if kbHookThread != 0 {
-			procPostThreadMessageW.Call(uintptr(kbHookThread), wM_QUIT, 0, 0)
+		if hookTID != 0 {
+			procPostThreadMessageW.Call(uintptr(hookTID), wM_QUIT, 0, 0)
 		}
 	}()
 
 	for {
 		select {
 		case <-ctx.Done():
+			waitHookExit()
 			return true
 		case evt := <-events:
 			emit(evt)

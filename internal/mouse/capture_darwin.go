@@ -212,6 +212,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"sync/atomic"
 	"time"
 	"unsafe"
 )
@@ -270,7 +271,9 @@ func ReleaseAllButtons() {
 
 // —— 事件钩子（CGEventTap）——
 
-var msEventCh chan MouseEvent
+// msEventCh 用 atomic.Pointer 持有：按需启停会 Stop→Start，旧 tap 线程的
+// 回调可能在新一轮安装后才返回，直接读写包级 chan 变量是数据竞争。
+var msEventCh atomic.Pointer[chan MouseEvent]
 
 //export msTapCallback
 func msTapCallback(proxy C.CGEventTapProxy, etype C.CGEventType, event C.CGEventRef, refcon unsafe.Pointer) C.CGEventRef {
@@ -284,7 +287,8 @@ func msTapCallback(proxy C.CGEventTapProxy, etype C.CGEventType, event C.CGEvent
 	if C.CGEventGetIntegerValueField(event, C.kCGEventSourceUserData) == C.int64_t(0x414E5944) {
 		return event
 	}
-	if msEventCh == nil {
+	ch := msEventCh.Load()
+	if ch == nil {
 		return event
 	}
 
@@ -339,13 +343,13 @@ func msTapCallback(proxy C.CGEventTapProxy, etype C.CGEventType, event C.CGEvent
 	// move 高频事件：标记为最新位置，由消费循环按 ~60Hz 合并发送
 	if isMove {
 		select {
-		case msEventCh <- evt:
+		case *ch <- evt:
 		default:
 		}
 		return event
 	}
 	select {
-	case msEventCh <- evt:
+	case *ch <- evt:
 	default:
 	}
 	return event
@@ -355,7 +359,7 @@ func msTapCallback(proxy C.CGEventTapProxy, etype C.CGEventType, event C.CGEvent
 // 按下/抬起/滚轮即时发送。未授权或安装失败返回 false（调用方回退轮询）。
 func runEventCapture(ctx context.Context, emit func(MouseEvent)) bool {
 	events := make(chan MouseEvent, 512)
-	msEventCh = events
+	msEventCh.Store(&events)
 
 	// install 与 run 必须在同一线程：CFRunLoopSource 挂在「安装时线程」的
 	// runloop 上，而 CFRunLoopRun 运行的是「当前线程」的 runloop。此前 install
@@ -363,7 +367,9 @@ func runEventCapture(ctx context.Context, emit func(MouseEvent)) bool {
 	// 迁移后 source 与 runloop 错位——钩子装上却收不到事件且完全静默失效。
 	// LockOSThread 把 install→run→stop 整个生命周期钉死在同一 OS 线程。
 	installed := make(chan bool, 1)
+	tapExited := make(chan struct{})
 	go func() {
+		defer close(tapExited)
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
 		ok := C.msTapInstall() == 1
@@ -392,6 +398,16 @@ func runEventCapture(ctx context.Context, emit func(MouseEvent)) bool {
 		C.msTapHalt()
 	}()
 
+	// waitTapExit 等待 tap 线程完成 msTapStop 再返回：按需启停会 Stop→Start，
+	// 旧 tap 必须先卸载，否则全局 tap/source 状态会与新安装冲突。
+	waitTapExit := func() {
+		select {
+		case <-tapExited:
+		case <-time.After(2 * time.Second):
+			fmt.Println("[鼠标捕获] CGEventTap 停止等待超时（继续，避免卡死退出路径）")
+		}
+	}
+
 	// move 合并节流：仅保留最新位置，按 ~60Hz 发送
 	var pending *MouseEvent
 	ticker := time.NewTicker(16 * time.Millisecond)
@@ -401,6 +417,7 @@ func runEventCapture(ctx context.Context, emit func(MouseEvent)) bool {
 		select {
 		case <-ctx.Done():
 			C.msTapHalt()
+			waitTapExit()
 			return true
 		case evt := <-events:
 			if evt.Action == "move" {

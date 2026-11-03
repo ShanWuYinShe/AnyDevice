@@ -36,16 +36,20 @@ type InboundClientInfo struct {
 
 // Client represents a connected browser or receiver client.
 type Client struct {
-	id              string
-	hub             *Hub
-	conn            *websocket.Conn
-	send            chan OutMessage
-	remoteIP        string
-	remoteAddr      string
-	userAgent       string
-	deviceType      string
-	joinedAt        time.Time
-	audioEnabled    bool
+	id         string
+	hub        *Hub
+	conn       *websocket.Conn
+	send       chan OutMessage
+	remoteIP   string
+	remoteAddr string
+	userAgent  string
+	deviceType string
+	joinedAt   time.Time
+	// 音频订阅按流拆分：系统声与麦克风各自独立，只有被映射的流才采集/下发。
+	// 旧版对端只发 audio（并集），收到后两条都置位（兼容旧协议）。
+	sysAudioEnabled bool
+	micAudioEnabled bool
+	audioSplit      bool // 是否已收到新协议的分流订阅（sys_audio/mic_audio）
 	audioPCM        bool // 客户端音频能力：true=无 WebCodecs AudioDecoder，音频改发 float32 PCM
 	mouseEnabled    bool
 	keyboardEnabled bool
@@ -94,7 +98,7 @@ type Hub struct {
 
 	totalBytesSent uint64
 	clientCount    int64
-	onSubsChanged  func(audioSubs, mouseSubs, keyboardSubs int)
+	onSubsChanged  func(sysAudioSubs, micAudioSubs, mouseSubs, keyboardSubs int)
 	// onNodeIdentity 在对端通过握手上报自己的节点身份时触发
 	// （remoteIP=连接源 IP，nodeID=对端节点 ID，nodeName=对端广播名），
 	// 服务端据此把入站档案归并到正确的设备（跨 IP 场景按 IP 归并会失效）。
@@ -106,7 +110,7 @@ func (h *Hub) SetNodeIdentityHandler(fn func(remoteIP, nodeID, nodeName string))
 	h.onNodeIdentity = fn
 }
 
-func NewHub(onSubsChanged func(audioSubs, mouseSubs, keyboardSubs int)) *Hub {
+func NewHub(onSubsChanged func(sysAudioSubs, micAudioSubs, mouseSubs, keyboardSubs int)) *Hub {
 	return &Hub{
 		clients:           make(map[*Client]bool),
 		audioBroadcast:    make(chan audioPacket, 128),
@@ -152,12 +156,21 @@ func (h *Hub) Run() {
 			//     该能力的客户端，避免局域网带宽膨胀。
 			//   - pcmChunk 为空（本机捕获引擎的广播，只有 Opus 形态）：
 			//     无法解码 Opus 的客户端直接跳过，避免每帧都做一次失败的解码。
+			isSysChunk := bytes.HasPrefix(pkt.chunk, audio.TagSystemAudioOpus) ||
+				bytes.HasPrefix(pkt.chunk, audio.TagSystemAudio)
+			isMicChunk := bytes.HasPrefix(pkt.chunk, audio.TagMicAudioOpus) ||
+				bytes.HasPrefix(pkt.chunk, audio.TagMicAudio)
+			if !isSysChunk && !isMicChunk {
+				// 旧协议无 tag 的音频帧：按系统声处理（与既有回退口径一致）
+				isSysChunk = true
+			}
 			isOpusChunk := bytes.HasPrefix(pkt.chunk, audio.TagSystemAudioOpus) ||
 				bytes.HasPrefix(pkt.chunk, audio.TagMicAudioOpus)
 			h.mu.RLock()
 			for client := range h.clients {
 				client.mu.RLock()
-				enabled := client.audioEnabled
+				wantSys := client.sysAudioEnabled
+				wantMic := client.micAudioEnabled
 				local := client.isLocal
 				wantPCM := client.audioPCM
 				client.mu.RUnlock()
@@ -168,7 +181,8 @@ func (h *Hub) Run() {
 				if pkt.remoteOnly && local {
 					continue
 				}
-				if !enabled {
+				// 按流归属过滤：只订阅了系统声的客户端不再收到麦克风流
+				if (isSysChunk && !wantSys) || (isMicChunk && !wantMic) {
 					continue
 				}
 				msg := opusMsg
@@ -232,11 +246,14 @@ func (h *Hub) Run() {
 
 func (h *Hub) notifySubscribers() {
 	h.mu.RLock()
-	var audioCount, mouseCount, keyboardCount int
+	var sysAudioCount, micAudioCount, mouseCount, keyboardCount int
 	for client := range h.clients {
 		client.mu.RLock()
-		if client.audioEnabled {
-			audioCount++
+		if client.sysAudioEnabled {
+			sysAudioCount++
+		}
+		if client.micAudioEnabled {
+			micAudioCount++
 		}
 		if client.mouseEnabled {
 			mouseCount++
@@ -249,18 +266,21 @@ func (h *Hub) notifySubscribers() {
 	h.mu.RUnlock()
 
 	if h.onSubsChanged != nil {
-		h.onSubsChanged(audioCount, mouseCount, keyboardCount)
+		h.onSubsChanged(sysAudioCount, micAudioCount, mouseCount, keyboardCount)
 	}
 }
 
 // SubscriberCounts 返回各类流的当前订阅客户端数（诊断用）。
-func (h *Hub) SubscriberCounts() (audio, mouse, keyboard int) {
+func (h *Hub) SubscriberCounts() (sysAudio, micAudio, mouse, keyboard int) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for client := range h.clients {
 		client.mu.RLock()
-		if client.audioEnabled {
-			audio++
+		if client.sysAudioEnabled {
+			sysAudio++
+		}
+		if client.micAudioEnabled {
+			micAudio++
 		}
 		if client.mouseEnabled {
 			mouse++
@@ -360,10 +380,13 @@ func NewClient(hub *Hub, conn *websocket.Conn, remoteAddr, userAgent string, loc
 	if idx := strings.LastIndex(remoteAddr, ":"); idx != -1 {
 		remoteIP = remoteAddr[:idx]
 	}
-	// 默认订阅：局域网远端全开（兼容旧对端）；本机 UI 全关（前端按需 set_mapping 开启）
-	audioEnabled, mouseEnabled, keyboardEnabled := true, true, true
+	// 默认订阅：局域网远端全开（兼容旧对端：旧协议只有一个 audio 并集开关）；
+	// 本机 UI 全关（前端按需 set_mapping 开启）。新协议握手会立刻按
+	// sys_audio/mic_audio 分流，把不需要的流关掉。
+	sysAudioEnabled, micAudioEnabled, mouseEnabled, keyboardEnabled := true, true, true, true
 	if local {
-		audioEnabled = false
+		sysAudioEnabled = false
+		micAudioEnabled = false
 		mouseEnabled = false
 		keyboardEnabled = false
 	}
@@ -378,9 +401,41 @@ func NewClient(hub *Hub, conn *websocket.Conn, remoteAddr, userAgent string, loc
 		deviceType:      ParseDeviceType(userAgent),
 		joinedAt:        time.Now(),
 		isLocal:         local,
-		audioEnabled:    audioEnabled,
+		sysAudioEnabled: sysAudioEnabled,
+		micAudioEnabled: micAudioEnabled,
 		mouseEnabled:    mouseEnabled,
 		keyboardEnabled: keyboardEnabled,
+	}
+}
+
+// applyMapping 应用一条 set_mapping 订阅声明（readPump 与单测共用）：
+//   - sys_audio/mic_audio：新协议按流订阅（只映射系统声时不必采集麦克风）；
+//   - audio：旧协议并集开关（兼容旧版对端，收到后两条都置位）；
+//   - pcm：客户端无 WebCodecs AudioDecoder，服务端改发 float32 PCM。
+func (c *Client) applyMapping(audio, sysAudio, micAudio, mouse, keyboard, pcm *bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if sysAudio != nil || micAudio != nil {
+		c.audioSplit = true
+		if sysAudio != nil {
+			c.sysAudioEnabled = *sysAudio
+		}
+		if micAudio != nil {
+			c.micAudioEnabled = *micAudio
+		}
+	} else if audio != nil && !c.audioSplit {
+		c.sysAudioEnabled = *audio
+		c.micAudioEnabled = *audio
+	}
+	if mouse != nil {
+		c.mouseEnabled = *mouse
+	}
+	if keyboard != nil {
+		c.keyboardEnabled = *keyboard
+	}
+	if pcm != nil {
+		c.audioPCM = *pcm
 	}
 }
 
@@ -401,7 +456,7 @@ func (h *Hub) GetInboundClients() []InboundClientInfo {
 			DeviceType:      c.deviceType,
 			ConnectedAt:     c.joinedAt.Format("15:04:05"),
 			DurationSec:     int64(now.Sub(c.joinedAt).Seconds()),
-			AudioEnabled:    c.audioEnabled,
+			AudioEnabled:    c.sysAudioEnabled || c.micAudioEnabled,
 			MouseEnabled:    c.mouseEnabled,
 			KeyboardEnabled: c.keyboardEnabled,
 		}
@@ -474,7 +529,9 @@ func (c *Client) readPump() {
 		if msgType == websocket.TextMessage {
 			var cmd struct {
 				Action   string `json:"action"` // "set_mapping"
-				Audio    *bool  `json:"audio"`
+				Audio    *bool  `json:"audio"`  // 旧协议并集开关（sys||mic）
+				SysAudio *bool  `json:"sys_audio"`
+				MicAudio *bool  `json:"mic_audio"`
 				Mouse    *bool  `json:"mouse"`
 				Keyboard *bool  `json:"keyboard"`
 				// 客户端音频解码能力：true 表示无 WebCodecs AudioDecoder，
@@ -492,20 +549,7 @@ func (c *Client) readPump() {
 				if cmd.NodeID != "" && c.hub.onNodeIdentity != nil {
 					c.hub.onNodeIdentity(c.remoteIP, cmd.NodeID, cmd.NodeName)
 				}
-				c.mu.Lock()
-				if cmd.Audio != nil {
-					c.audioEnabled = *cmd.Audio
-				}
-				if cmd.Mouse != nil {
-					c.mouseEnabled = *cmd.Mouse
-				}
-				if cmd.Keyboard != nil {
-					c.keyboardEnabled = *cmd.Keyboard
-				}
-				if cmd.PCM != nil {
-					c.audioPCM = *cmd.PCM
-				}
-				c.mu.Unlock()
+				c.applyMapping(cmd.Audio, cmd.SysAudio, cmd.MicAudio, cmd.Mouse, cmd.Keyboard, cmd.PCM)
 
 				select {
 				case c.hub.updateSubs <- struct{}{}:
