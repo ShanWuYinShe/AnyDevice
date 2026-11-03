@@ -5,7 +5,7 @@ description: 本项目 AnyDevice 的 macOS Wails 原生窗口（AnyDevice.app）
 
 # AnyDevice macOS 原生窗口（Wails v2）事实与流程
 
-环境（验证方式：`sw_vers`、`wails version`、`go version`）：macOS 15.8（arm64）、Wails v2.16.0、Go 1.27.3。
+环境（验证方式：`sw_vers`、`go version`、`go list -m github.com/wailsapp/wails/v2`）：macOS 15.8.2（arm64）、Wails v2.16.0、Go 1.27.3。
 
 ## 架构事实（改窗口/前端 WS 前必读）
 

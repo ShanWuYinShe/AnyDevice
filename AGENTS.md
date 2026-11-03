@@ -20,7 +20,7 @@ go build -tags wails,desktop,production -o any_device main.go   # 免打包的�
 
 | skill | 管什么 |
 |---|---|
-| `wails-macos-native` | AnyDevice.app 的 macOS Wails 原生窗口构建/打包/排障：`wails://wails` 页面里的 WebSocket 地址、WKWebView 缺失 WebCrypto 等实测事实 |
+| `wails-macos-native` | AnyDevice.app 的 macOS Wails 原生窗口构建/打包/排障：`wails://wails` 页面里的 WebSocket 地址、WKWebView 缺 AudioDecoder（WebCodecs）时的服务端 PCM 回退等实测事实 |
 
 > 新增 skill 时同步本表——漏索引时系统仍会挂载，但 AI 很难主动想到加载它。
 
