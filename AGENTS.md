@@ -24,24 +24,17 @@ go build -tags wails,desktop,production \
 | skill | 管什么 |
 |---|---|
 | `wails-macos-native` | AnyDevice.app 的 macOS Wails 原生窗口构建/打包/排障：`wails://wails` 页面里的 WebSocket 地址、WKWebView 缺 AudioDecoder（WebCodecs）时的服务端 PCM 回退等实测事实 |
+| `anydevice-audio-streaming` | 音频采集/传输/播放架构与验证：按订阅启停、系统声/麦克风分离、float 全链、AudioWorklet 环形缓冲、延迟分项测量、平台解码差异 |
 
 > 新增 skill 时同步本表——漏索引时系统仍会挂载，但 AI 很难主动想到加载它。
 
 ## 性能约束（与游戏等高负载程序共存）
 
-- **采集/钩子必须按订阅数按需启停（空闲零空转）**：不得在启动时无条件打开音频设备或安装系统级输入钩子。
-  音频设备与键鼠钩子只在有订阅者时启动，订阅归零并超过宽限期后停止/卸载（见 `internal/audio/capture.go`、
-  `internal/mouse/event.go`、`internal/keyboard/event.go` 的 `StartSupervisor`）。
-- **系统声与麦克风分开订阅**：`set_mapping` 的 `sys_audio`/`mic_audio` 分别驱动两路采集；`audio` 仅为旧版对端并集兼容。
-- **连接动作本身不得启动采集**：任何 WS 连接（含手机浏览器打开 UI、对端重连）默认不订阅任何流；
-  旧版对端不发 `set_mapping` 时由 500ms 宽限兜底全开（`internal/server/hub.go` 的 `armLegacySubs`），
-  不得为了兼容旧端在 `NewClient` 里直接默认全订阅（会让每次连接都 churn 音频设备与键鼠钩子）。
-- **「本机共享」开关必须门控采集**：关闭后即使仍有对端订阅也要立即停止对应采集/卸载钩子（`Engine.SetEnabled`），不得只改发现广播。
-- Opus 编码复杂度保持 5（128kbps 下听感不变、CPU 更低）；音频采集线程保持 miniaudio 默认优先级（降优先级收益可忽略、满载时有 overrun 断音风险）。
+- **采集与系统钩子必须按订阅数按需启停，空闲零空转**：不得在启动时无条件打开音频设备或安装系统级输入钩子；任何 WS 连接本身不得启动采集（旧对端由 500ms 宽限兜底）。
+- **系统声与麦克风分开订阅**（`set_mapping` 的 `sys_audio`/`mic_audio`）；「本机共享」关闭后即使对端仍订阅也必须立即停止对应采集、卸载钩子。
+- Opus 编码复杂度保持 5；采集线程保持 miniaudio 默认优先级。延迟分项字段契约（`audio_stats` / `/api/peers`）改动须两端同改并保留旧版兼容。
 - 新增常驻线程/定时器/系统钩子前，先评估对游戏帧时间的影响；`/api/status` 暴露各引擎运行状态供验证。
-- **延迟分项字段契约**：发送端经 `audio_stats` 文本消息上报 `{chunk_ms,encode_ms,send_ms,running}`，
-  接收端写入 `/api/peers` 的 `mapping.sender_{sys,mic}_latency` 与 `mapping.net_rtt_ms`；
-  前端按「发送端分项 + RTT/2 + 播放缓冲 + 输出延迟」估算总延迟（标注「估算」）。改字段名/语义须两端同改并保留旧版兼容。
+- 完整架构、实现位置与踩坑机理见 `anydevice-audio-streaming` skill。
 
 ## 维护提醒
 
