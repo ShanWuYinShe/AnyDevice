@@ -133,7 +133,7 @@ description: AnyDevice 跨设备实时音频流（采集→传输→播放）架
 
 - 两端版本一致性先确认（`/api/self` 的 `build_time`），再看数据。
 - 采集启停验证：`/api/status` 的 `*_engine`/`*_capture` 布尔，无人订阅时应全 false；连接后 100ms 内订阅计数应为 0，旧端宽限到点才变 1。
-- 抓前端实收 PCM：浏览器一律走 `agent-browser`（红线见用户级 skill `browser-automation-safety`，禁止自行 spawn Chrome、禁止写自研 CDP 管线）→ CDP `Network.enable` → `Network.webSocketFrameReceived`（payloadData 为 base64，opcode 2 是二进制）→ numpy 分析削波/超界样本/跳变分布/重复块/静音段/频谱。
+- 抓前端实收 PCM：浏览器一律走 `agent-browser`（红线见用户级 `browser-automation-safety`，禁止自行 spawn Chrome、禁止写自研 CDP 管线）→ CDP `Network.enable` → `Network.webSocketFrameReceived`（payloadData 为 base64，opcode 2 是二进制）→ numpy 分析削波/超界样本/跳变分布/重复块/静音段/频谱。
 - node 的 WebSocket 二进制帧默认是 Blob，必须显式 `ws.binaryType = 'arraybuffer'`（否则统计恒 0）。
 - 音频特征判断：真实音频为多频成分连续波形；恒定幅度周期信号或大量 DC 分量 = 非音频内容。
 - 单测：`go test ./internal/...`（音频与 WS 相关覆盖集中在 `internal/audio`、`internal/server`、`internal/mouse`、`internal/keyboard`）。
