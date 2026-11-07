@@ -62,6 +62,10 @@ export function closeModal() {
 export function isSelfPeer(p) {
   if (!p) return true;
   if (selfState.data && p.id && p.id === selfState.data.id) return true;
+  // 手动添加的对端豁免（回环双实例调试）：服务端 ListPeers 对 is_manual 条目
+  // 已豁免 IsLocalIP/查看者过滤（AddManualPeer 会拒绝把本机加为对端），前端
+  // 兜底必须保持同一口径，否则手动添加的 127.0.0.1 对端在页面上永远不显示。
+  if (p.is_manual) return false;
 
   const rawIP = (p.ip || '').trim();
   const cleanIP = rawIP.replace(/[\[\]]/g, '').split(':')[0].trim();
