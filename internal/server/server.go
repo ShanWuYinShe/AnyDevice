@@ -206,6 +206,16 @@ type SenderLatencyStats struct {
 	EncodeMs int  `json:"encode_ms"`
 	SendMs   int  `json:"send_ms"`
 	Running  bool `json:"running"`
+
+	// 发送端当前 Opus 编码参数与自适应档位（发送端主动上报，旧版对端缺省）。
+	//   bitrate    单位 bit/s（128000 = 128kbps），omitempty 兼容旧版对端；
+	//   complexity libopus 编码复杂度（自适应范围 3-7），omitempty 同上；
+	//   level      0=省 CPU（高负载保护）/1=平衡/2=音质优先。
+	// level 不加 omitempty：0 是合法档位（省 CPU），省略会与「旧版对端未上报」
+	// 混淆；前端应以 bitrate 是否存在判断对端是否支持上报编码参数。
+	Bitrate    int `json:"bitrate,omitempty"`
+	Complexity int `json:"complexity,omitempty"`
+	Level      int `json:"level"`
 }
 
 // audioLatencyLoop 周期性把发送端延迟分项推给音频订阅客户端（JSON 文本消息）：
@@ -232,11 +242,30 @@ func (s *Server) buildAudioLatencyStats(includeSys, includeMic bool) []byte {
 	payload := map[string]interface{}{"type": "audio_stats"}
 	if includeSys && s.systemAudioEngine != nil {
 		chunkMs, encodeMs := s.systemAudioEngine.LatencyStats()
-		payload["sys"] = SenderLatencyStats{chunkMs, encodeMs, sendMs, s.systemAudioEngine.IsRunning()}
+		bitrate, complexity, level := s.systemAudioEngine.EncoderParams()
+		// 命名字段初始化：位置参数在新增字段后极易错位（类型相同不会报错）。
+		payload["sys"] = SenderLatencyStats{
+			ChunkMs:    chunkMs,
+			EncodeMs:   encodeMs,
+			SendMs:     sendMs,
+			Running:    s.systemAudioEngine.IsRunning(),
+			Bitrate:    bitrate,
+			Complexity: complexity,
+			Level:      level,
+		}
 	}
 	if includeMic && s.micAudioEngine != nil {
 		chunkMs, encodeMs := s.micAudioEngine.LatencyStats()
-		payload["mic"] = SenderLatencyStats{chunkMs, encodeMs, sendMs, s.micAudioEngine.IsRunning()}
+		bitrate, complexity, level := s.micAudioEngine.EncoderParams()
+		payload["mic"] = SenderLatencyStats{
+			ChunkMs:    chunkMs,
+			EncodeMs:   encodeMs,
+			SendMs:     sendMs,
+			Running:    s.micAudioEngine.IsRunning(),
+			Bitrate:    bitrate,
+			Complexity: complexity,
+			Level:      level,
+		}
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -606,6 +635,20 @@ func (s *Server) buildRoutes() http.Handler {
 		if s.micAudioEngine != nil {
 			micChunkMs, micEncodeMs = s.micAudioEngine.LatencyStats()
 		}
+		// Opus 编码参数自适应（发送端）：当前码率/复杂度/档位与累计丢帧。
+		// 增加字段属向后兼容（旧前端忽略未知 key）；引擎未启动时为默认平衡档。
+		var sysBitrate, sysComplexity, sysLevel int
+		var sysDropped uint64
+		if s.systemAudioEngine != nil {
+			sysBitrate, sysComplexity, sysLevel = s.systemAudioEngine.EncoderParams()
+			sysDropped = s.systemAudioEngine.DroppedFrames()
+		}
+		var micBitrate, micComplexity, micLevel int
+		var micDropped uint64
+		if s.micAudioEngine != nil {
+			micBitrate, micComplexity, micLevel = s.micAudioEngine.EncoderParams()
+			micDropped = s.micAudioEngine.DroppedFrames()
+		}
 		status := map[string]interface{}{
 			"audio_subs":        sysAudioSubs + micAudioSubs,
 			"sys_audio_subs":    sysAudioSubs,
@@ -629,12 +672,21 @@ func (s *Server) buildRoutes() http.Handler {
 			"sys_audio_encode_ms": sysEncodeMs,
 			"mic_audio_chunk_ms":  micChunkMs,
 			"mic_audio_encode_ms": micEncodeMs,
-			"audio_send_ms":       s.hub.AudioSendLatencyMs(),
-			"device_name":         sysDev,
-			"system_audio_device": sysDev,
-			"mic_device":          micDev,
-			"current_ip":          s.GetCurrentIP(),
-			"primary_url":         s.GetCurrentURL(),
+			// 发送端 Opus 编码参数自适应：码率(bit/s)/复杂度/档位/累计丢帧
+			"sys_audio_bitrate":        sysBitrate,
+			"sys_audio_complexity":     sysComplexity,
+			"sys_audio_adaptive_level": sysLevel,
+			"sys_audio_dropped":        sysDropped,
+			"mic_audio_bitrate":        micBitrate,
+			"mic_audio_complexity":     micComplexity,
+			"mic_audio_adaptive_level": micLevel,
+			"mic_audio_dropped":        micDropped,
+			"audio_send_ms":            s.hub.AudioSendLatencyMs(),
+			"device_name":              sysDev,
+			"system_audio_device":      sysDev,
+			"mic_device":               micDev,
+			"current_ip":               s.GetCurrentIP(),
+			"primary_url":              s.GetCurrentURL(),
 			// 兼容旧字段：改为真实运行状态，避免与 *_capture 字段矛盾
 			"mouse_active":    s.mouseEngine != nil && s.mouseEngine.IsRunning(),
 			"keyboard_active": s.keyboardEngine != nil && s.keyboardEngine.IsRunning(),

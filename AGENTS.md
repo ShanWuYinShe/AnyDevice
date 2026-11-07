@@ -24,7 +24,7 @@ go build -tags wails,desktop,production \
 | skill | 管什么 |
 |---|---|
 | `wails-macos-native` | AnyDevice.app 的 macOS Wails 原生窗口构建/打包/排障：`wails://wails` 页面里的 WebSocket 地址、WKWebView 缺 AudioDecoder（WebCodecs）时的服务端 PCM 回退等实测事实 |
-| `anydevice-audio-streaming` | 音频采集/传输/播放架构与验证：按订阅启停、系统声/麦克风分离、float 全链、AudioWorklet 环形缓冲、延迟分项测量、平台解码差异 |
+| `anydevice-audio-streaming` | 音频采集/传输/播放架构与验证：按订阅启停、系统声/麦克风分离、float 全链、AudioWorklet 自适应环形缓冲、发送端编码档位自适应、延迟分项测量、平台解码差异 |
 
 > 新增 skill 时同步本表——漏索引时系统仍会挂载，但 AI 很难主动想到加载它。
 
@@ -32,7 +32,9 @@ go build -tags wails,desktop,production \
 
 - **采集与系统钩子必须按订阅数按需启停，空闲零空转**：不得在启动时无条件打开音频设备或安装系统级输入钩子；任何 WS 连接本身不得启动采集（旧对端由 500ms 宽限兜底）。
 - **系统声与麦克风分开订阅**（`set_mapping` 的 `sys_audio`/`mic_audio`）；「本机共享」关闭后即使对端仍订阅也必须立即停止对应采集、卸载钩子。
-- Opus 编码复杂度保持 5；采集线程保持 miniaudio 默认优先级。延迟分项字段契约（`audio_stats` / `/api/peers`）改动须两端同改并保留旧版兼容。
+- **Opus 编码参数按负载自适应**（默认平衡档 128kbps / 复杂度 5；编码队列积压、丢帧或编码延迟偏高时降 96kbps / 复杂度 3，持续低负载 15s 后升 160kbps / 复杂度 7）：决策必须带迟滞（冷却 8s、采样 2s），在 encodeLoop 内驱动、不得新增常驻 goroutine，`SetBitrate`/`SetComplexity` 与 `Feed` 同锁串行；Opus 帧长保持 20ms、采集设备周期不随负载改动。采集线程保持 miniaudio 默认优先级。
+- **播放端预缓冲必须自适应**（40–200ms，初始 60ms；欠载快升 +30ms、稳定 5s 慢降 -5ms），不要退回固定大缓冲；Worklet `stats` 消息须带 `targetMs` 供 UI/诊断读取。
+- 延迟分项字段契约（`audio_stats` / `/api/peers`）改动须两端同改并保留旧版兼容；发送端编码参数 `bitrate`/`complexity` 用 omitempty、`level` 不带 omitempty（前端以 `bitrate` 是否存在判断旧版对端）。
 - 新增常驻线程/定时器/系统钩子前，先评估对游戏帧时间的影响；`/api/status` 暴露各引擎运行状态供验证。
 - 完整架构、实现位置与踩坑机理见 `anydevice-audio-streaming` skill。
 

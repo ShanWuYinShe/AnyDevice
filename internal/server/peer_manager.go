@@ -489,7 +489,7 @@ func kibPerSec(bytes int64, seconds float64) int {
 //   - 有 WebCodecs AudioDecoder 的客户端（Chrome/WebView2）收 Opus 原始包；
 //   - 没有的客户端（Wails macOS WKWebView、Safari）收解码后的 float32 PCM。
 //
-// 为什么要在这里解码：对端只发 Opus（128kbps，带宽是 PCM 的 1/24），而
+// 为什么要在这里解码：对端只发 Opus（自适应 96–160kbps，带宽约为 PCM 的 1/24），而
 // WKWebView 目前只有 VideoDecoder、没有 AudioDecoder，无法前端解码。
 // 服务端在回环转发路径上解码，收到的仍是省带宽的 Opus，付出的是本机 CPU
 // （两条流各 50 帧/秒，可忽略），且不改变对端协议、旧版本对端照常可用。

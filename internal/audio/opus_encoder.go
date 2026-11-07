@@ -2,9 +2,9 @@ package audio
 
 // Opus 编码器（cgo libopus 薄封装）。
 //
-// 浮点 PCM 以 20ms 帧编码为 Opus（128kbps 立体声），相比 float32 PCM
-// 带宽降低约 24 倍（384KB/s → 16KB/s），并为 UDP/跨网段场景提供
-// FEC/PLC 能力基础。
+// 浮点 PCM 以 20ms 帧编码为 Opus（默认 128kbps 立体声；发送端按负载在
+// 96-160kbps 间自适应，见 adaptive.go），相比 float32 PCM 带宽降低约
+// 20-24 倍（384KB/s → 12-20KB/s），并为 UDP/跨网段场景提供 FEC/PLC 能力基础。
 //
 // 链接：libopus 静态库随仓库 vendored（third_party/libopus/），macOS 与 Windows
 // 构建/运行都不依赖 Homebrew 或任何外部安装：
@@ -74,7 +74,9 @@ type OpusEncoder struct {
 	packet   []byte
 }
 
-// NewOpusEncoder 创建 48kHz 立体声 128kbps 音频编码器（复杂度 5）。
+// NewOpusEncoder 创建 48kHz 立体声音频编码器，初始参数取默认平衡档
+// （128kbps / 复杂度 5，见 adaptive.go）；运行期由发送端自适应控制器
+// 按负载用 SetBitrate/SetComplexity 调整。
 func NewOpusEncoder(onPacket func([]byte)) (*OpusEncoder, error) {
 	// accum 预分配两帧容量：采集链路按 10ms 块喂入，20ms 编码后剩余 10ms
 	// 留在缓冲里；固定容量 + 原地左移可避免每帧重新分配（旧实现每次编码后
@@ -89,14 +91,16 @@ func NewOpusEncoder(onPacket func([]byte)) (*OpusEncoder, error) {
 	if errCode != 0 || e.enc == nil {
 		return nil, fmt.Errorf("opus_encoder_create 失败: %d", errCode)
 	}
-	if rc := C.ctl_bitrate(unsafe.Pointer(e.enc), 128000); rc < 0 {
+	// 初始参数取平衡档（128kbps / 复杂度 5）：Opus 默认复杂度偏高（libopus
+	// 默认 10，此处原为 8），而实时串流只需要「够好的语音/音乐质量」；复杂度 5
+	// 可明显减少编码 CPU（游戏满载时对其它程序的抢占更小），128kbps 下的听感
+	// 差异基本不可辨。运行期由自适应控制器在 Low/Quality 档之间调整。
+	bitrate, complexity := LevelBalanced.params()
+	if rc := C.ctl_bitrate(unsafe.Pointer(e.enc), C.int(bitrate)); rc < 0 {
 		C.opus_encoder_destroy(e.enc)
 		return nil, fmt.Errorf("设置比特率失败: %d", int(rc))
 	}
-	// 复杂度 5：Opus 默认复杂度偏高（libopus 默认 10，此处原为 8），而实时
-	// 串流只需要「够好的语音/音乐质量」；降到 5 可明显减少编码 CPU（游戏满载
-	// 时对其它程序的抢占更小），128kbps 下的听感差异基本不可辨。
-	if rc := C.ctl_complexity(unsafe.Pointer(e.enc), 5); rc < 0 {
+	if rc := C.ctl_complexity(unsafe.Pointer(e.enc), C.int(complexity)); rc < 0 {
 		C.opus_encoder_destroy(e.enc)
 		return nil, fmt.Errorf("设置复杂度失败: %d", int(rc))
 	}
@@ -109,6 +113,34 @@ func (e *OpusEncoder) Destroy() {
 		C.opus_encoder_destroy(e.enc)
 		e.enc = nil
 	}
+}
+
+// SetBitrate 调整编码目标比特率（bit/s）。
+//
+// 并发约束：libopus 编码器不是并发安全的，本方法必须与 Feed 串行化——
+// 由 Engine.opusMu 保证（encodeLoop 在持有该锁时调用，Stop 销毁编码器也持锁）。
+func (e *OpusEncoder) SetBitrate(bps int) error {
+	if e.enc == nil {
+		return fmt.Errorf("编码器未初始化")
+	}
+	if rc := C.ctl_bitrate(unsafe.Pointer(e.enc), C.int(bps)); rc < 0 {
+		return fmt.Errorf("设置比特率失败: %d", int(rc))
+	}
+	return nil
+}
+
+// SetComplexity 调整编码复杂度（libopus 取值范围 0-10，数值越高音质越好、
+// CPU 占用越高）。
+//
+// 并发约束同 SetBitrate：必须与 Feed 串行化（由 Engine.opusMu 保证）。
+func (e *OpusEncoder) SetComplexity(c int) error {
+	if e.enc == nil {
+		return fmt.Errorf("编码器未初始化")
+	}
+	if rc := C.ctl_complexity(unsafe.Pointer(e.enc), C.int(c)); rc < 0 {
+		return fmt.Errorf("设置复杂度失败: %d", int(rc))
+	}
+	return nil
 }
 
 // Feed 交错 float32 采样（长度任意，内部按 20ms 帧切分编码）。

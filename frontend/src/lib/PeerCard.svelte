@@ -83,6 +83,17 @@
     const netRtt = numOr0(mapping.net_rtt_ms);
     const netMs = netRtt / 2; // RTT 单程 = /2
     const bufferMs = numOr0(stats.bufferMs);
+    const targetMs = numOr0(stats.targetMs); // 自适应目标水位（0=尚未收到 worklet 统计）
+    // 对端编码参数（发送端自适应新增：bitrate=比特率 bps / complexity / level 档位）。
+    // 旧版对端不报这三项：bitrate/complexity 带 omitempty 而缺失，但 level 不带
+    // omitempty 会退化成 0（与合法档位「省 CPU」同值），无法区分。因此只有出现
+    // 新版 bitrate/complexity 字段时才认为编码信息可信，避免把旧对端误标成低档位。
+    const bitrateKbps = sender ? Math.round(numOr0(sender.bitrate) / 1000) : 0;
+    const complexity = sender && sender.complexity != null ? Math.round(numOr0(sender.complexity)) : -1;
+    const level = sender && sender.level != null ? Math.round(numOr0(sender.level)) : -1;
+    // 旧对端电平门控：只认 bitrate 是否存在（后端契约：均衡档必报 bitrate=128000）。
+    // 旧对端 bitrate/complexity 缺失、level 因无 omitempty 退化成 0，仅凭 level 无法区分。
+    const encodingKnown = bitrateKbps > 0;
     const outputMs = numOr0(audioStats.outputMs);
     return {
       sender, // null/undefined = 旧版对端未上报
@@ -94,6 +105,11 @@
       senderMs,
       netMs,
       bufferMs,
+      targetMs,
+      bitrateKbps, // 0=未上报
+      complexity, // -1=未上报
+      level, // -1=未上报
+      encodingKnown,
       outputMs,
       underflows: numOr0(stats.underflows),
       totalMs: Math.round(senderMs + netMs + bufferMs + outputMs),
@@ -102,6 +118,14 @@
 
   const sysLatency = $derived(buildLatency('sys'));
   const micLatency = $derived(buildLatency('mic'));
+
+  // 发送端自适应档位文案（后端契约：0=省 CPU / 1=平衡 / 2=音质优先）
+  function adaptiveLevelText(level) {
+    if (level === 0) return '省 CPU（高负载保护）';
+    if (level === 1) return '平衡';
+    if (level === 2) return '音质优先';
+    return '未知(' + level + ')';
+  }
 
   // 延迟 chip 的多行 title：分项明细 + 计算口径 + 欠载含义
   function latencyTitle(label, l) {
@@ -115,7 +139,9 @@
     }
     parts.push(
       l.netKnown ? '网络 ' + Math.round(l.netMs) + 'ms' : '网络 未知',
-      '播放缓冲 ' + Math.round(l.bufferMs) + 'ms',
+      // 实际水位 + 自适应目标：一眼看出是「低延迟稳定运行」还是「被欠载抬高目标」
+      '播放缓冲 ' + Math.round(l.bufferMs) + 'ms'
+        + (l.targetMs > 0 ? '（自适应目标 ' + Math.round(l.targetMs) + 'ms）' : ''),
       '输出 ' + Math.round(l.outputMs) + 'ms'
     );
     const lines = [
@@ -129,6 +155,14 @@
     }
     if (!l.netKnown) {
       lines.push('网络 RTT 未知（旧服务端或尚未测速），网络延迟按 0 计');
+    }
+    // 对端编码参数（发送端自适应档位）；旧版对端无这些字段时整行不显示
+    if (l.encodingKnown) {
+      const enc = [];
+      if (l.bitrateKbps > 0) enc.push('对端编码 ' + l.bitrateKbps + 'kbps');
+      if (l.complexity >= 0) enc.push('复杂度 ' + l.complexity);
+      if (l.level >= 0) enc.push('自适应档 ' + adaptiveLevelText(l.level));
+      if (enc.length > 0) lines.push(enc.join(' · '));
     }
     lines.push('播放欠载 ' + l.underflows + ' 次（本机负载高时会重新预缓冲；数字持续增长说明接收端吃力）');
     lines.push('估算值，非端到端时钟同步测量；输出延迟部分环境不可测时按 0 计');

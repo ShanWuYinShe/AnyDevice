@@ -5,7 +5,7 @@
 // 与跳变（断续）。AudioWorklet + 环形缓冲是流媒体/VoIP 的标准做法：
 //   - 主线程把 PCM 连续写入 worklet 的环形缓冲区；
 //   - worklet 音频线程按采样时钟连续读取输出，天然无缝；
-//   - 保留约 100ms 抖动缓冲吸收网络抖动；
+//   - 自适应抖动缓冲（40–200ms，初始 60ms）吸收网络抖动：欠载快升、稳定慢降；
 //   - 缓冲溢出时丢弃最旧数据（延迟不累积），欠载时输出静音（不爆音）。
 //
 // 系统声（sys）与麦克风（mic）各持有一个独立的 ring 实例，互不干扰。
@@ -25,9 +25,17 @@ class PCMRingPlayer extends AudioWorkletProcessor {
     this.underflows = 0;
     this.overflows = 0;
     this.reportTimer = 0;
-    // 预缓冲：积攒到 100ms 才开始出声（吸收网络抖动，避免开头碎裂）
-    this.prebufferFrames = 4800;
+    // —— 自适应抖动缓冲 ——
+    // 目标水位用毫秒表达、按 worklet 全局实际采样率换算帧数，取代此前固定 100ms 预缓冲：
+    //   - 初始 60ms，下限 40ms、上限 200ms；
+    //   - 欠载（水位被抽空）→ 目标 +30ms 并重新 priming（快升，先保住不断音）；
+    //   - 稳定运行（未 priming 且期间无欠载）持续 5s → 目标 -5ms（慢降，逐步压低延迟）。
+    this.sampleRate = sampleRate || 48000;
+    this.minTargetMs = 40;
+    this.maxTargetMs = 200;
+    this.targetMs = 60; // 初始 60ms（2880 帧 @48kHz）
     this.priming = true;
+    this.stableFrames = 0; // 稳定条件「连续」满足的累计帧数，一旦不满足立即清零
     // 软限幅器（专业音频链标准配置）：任何峰值过载平滑压缩，
     // 防止突发音量/叠加峰值造成削波爆音（"炸"）
     this.limiterGain = 1.0;
@@ -51,20 +59,37 @@ class PCMRingPlayer extends AudioWorkletProcessor {
       this.filled += n;
     };
   }
+  // targetFrames 目标水位换算为帧数（随 worklet 实际采样率变化，48kHz 下 60ms=2880 帧）
+  targetFrames() {
+    return Math.round((this.targetMs / 1000) * this.sampleRate);
+  }
+  // reportStats 上报水位与自适应目标（targetMs 与 filled/cap/underflows/overflows 同一消息）
+  reportStats() {
+    this.port.postMessage({
+      type: 'stats',
+      filled: this.filled,
+      cap: this.cap,
+      underflows: this.underflows,
+      overflows: this.overflows,
+      targetMs: this.targetMs,
+    });
+  }
   process(inputs, outputs) {
     const out = outputs[0];
     const ch0 = out[0], ch1 = out[1];
     const n = ch0.length;
-    // 预缓冲策略：缓冲不足时静音等待；发生欠载后重新积攒，避免碎音
+    const targetFrames = this.targetFrames();
+    // 预缓冲策略：水位达到自适应目标才开始出声；发生欠载后重新积攒，避免碎音
     if (this.priming) {
-      if (this.filled >= this.prebufferFrames) {
+      if (this.filled >= targetFrames) {
         this.priming = false;
       } else {
         for (let i = 0; i < n; i++) { ch0[i] = 0; ch1[i] = 0; }
+        this.stableFrames = 0; // 预缓冲期间不算稳定运行
         this.reportTimer++;
         if (this.reportTimer >= 187) {
           this.reportTimer = 0;
-          this.port.postMessage({ type: 'stats', filled: this.filled, cap: this.cap, underflows: this.underflows, overflows: this.overflows });
+          this.reportStats();
         }
         return true;
       }
@@ -89,14 +114,29 @@ class PCMRingPlayer extends AudioWorkletProcessor {
       ch1[i] = r * this.limiterGain;
     }
     if (this.filled === 0) {
+      // 欠载：目标水位快升 +30ms（上限 200）并重新预缓冲（恢复时无碎音），先保住不断音
       this.underflows++;
-      this.priming = true; // 断流后重新预缓冲，恢复时无碎音
+      this.targetMs = Math.min(this.maxTargetMs, this.targetMs + 30);
+      this.priming = true;
+      this.stableFrames = 0;
+    } else if (this.targetMs > this.minTargetMs) {
+      // 稳定运行：走到这里已不处于 priming（能连续出声），且本量子未欠载；
+      // 连续累计 5s 后慢降 5ms，然后计时清零（避免连续快降）。
+      // 注意：不能逐量子要求「水位 >= targetFrames」——20ms 数据到达后水位峰值才到目标，
+      // 随即被消费走低，该条件只在单个量子成立，逐量子校验会让慢降永不触发（仿真验证）。
+      this.stableFrames += n;
+      if (this.stableFrames >= this.sampleRate * 5) {
+        this.stableFrames = 0;
+        this.targetMs = Math.max(this.minTargetMs, this.targetMs - 5);
+      }
+    } else {
+      this.stableFrames = 0; // 已到 40ms 下限、无可降空间，不再累计
     }
     // 每约 0.5 秒上报一次水位（128 帧/process → 约 187 次）
     this.reportTimer++;
     if (this.reportTimer >= 187) {
       this.reportTimer = 0;
-      this.port.postMessage({ type: 'stats', filled: this.filled, cap: this.cap, underflows: this.underflows, overflows: this.overflows });
+      this.reportStats();
     }
     return true;
   }
@@ -109,8 +149,8 @@ let workletReady = false;
 const nodes = { sys: null, mic: null };
 const pending = { sys: [], mic: [] }; // worklet 就绪前的缓存
 const streamStats = {
-  sys: { filled: 0, cap: 0, underflows: 0, overflows: 0 },
-  mic: { filled: 0, cap: 0, underflows: 0, overflows: 0 },
+  sys: { filled: 0, cap: 0, underflows: 0, overflows: 0, targetMs: 0 },
+  mic: { filled: 0, cap: 0, underflows: 0, overflows: 0, targetMs: 0 },
 };
 let workletError = '';
 
@@ -123,7 +163,7 @@ const SAMPLE_RATE = 48000;
 // 统计回调单槽：状态层在 startPolling 注册一次（多次注册后者覆盖）
 let statsCallback = null;
 
-// onStreamStats 注册 worklet 统计回调：cb({ stream, filled, cap, underflows, overflows })
+// onStreamStats 注册 worklet 统计回调：cb({ stream, filled, cap, underflows, overflows, targetMs })
 export function onStreamStats(cb) {
   statsCallback = typeof cb === 'function' ? cb : null;
 }
@@ -131,7 +171,19 @@ export function onStreamStats(cb) {
 // getStreamStats 返回某路环形缓冲统计的副本（外部只读，避免直接改内部状态）
 export function getStreamStats(stream) {
   const s = streamStats[stream === 'mic' ? 'mic' : 'sys'];
-  return { filled: s.filled, cap: s.cap, underflows: s.underflows, overflows: s.overflows };
+  return {
+    filled: s.filled,
+    cap: s.cap,
+    underflows: s.underflows,
+    overflows: s.overflows,
+    targetMs: s.targetMs,
+  };
+}
+
+// getBufferTargetMs 当前自适应目标缓冲（ms，0=尚未收到 worklet 统计）。
+// 与 getPlaybackLatencyMs 分工：后者是当前实际水位，前者是自适应算法收放的目标水位。
+export function getBufferTargetMs(stream) {
+  return getStreamStats(stream).targetMs;
 }
 
 // getPlaybackLatencyMs 播放缓冲延迟（ms）= 当前水位帧数 / 48000 * 1000
@@ -210,6 +262,7 @@ export function ensureAudioContext() {
             streamStats[key].cap = m.cap;
             streamStats[key].underflows = m.underflows;
             streamStats[key].overflows = m.overflows;
+            streamStats[key].targetMs = m.targetMs || 0;
             // 转发给 UI 状态层；回调异常不能打断音频线程消息链，必须吞掉
             if (statsCallback) {
               try {
@@ -219,6 +272,7 @@ export function ensureAudioContext() {
                   cap: m.cap,
                   underflows: m.underflows,
                   overflows: m.overflows,
+                  targetMs: m.targetMs || 0,
                 });
               } catch (_) { /* UI 回调异常不影响音频播放 */ }
             }

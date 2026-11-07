@@ -181,12 +181,13 @@ let audioRateLast = 0;
 export const audioPlayState = $state({ text: '未创建' });
 
 // 播放链路延迟/水位（卡片展示用）：由 AudioWorklet 每 ~0.5s 上报后刷新，
-// 不额外起定时器。bufferMs 为环形缓冲水位换算的毫秒数；outputMs 为
+// 不额外起定时器。bufferMs 为环形缓冲水位换算的毫秒数；targetMs 为
+// 自适应目标水位（40–200ms，Worklet 欠载快升/稳定慢降）；outputMs 为
 // AudioContext 输出延迟（baseLatency + outputLatency）；ctxState/sampleRate
 // 用于区分「未点击播放」与「被系统挂起」。
 export const audioStats = $state({
-  sys: { bufferMs: 0, filled: 0, underflows: 0, overflows: 0 },
-  mic: { bufferMs: 0, filled: 0, underflows: 0, overflows: 0 },
+  sys: { bufferMs: 0, filled: 0, underflows: 0, overflows: 0, targetMs: 0 },
+  mic: { bufferMs: 0, filled: 0, underflows: 0, overflows: 0, targetMs: 0 },
   outputMs: 0,
   ctxState: '未创建',
   sampleRate: 48000,
@@ -213,6 +214,8 @@ function hookStreamStats() {
     bucket.filled = s.filled;
     bucket.underflows = s.underflows;
     bucket.overflows = s.overflows;
+    // 自适应目标水位（ms）：由 Worklet 上报，UI 展示「实际缓冲 vs 目标」
+    bucket.targetMs = s.targetMs || 0;
     // 水位 → 毫秒沿用 audio.js 的唯一换算口径（48kHz）
     bucket.bufferMs = Math.round(getPlaybackLatencyMs(key));
     refreshAudioCtxInfo();

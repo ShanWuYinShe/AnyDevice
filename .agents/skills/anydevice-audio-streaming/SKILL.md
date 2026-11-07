@@ -1,6 +1,6 @@
 ---
 name: anydevice-audio-streaming
-description: AnyDevice 跨设备实时音频流（采集→传输→播放）架构与验证：WASAPI Loopback/miniaudio 捕获、float 全链防削波、AudioWorklet 环形缓冲、按订阅数启停采集与系统钩子、平台解码差异（WebCodecs/WKWebView）、端到端延迟分侧测量、协议版本防呆。触发：改 internal/audio、internal/mouse、internal/keyboard 的采集与钩子；音频破音/断续/电流声或完全无声；播放端欠载或积压；游戏掉帧或空闲时 CPU 偏高；延迟统计与 /api/status 诊断；set_mapping 订阅或 audio_stats 字段变更；WKWebView/Safari 解码能力差异。
+description: AnyDevice 跨设备实时音频流（采集→传输→播放）架构与验证：WASAPI Loopback/miniaudio 捕获、float 全链防削波、AudioWorklet 自适应抖动缓冲（40–200ms）、发送端 Opus 编码档位自适应、按订阅数启停采集与系统钩子、平台解码差异（WebCodecs/WKWebView）、端到端延迟分侧测量、协议版本防呆。触发：改 internal/audio、internal/mouse、internal/keyboard 的采集与钩子；音频破音/断续/电流声或完全无声；播放端欠载或积压；游戏掉帧或空闲时 CPU 偏高；延迟统计与 /api/status 诊断；set_mapping 订阅或 audio_stats 字段变更；WKWebView/Safari 解码能力差异。
 ---
 
 # AnyDevice 音频串流（采集 → 传输 → 播放）
@@ -10,11 +10,11 @@ description: AnyDevice 跨设备实时音频流（采集→传输→播放）架
 ## 代码位置与契约（改音频/钩子前先读）
 
 - `internal/audio/capture.go`：采集引擎与按订阅启停（`StartSupervisor`）；Windows 系统声默认走 miniaudio Loopback（`devType = malgo.Loopback`），仅 `ANY_DEVICE_NATIVE_WASAPI=1` 时走自研 WASAPI（`internal/audio/wasapi_windows.go`）。
-- `internal/audio/opus_encoder.go` / `internal/audio/opus_decoder.go`：编解码，复杂度 5；解码器按音频流各持一个实例。
+- `internal/audio/opus_encoder.go` / `internal/audio/opus_decoder.go`：编解码，运行期参数由 `internal/audio/adaptive.go` 的档位自适应调整（96–160kbps / 复杂度 3–7，默认 128kbps / 5）；解码器按音频流各持一个实例。
 - `internal/mouse/event.go` / `internal/keyboard/event.go`：系统输入钩子及按订阅启停。
 - `internal/server/hub.go`：WS 订阅入口（`set_mapping` 的 `sys_audio`/`mic_audio`；旧对端由 `armLegacySubs` 500ms 宽限兜底）。
 - 端点：`/api/self`（能力声明，含 `audio_format`）、`/api/status`（各引擎运行状态）、`/api/peers`（对端与 `mapping.sender_{sys,mic}_latency`、`net_rtt_ms`）。
-- 延迟契约：发送端经 `audio_stats` 文本消息上报 `{chunk_ms,encode_ms,send_ms,running}`；改字段名/语义须两端同改并保留旧版兼容。
+- 延迟契约：发送端经 `audio_stats` 文本消息上报 `{chunk_ms,encode_ms,send_ms,running,bitrate,complexity,level}`；`bitrate`/`complexity` 用 omitempty、`level` 不带 omitempty（0 是合法档位）。改字段名/语义须两端同改并保留旧版兼容。
 
 ## Windows 系统声捕获（WASAPI Loopback / miniaudio）
 
@@ -39,9 +39,47 @@ description: AnyDevice 跨设备实时音频流（采集→传输→播放）架
 ## AudioWorklet 环形缓冲（播放端标准架构）
 
 - worklet 内 ring buffer：主线程 postMessage 写入、音频线程顺序读取（天然无缝无重叠）。
-- **100ms 预缓冲**吸收网络抖动；欠载后重新 priming（恢复无碎音）；溢出丢最旧（延迟恒定）。
+- 预缓冲水位**自适应**（40–200ms，初始 60ms，欠载快升/稳定慢降，详见下一节）；欠载后重新 priming（恢复无碎音）；溢出丢最旧（延迟恒定）。不要退回固定 100ms 大缓冲——它直接抬高端到端延迟且不随负载收放。
 - 系统声/麦克风**各持独立 ring**，共用时间轴会互相推挤产生杂音。
 - 静音帧也要写入 ring 推进时间轴（直接丢弃会导致时间轴漂移 → 调度重置爆音）。
+
+## 自适应：播放端抖动缓冲与发送端编码档位（延迟 / 音质 / 性能平衡）
+
+目标：低负载时压低延迟、提高音质；高负载时让出 CPU 保流畅——三者不互相无条件牺牲。
+
+### 播放端环形缓冲（`frontend/src/lib/audio.js` 的 `PCMRingPlayer`）
+
+- 预缓冲目标水位自适应：初始 60ms、范围 [40, 200]ms；目标帧数按 worklet 全局 `sampleRate` 换算。
+- 欠载快升：`filled` 抽空 → `underflows++`、目标 +30ms（封顶 200）、`priming = true`；先保住不断音。
+- 稳定慢降：未 `priming` 且期间无欠载 → 累计 5s 后目标 -5ms（下限 40），随后稳定计时清零。
+  **不要逐量子校验「水位 >= 目标」**：20ms 数据包到达后水位峰值才等于目标、随即被消费，
+  该条件只在单个量子成立，逐量子校验会让慢降永不触发（目标会一直停在 60ms）。
+- `stats` 消息必须带 `targetMs`（与 `filled/cap/underflows/overflows` 同一条）；主线程
+  `streamStats`/`getStreamStats`/`getBufferTargetMs` 暴露给 UI。溢出仍丢最旧、静音帧仍推进时间轴、
+  sys/mic 仍各持独立 ring。
+- UI：对端卡片延迟 title 显示「播放缓冲 Xms（自适应目标 Yms）」。
+- 数值验证（不需要浏览器）：Node 脚本从 `audio.js` 正则提取 `WORKLET_SOURCE`，用 `new Function`
+  注入假 `AudioWorkletProcessor`/`registerProcessor` 实例化真实 worklet 类，按虚拟时钟
+  （每 20ms 投 960 帧、每 128 帧调 `process()`）驱动并断言：初始 60ms；理想网络约 25s 降到 40ms；
+  断流 220ms 后目标 +30ms 且欠载计 1 次；连续断流封顶 200ms；±8ms 抖动下不再欠载；
+  1%–5% 丢包时目标自动上调且始终在 [40,200]。
+
+### 发送端编码参数（`internal/audio/adaptive.go` + `capture.go` 的 `encodeLoop`）
+
+- 档位：`LevelLow`=96kbps/complexity 3、`LevelBalanced`=128kbps/5（默认）、`LevelQuality`=160kbps/7。
+- 决策是纯函数 `decideAdaptive(cur, signals)`（表驱动单测）；控制器状态只在 `encodeLoop` 的单
+  goroutine 内维护——不新增常驻 goroutine/定时器（按需启停会反复 Start/Stop，常驻对象容易泄漏）。
+- 降档（保护优先）：队列积压 ≥4 帧或本次运行出现丢帧立即降；编码延迟（采集→编码完成 EWMA）≥35ms
+  需连续 2 次采样（采样间隔 2s）确认。升档：≤28ms 且无积压/丢帧持续 ≥15s。任意切换后冷却 8s。
+- `SetBitrate`/`SetComplexity` 必须在 `encodeLoop` 已持有的 `opusMu` 内调用（libopus 编码器非并发安全，
+  须与 `Feed` 串行）；切换失败不 `commit`，下个采样按旧档位重判。
+- 帧长保持 20ms、采集设备周期不随负载改动：自适应调的是 CPU 与音质，不用帧长换延迟。
+- 暴露：`EncoderParams()`/`DroppedFrames()`/`QueueDepth()`（atomic）→ `/api/status` 的
+  `sys_audio_bitrate`/`sys_audio_complexity`/`sys_audio_adaptive_level`/`sys_audio_dropped`（及 `mic_` 同名）；
+  `audio_stats` 的 `sys`/`mic` 增加 `bitrate`(bit/s, omitempty)/`complexity`(omitempty)/`level`(无 omitempty)。
+- 旧版兼容：旧对端不上报三字段 → `bitrate`/`complexity` 缺失、`level` 退化成 0；前端以 `bitrate`
+  是否存在门控「对端编码…」展示行，避免把旧对端误标成省 CPU 档。
+- Stop 与 Start 都要把编码参数/档位复位为默认平衡档（停止期间 `/api/status` 不应残留上次档位）。
 
 ## 协议版本防呆
 
@@ -58,7 +96,8 @@ description: AnyDevice 跨设备实时音频流（采集→传输→播放）架
 - **本机共享开关必须门控采集**：用户关闭「共享麦克风」后，即使对端仍在订阅也要立即停止采集，不能只改发现广播。
 - **采集线程优先级不要随便降**：采集线程稳态 CPU 通常 <1%，降优先级对帧率几乎无感，却会在 CPU 满载时
   拉长调度延迟导致 WASAPI overrun（断音）；保持 miniaudio 默认即可。
-- Opus 编码复杂度 5 足够（128kbps 立体声听感基本无差，CPU 比默认 8/10 低约 1/3）。
+- Opus 编码参数按档位自适应（见「发送端编码参数」）：默认平衡档 128kbps/复杂度 5，高负载降 96kbps/3、
+  持续低负载升 160kbps/7；不要写死成单一码率/复杂度。
 - **按需启停的三个关键约束**（同一引擎对象反复 Start/Stop 时）：
   1. 展示名/状态字段不能兼作「本次是否找到设备」的判断——Stop 不清空展示名，第二次 Start 会误跳过
      「无虚拟回环设备」回退，退化成采集默认麦克风并当系统声推流。用函数返回值表达本次探测结果。
@@ -75,15 +114,18 @@ description: AnyDevice 跨设备实时音频流（采集→传输→播放）架
   等于强制两端同时升级。用**独立 WS 文本消息**上报发送端统计（如 `{"type":"audio_stats","sys":{...}}`）：
   旧前端会忽略未知文本类型、旧接收端不解析，天然向后兼容。
 - 分侧公式（UI 标注「估算」，不是端到端时钟同步测量）：
-  `总延迟 ≈ 发送端(采集块时长 + 采集回调→编码完成 + 广播队列→WS 写完成) + 网络 RTT/2 + 接收端(环形缓冲水位/采样率 + AudioContext baseLatency+outputLatency)`。
+  `总延迟 ≈ 发送端(采集块时长 + 采集回调→编码完成 + 广播队列→WS 写完成) + 网络 RTT/2 + 接收端(环形缓冲水位/采样率（自适应目标 40–200ms，初始 60ms）+ AudioContext baseLatency+outputLatency)`。
 - **发送端**：采集回调给每帧打时间戳入队；编码 goroutine 计算「采集→编码完成」，它包含 Opus 20ms 组帧等待
   （最容易被忽略的固定延迟）；WS 写完成时间差统计发送队列。用 EWMA 平滑避免 UI 数字乱跳；
   Stop 的统计复位移到编码锁释放之后，否则在途编码写会覆盖复位值（窄竞态）。
 - **网络**：出站连接每 3s 发 WS ping，pong handler 只认自己发过的 pending ping（gorilla `WriteControl` 可与其它写并发）。
   亚毫秒 RTT 向上取整为 1ms：0 应保留给「未知」，别用 0 表示「已测到但很小」。
-- **接收端**：AudioWorklet 的 `filled/48000*1000` 是当前抖动缓冲延迟；`baseLatency+outputLatency` 是设备输出延迟
+- **接收端**：AudioWorklet 的 `filled/48000*1000` 是当前抖动缓冲延迟，`stats.targetMs` 是自适应目标
+  （稳定后应接近 40ms；持续欠载会抬高，最高 200ms）；`baseLatency+outputLatency` 是设备输出延迟
   （WKWebView/Safari 可能没有 `outputLatency` → 按 0 计并在 UI 注明，总量会偏小）。
   **underflows 持续增长 = 接收端负载高、在反复重新预缓冲**，是最直接的「延迟在接收端」证据。
+- **发送端编码档位**：`/api/status` 的 `sys_audio_adaptive_level`（0 省 CPU / 1 平衡 / 2 音质优先）、
+  `sys_audio_bitrate`（bit/s）、`sys_audio_dropped`（累计丢帧）可直接判断自适应是否在按负载工作。
 - 判断口径：播放缓冲大 / 欠载增长 → 接收端；采集块/编码/发送分项大 → 发送端；RTT 大 → 网络。
 - 手动添加 IP 的对端没有发现广播：默认 provides 是全 true 但 `audio_format` 为空，前端协议防呆会因此
   **禁用音频映射**；正确做法是 add 时异步 GET 对端 `/api/self` 补全能力声明（含 audio_format）与 OS/设备名。
@@ -133,6 +175,12 @@ description: AnyDevice 跨设备实时音频流（采集→传输→播放）架
 
 - 两端版本一致性先确认（`/api/self` 的 `build_time`），再看数据。
 - 采集启停验证：`/api/status` 的 `*_engine`/`*_capture` 布尔，无人订阅时应全 false；连接后 100ms 内订阅计数应为 0，旧端宽限到点才变 1。
+- 自适应验证：播放稳定 20s 后 `window.__audioDebug().stats.sys.targetMs` 应从 60 降到 40；人为让推流停顿
+  200ms 后 target 应 +30ms 并出现 underflow。发送端在游戏满载/压测时 `sys_audio_adaptive_level` 应降到 0、
+  `sys_audio_bitrate` 降到 96000；空闲 15s 后应升回 1/128000，长稳后可到 2/160000。
+  可用 Node 脚本按上一节方法加载真实 `WORKLET_SOURCE` 做数值仿真（无需浏览器），覆盖慢降/快升/上下限。
+- `audio_stats`/新字段回归：`go test ./internal/audio -run 'Adaptive|EncoderParams|SetEncoder' -v`
+  与 `go test ./internal/server -run 'Latency|Status' -v` 覆盖决策表、编码参数切换与 /api/status 字段。
 - 抓前端实收 PCM：浏览器一律走 `agent-browser`（红线见用户级 `browser-automation-safety`，禁止自行 spawn Chrome、禁止写自研 CDP 管线）→ CDP `Network.enable` → `Network.webSocketFrameReceived`（payloadData 为 base64，opcode 2 是二进制）→ numpy 分析削波/超界样本/跳变分布/重复块/静音段/频谱。
 - node 的 WebSocket 二进制帧默认是 Blob，必须显式 `ws.binaryType = 'arraybuffer'`（否则统计恒 0）。
 - 音频特征判断：真实音频为多频成分连续波形；恒定幅度周期信号或大量 DC 分量 = 非音频内容。

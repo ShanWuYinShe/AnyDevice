@@ -128,6 +128,15 @@ type Engine struct {
 	//   latEncodeMs = 采集回调 → Opus 编码完成（含 20ms 组帧与队列等待）
 	latChunkMs  atomic.Int64
 	latEncodeMs atomic.Int64
+
+	// Opus 编码参数自适应状态（atomic）：bitrate 单位 bit/s，level 为
+	// LevelLow/LevelBalanced/LevelQuality。只在 encodeLoop 内写入，Start 复位
+	// 为默认平衡档；HTTP/UI 与 audio_stats 高频读取，不能读 e.opus/自适应
+	// 控制器字段（Stop/Start 会改写或重建它们，跨 goroutine 读是数据竞争）。
+	encBitrate    atomic.Int64
+	encComplexity atomic.Int64
+	encLevel      atomic.Int64
+	encQueueDepth atomic.Int64 // 编码队列积压帧数（仅诊断；encodeLoop 写入）
 }
 
 // queuedFrame 是待编码的一帧 PCM 及其采集时间：编码卸载到独立 goroutine 后，
@@ -172,6 +181,8 @@ func NewEngine(kind AudioKind, mode CaptureMode, deviceIndex int, onChunk func([
 	e.startFn = e.Start
 	e.stopFn = e.Stop
 	e.enabled.Store(true)
+	// 未启动时 /api/status 也应显示合理默认值（NewOpusEncoder 的初始参数）
+	e.resetEncoderParams()
 	return e
 }
 
@@ -367,6 +378,9 @@ func (e *Engine) Start() error {
 	e.encDone = make(chan struct{})
 	e.latChunkMs.Store(0)
 	e.latEncodeMs.Store(0)
+	// 编码参数每次运行复位为默认平衡档：上一次运行可能已自适应到 Low/Quality，
+	// 而新编码器按 NewOpusEncoder 的默认参数创建，暴露的状态必须与之一致。
+	e.resetEncoderParams()
 	go e.encodeLoop(e.encQueue, e.encDone)
 	if err := e.start(); err != nil {
 		// 失败路径回滚 isRunning：否则引擎永久卡在「已运行」，后续 Start 假成功
@@ -385,20 +399,32 @@ func (e *Engine) Start() error {
 
 // encodeLoop 在独立 goroutine 中消费编码队列：cgo 建编码器、逐样本 unsafe
 // 转换与 Opus Feed 都不再占用音频实时回调线程（2026-10-24 审查加固项 P6）。
+// Opus 编码参数自适应也在本 goroutine 内按 2s 节拍驱动（不新增常驻
+// goroutine/定时器——按需启停会反复 Start/Stop，常驻对象容易泄漏）。
 func (e *Engine) encodeLoop(queue <-chan queuedFrame, done <-chan struct{}) {
 	tag := TagSystemAudioOpus
 	if e.kind == KindMic {
 		tag = TagMicAudioOpus
 	}
+	// 自适应控制器是「本次运行」独占的局部状态：按需启停 Stop→Start 时旧编码
+	// goroutine 可能尚未退出，若把状态挂在 Engine 字段上会与下一次 Start 的
+	// 复位构成数据竞争（与 queue/done 按参数传递的原因相同）。
+	ctrl := newAdaptiveState()
+	ctrl.seedDropped(e.dbgDropped.Load()) // 首次采样前的丢帧也要计入降档判定
+	nextSample := time.Now().Add(adaptiveSampleInterval)
 	for {
 		var frame queuedFrame
 		select {
 		case <-done:
 			// Stop 关闭编码通道：立即退出，绝不常驻（否则每次「按需启停」
 			// 都会泄漏一个编码 goroutine，长期运行会持续堆积）
+			e.encQueueDepth.Store(0)
 			return
 		case frame = <-queue:
 		}
+		// 队列深度只经 atomic 暴露给 HTTP/UI：它们不能读 e.encQueue 字段
+		//（Start/Stop 会重新赋值，跨 goroutine 读是数据竞争）。
+		e.encQueueDepth.Store(int64(len(queue)))
 		e.opusMu.Lock()
 		// Stop 已销毁编码器（isRunning=false）后到达的迟到帧直接丢弃，
 		// 防止这里重建孤儿编码器（重建后无人销毁）
@@ -428,7 +454,41 @@ func (e *Engine) encodeLoop(queue <-chan queuedFrame, done <-chan struct{}) {
 		// 发送端延迟分项：采集回调 → 编码完成（含 20ms 组帧与队列等待）。
 		// 在 opusMu 内更新：Stop 复位统计前会先等本锁，避免在途写入覆盖复位值。
 		ewmaAtomic(&e.latEncodeMs, time.Since(frame.capturedAt).Milliseconds())
+
+		// 编码参数自适应：每 adaptiveSampleInterval 采样一次。切换用的
+		// SetBitrate/SetComplexity 就在本次已持有的 opusMu 内调用，与 Feed
+		// 串行化（libopus 编码器不是并发安全的）。切换应用失败则不 commit
+		// 控制器状态，下个采样按旧档位重新判定（等同于本次未切换）。
+		var switched Level
+		var switchedOK bool
+		var setErr error
+		if now := time.Now(); !now.Before(nextSample) {
+			nextSample = now.Add(adaptiveSampleInterval)
+			level, change := ctrl.sample(now, e.latEncodeMs.Load(), len(queue), e.dbgDropped.Load())
+			if change {
+				bitrate, complexity := level.params()
+				err := e.opus.SetBitrate(bitrate)
+				if err == nil {
+					err = e.opus.SetComplexity(complexity)
+				}
+				if err == nil {
+					e.encBitrate.Store(int64(bitrate))
+					e.encComplexity.Store(int64(complexity))
+					e.encLevel.Store(int64(level))
+					ctrl.commit(level, now)
+					switched, switchedOK = level, true
+				} else {
+					setErr = err
+				}
+			}
+		}
 		e.opusMu.Unlock()
+		if setErr != nil {
+			util.Logf("[音频] %s编码参数自适应切换失败（保持当前档位，稍后重试）: %v", e.kindName(), setErr)
+		} else if switchedOK {
+			bitrate, complexity := switched.params()
+			util.Logf("[音频] %s编码档位切换: %s（%dkbps / 复杂度 %d）", e.kindName(), switched, bitrate/1000, complexity)
+		}
 	}
 }
 
@@ -719,6 +779,10 @@ func (e *Engine) Stop() {
 	// 采集端数字；在途 encodeLoop 的 EWMA 写也在 opusMu 内，先等锁可保证不覆盖。
 	e.latChunkMs.Store(0)
 	e.latEncodeMs.Store(0)
+	// 复位编码参数/档位：停止后 /api/status 不应继续显示上次运行自适应到的档位。
+	// 此时编码 goroutine 已在 encDone 关闭后退出（在途 Set* 均已持锁完成），
+	// 下一次 Start 也会复位，两处保持一致默认值。
+	e.resetEncoderParams()
 }
 
 // emit 把 PCM 交付给订阅者：订阅门控、tag 前缀与诊断统计统一在此处理。
@@ -777,6 +841,38 @@ func (e *Engine) emitPCM(pcm []byte) {
 // 引擎未运行/无数据时为 0。供 /api/status 诊断与对端延迟展示使用。
 func (e *Engine) LatencyStats() (chunkMs, encodeMs int) {
 	return int(e.latChunkMs.Load()), int(e.latEncodeMs.Load())
+}
+
+// EncoderParams 返回当前 Opus 编码参数与自适应档位：
+//   - bitrate 单位 bit/s（128000 = 128kbps）；
+//   - complexity 为 libopus 编码复杂度（默认 5，自适应范围 3-7）；
+//   - level 为自适应档位（LevelLow=0 / LevelBalanced=1 / LevelQuality=2）。
+//
+// 全部经 atomic 读取：不触碰 Start/Stop 改写的字段，供 /api/status、
+// audio_stats 与 /api/peers 高频读取（HTTP handler / 广播 goroutine）。
+func (e *Engine) EncoderParams() (bitrate, complexity, level int) {
+	return int(e.encBitrate.Load()), int(e.encComplexity.Load()), int(e.encLevel.Load())
+}
+
+// DroppedFrames 返回累计因编码队列满被丢弃的采集帧数（诊断用；跨运行累计）。
+func (e *Engine) DroppedFrames() uint64 {
+	return e.dbgDropped.Load()
+}
+
+// QueueDepth 返回编码队列当前积压帧数（诊断用）。该 atomic 只由 encodeLoop
+// 写入，读取方不直接读 e.encQueue 字段（Start/Stop 会重新赋值）。
+func (e *Engine) QueueDepth() int {
+	return int(e.encQueueDepth.Load())
+}
+
+// resetEncoderParams 把编码参数/档位/队列深度复位为默认平衡档。
+// 由 NewEngine（未启动时的默认展示值）与 Start（每次运行起点）调用。
+func (e *Engine) resetEncoderParams() {
+	bitrate, complexity := LevelBalanced.params()
+	e.encBitrate.Store(int64(bitrate))
+	e.encComplexity.Store(int64(complexity))
+	e.encLevel.Store(int64(LevelBalanced))
+	e.encQueueDepth.Store(0)
 }
 
 // AudioFormat 返回本机音频链路对外广播的协议描述。
