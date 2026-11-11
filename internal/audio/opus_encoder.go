@@ -13,8 +13,8 @@ package audio
 //     交叉编译；供 Intel Mac 与 Universal 包使用）
 //   - Windows x64: third_party/libopus/win64/libopus.a（mingw 交叉编译）
 // 目录内只有 .a、没有 .dylib/.dll，链接结果是静态的——分发 .app/exe 无需用户装 opus。
-//   - Linux: 静态链接系统 libopus（-l:libopus.a），构建需 libopus-dev，
-//     运行期不再需要 libopus0（GTK/WebKitGTK 仍为动态依赖）
+//   - Linux: 静态链接系统 libopus（-Wl,-Bstatic -lopus -Wl,-Bdynamic），构建需
+//     libopus-dev，运行期不再需要 libopus0（GTK/WebKitGTK 仍为动态依赖）
 
 /*
 #cgo darwin CFLAGS: -I${SRCDIR}/../../third_party/libopus/include
@@ -23,11 +23,14 @@ package audio
 #cgo windows CFLAGS: -I${SRCDIR}/../../third_party/libopus/include
 #cgo windows LDFLAGS: -L${SRCDIR}/../../third_party/libopus/win64 -lopus
 // Linux 使用系统 libopus 的静态库（Debian/Ubuntu: apt install libopus-dev；
-// Fedora: dnf install opus-devel）。系统包同时提供 libopus.a，用 -l:libopus.a
-// 强制静态链接——产物不再依赖运行期 libopus0。GTK/WebKitGTK 无法静态化
-//（官方不提供 .a，且 WebKit 的进程模型要求动态加载），运行库仍需要。
+// Fedora: dnf install opus-devel）。系统包同时提供 libopus.a，用链接器的
+// -Bstatic/-Bdynamic 把 -lopus 夹在中间强制静态链接——产物不再依赖运行期
+// libopus0。GTK/WebKitGTK 无法静态化（官方不提供 .a，且 WebKit 的进程模型
+// 要求动态加载），运行库仍需要。
+// 注意不能用 GNU ld 的 -l:libopus.a 精确文件名写法：cgo 的安全检查只接受
+// -l 后不含 ':' 的形式，否则报 invalid flag in #cgo LDFLAGS。
 #cgo linux CFLAGS: -I${SRCDIR}/../../third_party/libopus/include
-#cgo linux LDFLAGS: -l:libopus.a
+#cgo linux LDFLAGS: -Wl,-Bstatic -lopus -Wl,-Bdynamic
 #include <opus/opus.h>
 
 // opus_encoder_ctl 是变参函数，cgo 无法直接调用——通过固定参数包装转发。

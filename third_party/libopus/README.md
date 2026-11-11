@@ -13,13 +13,14 @@
 
 - darwin/arm64：`-I${SRCDIR}/../../third_party/libopus/include -L${SRCDIR}/../../third_party/libopus/macos-arm64 -lopus`
 - darwin/amd64：`-I${SRCDIR}/../../third_party/libopus/include -L${SRCDIR}/../../third_party/libopus/macos-amd64 -lopus`
-- linux：`-I${SRCDIR}/../../third_party/libopus/include -l:libopus.a`（静态链接系统库）
+- linux：`-I${SRCDIR}/../../third_party/libopus/include -Wl,-Bstatic -lopus -Wl,-Bdynamic`（静态链接系统库；不能用 GNU ld 的 `-l:libopus.a`，cgo 安全检查不接受 `-l` 后的 `:`）
 - windows：`-I${SRCDIR}/../../third_party/libopus/include -L${SRCDIR}/../../third_party/libopus/win64 -lopus`
 
 目录内只有 `.a`（无 `.dylib` / `.dll`），链接结果是静态的。验证方式：
 
 ```bash
 otool -L bin/AnyDevice.app/Contents/MacOS/any_device | grep -i opus   # 应无输出
+ldd dist/any_device-linux-amd64 | grep -i opus                       # 应无输出
 nm bin/AnyDevice.app/Contents/MacOS/any_device | grep -c opus_decode_float  # >0
 ```
 
