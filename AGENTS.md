@@ -12,12 +12,41 @@ go build -tags wails,desktop,production \
     -o any_device main.go   # 免打包的裸二进制（仅调试；macOS 缺 extldflags 会链接失败）
 ```
 
+- 以上构建命令只用于调试/出包（重活交 CI），不是提交前门禁；日常提交只跑下节「CI 门禁与本地验证分工」的秒级检查。
 - **发布产物必须是 `.app` 包**：裸二进制没有 `Info.plist`，ATS 本地网络例外与麦克风用途声明都不生效，
   WKWebView 里的 WebSocket/麦克风会直接失败。
 - **无标签 `go build` 会回退成浏览器 `--app` 独立窗口模式**（`desktop_browser.go`；macOS 无 Chrome/Edge 时回退 `webview_go`/WKWebView），只适合调试，别当发布态验证。
 - macOS 架构由 `MAC_ARCH=arm64|amd64|universal` 选择；版本号取自 `git describe --tags`（tag 即版本，不用改文件）。
 - 三个脚本：`build.sh`（macOS .app + Windows 交叉编译）、`build-appimage.sh`（Linux AppImage）、
   `fetch-libopus-amd64.sh`（从 Homebrew bottle 重建 macOS amd64 静态库，CI 校验可复现性）。
+
+## CI 门禁与本地验证分工
+
+重活（全量测试、Wails 生产构建、前端打包、三平台构建/AppImage）一律交给 GitHub Actions，
+本地只跑秒级检查。完整流程见全局 skill `github-ci-flow`：worktree 内提交 → 推送分支 →
+`gh pr create` → `gh pr checks --watch` 全绿 → `gh pr merge --rebase --delete-branch` →
+本地 `git pull --ff-only` 并清理 worktree。
+
+- 本地（提交前，秒级）：
+
+  ```bash
+  gofmt -l $(git ls-files '*.go')   # 应无输出（约 0.1s）
+  go vet ./...                      # 约 5s
+  bun run --cwd frontend check      # svelte-check，约 1.4s
+  ```
+
+- CI 覆盖（`.github/workflows/ci.yml`，5 个并行 job）：
+  `macos`（gofmt / go vet / go test / 前端 svelte-check + build / Wails 生产构建 /
+  vendored libopus 可复现性校验 / 三架构 .app 打包上传）、
+  `windows-cross`（Linux 上交叉编译 Windows 平台层 mouse/keyboard）、
+  `linux-build`（GTK3+WebKitGTK 构建 / headless 服务冒烟 / AppImage 构建与验证）、
+  `linux-build-arm64`（原生 arm64 构建 + headless 冒烟）、
+  `windows-runtime`（真实 Windows CGO 构建 / 全量测试 / 服务启停冒烟 / Windows 双 exe 打包）。
+- CI 覆盖不到、必须本地/真机验证的：真实音频链路听感（回环设备/麦克风/系统声、LL 钩子捕获真实交互事件）、
+  macOS 辅助功能与麦克风权限弹窗、真机跨端联调（Mac↔Windows↔Linux 实际键鼠与音频）、
+  ad-hoc 签名后在 Gatekeeper 与系统设置里的实际体验；CI 验证的是进程内调用路径不崩溃、可反复启停。
+- 发版/发布门禁不变：`release.yml` 由用户推 `v*` tag 触发（三平台构建 + GitHub Release），
+  手动演练用 `gh workflow run release.yml`；本地不跑发布构建。
 
 ## skill 索引（改对应模块前先加载对应 skill）
 
