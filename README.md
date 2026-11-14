@@ -25,7 +25,7 @@
     - 电脑对电脑时双方各自打开本程序、互相映射对方设备，即可实现**完整物理鼠标与键盘同步**：移动、左右/中键、滚轮、按键在对端实时还原；
     - **滚轮同步**：捕获端滚动滚轮，对端即时还原滚动方向与幅度；跨平台按「格/行」归一化（Windows 高精度滚轮/触控板的 1/40 细分增量会累积到一格再滚，不会一格变 120 行）。
     - **自动重连**：映射保持期间，对端连接失败或中断会按指数退避（1s 起步、30s 上限）自动重连，重连期间卡片显示「连接中」、失败时显示「连接失败」、恢复后显示「已连接」；关闭映射即停止重连。
-  - ℹ️ 说明：手机端当前为**纯接收端**（无需安装 App，扫码即用）；曾有的「手机当无线触控板反向遥控」界面已随交互重构移除，其遗留接口（`/api/peers/control`、`/api/mapping/mode`、`/api/inbound*`、`/api/outbound*`）与整套出站设备管理子系统已一并清理。
+  - ℹ️ 说明：手机端当前为**纯接收端**（无需安装 App，扫码即用）。
 - **智能网卡与 IP 路由解析**：
   - 采用操作系统路由探测（OS Routing Table Resolution）自动定位真实物理出网网卡，**主 IP 选择优先物理网卡**，并把 VMware / VirtualBox / WSL / Hyper-V / Docker 等虚拟网卡标记为「虚拟」（列表仍可见、可手动选择）。
   - 支持 `-ip` 手动指定对外广播/访问用的局域网 IP（监听始终为 `:port` 全接口，不改绑定地址）。
@@ -77,34 +77,7 @@
 
 **日志位置**：原生窗口没有控制台，日志同时写入文件——macOS `.app` 形态写入用户配置目录 `~/Library/Application Support/AnyDevice/any_device.log`（包内文件受代码签名保护，禁止写入）；Windows / 裸二进制写入可执行文件同目录的 `any_device.log`。界面底部（页脚）会显示日志实际路径。
 
-**性能 / 与其他程序共存的自查**：
-1. 无人映射时 `curl -s http://127.0.0.1:8080/api/status`（端口按实际）应看到 `sys_audio_engine`、`mic_audio_engine`、`mouse_capture`、`keyboard_capture` 全为 `false`——此时应用不占用音频设备、不安装全局输入钩子；
-2. 开启映射后对应字段变 `true`，关闭映射后约 5–8 秒回到 `false`（宽限期用于避免映射开关抖动导致设备反复初始化）；
-3. 只映射系统声时 `mic_audio_subs` 应为 0、`mic_audio_engine` 应为 `false`（不采麦克风）；
-4. 在「本机共享」里关闭某项后，即使对端仍订阅，对应 `*_engine`/`*_capture` 也应为 `false`（共享开关真正门控采集，而不只是改发现广播）；
-5. Windows 上怀疑影响游戏帧率时：任务管理器/Process Explorer 分别看 `any_device.exe` 与 `msedgewebview2.exe`（Wails 窗口的 WebView2 子进程）的 CPU/GPU；再按「只开着不映射 → 映射系统声 → 映射键鼠」逐项对比，并用 PresentMon/CapFrameX 对比帧时间而不是只看平均帧率；把窗口最小化再测可区分「窗口/GPU 合成」与「采集/推流」的影响；
-6. 只作为**提供方**（把本机声音/键鼠共享给别的设备）时，可用 `-no-ui` 无窗口运行，彻底去掉桌面窗口与 WebView2 的合成开销，再用手机/另一台电脑的浏览器打开 `http://<本机IP>:8080` 操作。
-7. 远端设备/浏览器连接本机 UI 时，连接动作本身不应启动采集：`sys_audio_engine`/`mic_audio_engine`/`mouse_capture`/`keyboard_capture` 应保持 `false`（现代对端立即发送订阅声明；旧版对端最多 500ms 后按默认全订阅兜底，之后才启动）。
-
-**音频延迟显示（判断延迟在发送端还是接收端）**：
-1. 映射音频后，对端卡片的声音行会出现延迟 chip（如 `≈95ms`），悬停可见分项：
-   `采集块 + 编码 + 发送`（对端上报的发送端耗时）`+ 网络(RTT/2) + 播放缓冲 + 输出延迟`；
-   播放缓冲一项会同时给出「实际水位（自适应目标 Yms）」，旁边的 `欠载 N` 表示接收端环形缓冲被抽空后重新预缓冲的次数。
-2. 判断方法：**播放缓冲大 / 欠载数字持续增长** → 延迟主要在接收端（本机负载高、预缓冲与重新预缓冲）；
-   **采集块/编码/发送分项大** → 延迟主要在发送端（采集缓冲、Opus 组帧/编码或发送队列）；
-   **网络 RTT 大** → 网络问题（Wi-Fi/跨网段）。`/api/status` 的 `sys_audio_chunk_ms`/`sys_audio_encode_ms`/`audio_send_ms` 是发送端分项的直接来源；
-   发送端编码档位/码率/丢帧看 `sys_audio_adaptive_level`/`sys_audio_bitrate`/`sys_audio_dropped`（对端卡片悬停也能看到上报值）。
-3. 自适应是否生效：稳定播放 20s 以上，延迟 title 里的「自适应目标」应从 60ms 逐步降到 40ms；若网络/本机偶发卡顿导致欠载，目标会 +30ms 抬高并在稳定后继续下探。
-4. 说明：该数字是**分项估算**，不是端到端时钟同步测量；旧版对端不上报采集端分项时只显示网络与本机播放侧；
-   部分 WebView 不提供 `outputLatency` 时输出延迟按 0 计（总量会偏小）。
-5. 手动添加 IP 的对端会异步拉取其 `/api/self` 补全能力声明与真实 OS/设备名（此前 `audio_format` 为空会触发协议防呆、禁用音频映射）。
-
-**音频映射无声时的自查**：
-1. `ANY_DEVICE_AUDIO_DEBUG=1` 启动捕获端与播放端——若捕获端显示「捕获已停止增长」或「全零 chunk」比例很高（如 `全零 chunk 100%`）/速率极低，说明捕获设备上确实没有声音在播放（WASAPI Loopback 只捕获默认输出设备上正在播放的声音；macOS 需先装虚拟回环设备，见核心特性）；
-2. 检查捕获端设备卡片显示的系统声/麦克风设备名，确认与你实际听声的设备一致；
-3. macOS 端：音频采集需要「麦克风」授权（按需启停设计下在**首次真正开始音频采集时**弹窗），键鼠跨端映射需要「系统设置 → 隐私与安全性 → 辅助功能」勾选 `AnyDevice.app`（未授权时启动有警告提示）；
-4. 浏览器场景可在开发者控制台执行 `window.__audioDebug()` 查看 AudioContext 状态、环形缓冲水位/欠载计数、自适应目标（`stats.sys.targetMs`）与 AudioWorklet 加载情况。
-
+**更多自查项**（性能 / 与其他程序共存、音频延迟分项判断、映射无声排查）见 [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)。
 ---
 
 ## 🚀 极简使用说明
@@ -201,26 +174,9 @@ go build -tags wails,desktop,production -o any_device_linux_amd64 main.go
 
 ### 发布流程
 
-版本号以 **git tag** 为唯一源（仓库内不维护版本文件），推 tag 即触发
-`.github/workflows/release.yml`：三平台并行构建 → 自动创建 GitHub Release
-并附上全部安装包。
-
-```bash
-# 1. 确保 main 已同步且 CI 全绿
-git checkout main && git pull --ff-only
-
-# 2. 打 annotated tag（SemVer：破坏性升 major、新功能升 minor、修复升 patch）
-git tag -a v1.2.0 -m "AnyDevice v1.2.0"
-
-# 3. 逐个推送并确认（禁止 git push --tags：超过 3 个 tag 时 GitHub 不产生事件）
-git push origin v1.2.0
-gh run watch $(gh run list --workflow=release.yml --limit 1 --json databaseId --jq '.[0].databaseId')
-```
-
-Release 产物：macOS 三架构 zip、Windows 双 exe、Linux AppImage + 裸二进制。
-带 `-rc` / `-beta` 后缀的 tag 会标记为预发布。
-
-> 手动演练：`gh workflow run release.yml`（只构建产物、不创建 Release）。
+版本号以 **git tag** 为唯一源（仓库内不维护版本文件），推 tag 即触发 `.github/workflows/release.yml`
+三平台并行构建并自动创建 Release；逐个推 tag 的纪律与完整步骤见 [docs/RELEASING.md](docs/RELEASING.md)。
+带 `-rc` / `-beta` 后缀的 tag 会标记为预发布；手动演练：`gh workflow run release.yml`（只构建产物、不创建 Release）。
 
 ### 测试
 
@@ -228,8 +184,7 @@ Release 产物：macOS 三架构 zip、Windows 双 exe、Linux AppImage + 裸二
 go test ./...                              # 默认测试：含 Opus 编解码往返保真
                                            #（cgo libopus 已静态链接，无需额外 tag）
 go test ./internal/audio -run RoundTrip -v  # 只跑往返保真（TestOpusRoundTripFidelity：
-                                           #  断言解出正弦的幅度/频率与输入一致；曾因把
-                                           #  float32 缓冲按 int16 传入 opus_encode 而破音）
+                                           #  断言解出正弦的幅度/频率与输入一致）
 ```
 
 ### 前端开发
