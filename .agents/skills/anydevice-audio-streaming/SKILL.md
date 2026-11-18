@@ -58,11 +58,15 @@ description: AnyDevice 跨设备实时音频流（采集→传输→播放）架
   `streamStats`/`getStreamStats`/`getBufferTargetMs` 暴露给 UI。溢出仍丢最旧、静音帧仍推进时间轴、
   sys/mic 仍各持独立 ring。
 - UI：对端卡片延迟 title 显示「播放缓冲 Xms（自适应目标 Yms）」。
-- 数值验证（不需要浏览器）：Node 脚本从 `audio.js` 正则提取 `WORKLET_SOURCE`，用 `new Function`
+- 数值验证（不需要浏览器）：已内建 `frontend/scripts/validate-worklet.mjs`
+  （`bun run test:worklet`，CI macos job 已挂）——从 `audio.js` 正则提取 `WORKLET_SOURCE`，用 `new Function`
   注入假 `AudioWorkletProcessor`/`registerProcessor` 实例化真实 worklet 类，按虚拟时钟
   （每 20ms 投 960 帧、每 128 帧调 `process()`）驱动并断言：初始 60ms；理想网络约 25s 降到 40ms；
   断流 220ms 后目标 +30ms 且欠载计 1 次；连续断流封顶 200ms；±8ms 抖动下不再欠载；
-  1%–5% 丢包时目标自动上调且始终在 [40,200]。
+  1%–5% 丢包时目标自动上调且始终在 [40,200]；软限幅输出不超 0.95。改 worklet 自适应
+  逻辑后必须重跑。两个实测口径：抖动断言用确定性交替 ±8ms（净漂移零）；均匀随机
+  抖动下连续迟到包会真实欠载（30s 约 3 次）、控制器抬目标自愈——那是预期行为，
+  不是回归。
 
 ### 发送端编码参数（`internal/audio/adaptive.go` + `capture.go` 的 `encodeLoop`）
 
