@@ -12,6 +12,13 @@ on:
     branches: [main]
   pull_request:
 
+# 同一 ref 的 CI 串行化：同分支/同 PR 连续推送时自动取消尚未跑完的旧
+# run（最新 commit 的结论才有意义）。既省 runner 排队（macOS 容量紧张
+# 时期旧 run 会白占排队位），也避免过时结论干扰判断。
+concurrency:
+  group: CI-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   macos:
     # 音频/键鼠捕获依赖 macOS 系统框架，Wails 构建只能在 macOS runner 完成
@@ -134,7 +141,7 @@ jobs:
         run: |
           ./any_device_linux_amd64 -no-ui -no-qr -port 18098 &
           APP_PID=$!
-          for i in $(seq 1 15); do
+          for _ in $(seq 1 15); do
             sleep 1
             if curl -sf http://127.0.0.1:18098/api/status > /dev/null; then
               echo "API 200 OK —— Linux 构建产物可正常启动服务"
@@ -166,7 +173,7 @@ jobs:
         # 模式起服务验证二进制本身可执行（AppImage 内二进制与挂载机制）
         run: |
           set -e
-          APPIMAGE=$(ls bin/*.AppImage | head -1)
+          APPIMAGE=$(find bin -maxdepth 1 -name '*.AppImage' | head -1)
           echo "=== $APPIMAGE ==="
           ./"$APPIMAGE" --appimage-extract > /dev/null
           test -x squashfs-root/AppRun
@@ -175,7 +182,7 @@ jobs:
           # 用解包后的二进制做无窗口冒烟（绕过 FUSE 挂载）
           ./squashfs-root/usr/bin/any_device -no-ui -no-qr -port 18096 &
           APP_PID=$!
-          for i in $(seq 1 15); do
+          for _ in $(seq 1 15); do
             sleep 1
             if curl -sf http://127.0.0.1:18096/api/status > /dev/null; then
               echo "API 200 OK —— AppImage 内二进制可正常启动"
@@ -222,7 +229,7 @@ jobs:
         run: |
           ./any_device_linux_arm64 -no-ui -no-qr -port 18097 &
           APP_PID=$!
-          for i in $(seq 1 15); do
+          for _ in $(seq 1 15); do
             sleep 1
             if curl -sf http://127.0.0.1:18097/api/status > /dev/null; then
               echo "API 200 OK —— arm64 产物可正常启动服务"
