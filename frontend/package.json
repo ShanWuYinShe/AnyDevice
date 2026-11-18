@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "check": "svelte-check --threshold error",
+    "test:worklet": "bun scripts/validate-worklet.mjs",
     "build": "vite build && node -e \"require('fs').writeFileSync('../internal/web/dist/.gitkeep','')\""
   },
   "dependencies": {
