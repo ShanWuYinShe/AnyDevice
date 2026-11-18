@@ -16,7 +16,9 @@ case "$ARCH" in
     arm64) LD_ARCH="aarch64" ;;
     *) echo "不支持的架构: $ARCH（可用 amd64/arm64）"; exit 1 ;;
 esac
-VERSION=$(git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' || echo "0.0.0-dev")
+# 同 build.sh：兜底不能挂在管道后（sed 恒成功，永不触发）
+VERSION=$(git describe --tags --always --dirty 2>/dev/null | sed 's/^v//')
+[ -n "$VERSION" ] || VERSION="0.0.0-dev"
 BUILD_TIME=$(date +%Y%m%d-%H%M)
 APP_NAME="AnyDevice"
 APPDIR="build/AppDir-${ARCH}"
