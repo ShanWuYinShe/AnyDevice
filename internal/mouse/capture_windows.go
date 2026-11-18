@@ -276,6 +276,7 @@ func runEventCapture(ctx context.Context, emit func(MouseEvent)) bool {
 			case "down", "up", "wheel":
 				// 钩子回调只填 RawX/RawY：按下/抬起/滚轮即时发送前同样要补全
 				// 归一化坐标，否则接收端把落点当成 (0,0)（点击跑到屏幕左上角）
+				pending = nil
 				screenW, screenH := getScreenSize()
 				fillMouseEventGeometry(&evt, screenW, screenH)
 				emit(evt)

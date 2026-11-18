@@ -324,24 +324,23 @@ func msTapCallback(proxy C.CGEventTapProxy, etype C.CGEventType, event C.CGEvent
 		return event
 	}
 
+	// tap 回调只做免费字段读取：定位取自事件本身；屏幕尺寸归一化下沉到
+	// 消费循环（fillMouseEventGeometry），按钮状态改由事件类型推导——
+	// 此前每事件额外做 1 次 CGDisplayBounds + 3 次 CGEventSourceButtonState，
+	// 游戏级回报率（≥1000Hz）下是纯开销放大。按钮态字段仅被接收端
+	// 「旧对端 Button 为空」的回退读取，而 darwin 恒设置 Button，从未生效
 	pt := C.CGEventGetLocation(event)
-	var w, h C.double
-	C.get_main_display_bounds(&w, &h)
-	screenW, screenH := int(w), int(h)
-	if screenW <= 0 {
-		screenW = 1920
+	evt.RawX, evt.RawY = int(pt.x), int(pt.y)
+	if evt.Action == "down" {
+		switch evt.Button {
+		case "left":
+			evt.LeftDown = true
+		case "right":
+			evt.RightDown = true
+		case "middle":
+			evt.MiddleDown = true
+		}
 	}
-	if screenH <= 0 {
-		screenH = 1080
-	}
-	x, y := int(pt.x), int(pt.y)
-	evt.RawX, evt.RawY = x, y
-	evt.ScreenWidth, evt.ScreenHeight = screenW, screenH
-	evt.X = float64(x) / float64(screenW)
-	evt.Y = float64(y) / float64(screenH)
-	evt.LeftDown = bool(C.CGEventSourceButtonState(C.kCGEventSourceStateCombinedSessionState, C.kCGMouseButtonLeft))
-	evt.RightDown = bool(C.CGEventSourceButtonState(C.kCGEventSourceStateCombinedSessionState, C.kCGMouseButtonRight))
-	evt.MiddleDown = bool(C.CGEventSourceButtonState(C.kCGEventSourceStateCombinedSessionState, C.kCGMouseButtonCenter))
 
 	// move 高频事件：标记为最新位置，由消费循环按 ~60Hz 合并发送
 	if isMove {
@@ -429,9 +428,14 @@ func runEventCapture(ctx context.Context, emit func(MouseEvent)) bool {
 				continue
 			}
 			pending = nil
+			// 回调只填了 RawX/RawY：发送前统一补全归一化坐标与屏幕尺寸
+			screenW, screenH := getScreenSize()
+			fillMouseEventGeometry(&evt, screenW, screenH)
 			emit(evt)
 		case <-ticker.C:
 			if pending != nil {
+				screenW, screenH := getScreenSize()
+				fillMouseEventGeometry(pending, screenW, screenH)
 				emit(*pending)
 				pending = nil
 			}
