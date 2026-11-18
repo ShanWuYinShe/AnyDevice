@@ -35,6 +35,15 @@ go build -tags wails,desktop,production \
   bun run --cwd frontend check      # svelte-check，约 1.4s
   ```
 
+- 改了 `internal/mouse`、`internal/keyboard`、`internal/audio` 等 Windows 平台层
+  文件时，本地加跑交叉编译抓语法/签名错误（CI `windows-cross` job 的本地等价；
+  裸 `GOOS=windows go build` 编不过 audio 包的 malgo，必须带 CGO 与 mingw）：
+
+  ```bash
+  GOOS=windows GOARCH=amd64 go build ./internal/mouse/ ./internal/keyboard/   # 纯 syscall 包免 CGO
+  CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc GOOS=windows GOARCH=amd64 go build ./internal/audio/  # 需本机 mingw-w64
+  ```
+
 - CI 覆盖（`.github/workflows/ci.yml`，5 个并行 job）：
   `macos`（gofmt / go vet / go test / 前端 svelte-check + build / Wails 生产构建 /
   vendored libopus 可复现性校验 / 三架构 .app 打包上传）、
