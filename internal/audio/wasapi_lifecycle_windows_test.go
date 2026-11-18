@@ -20,9 +20,15 @@ func TestWASAPILifecycleOnCI(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	result := make(chan error, 1)
+	done := make(chan struct{})
 
 	go func() {
-		result <- startNativeSystemCapture(ctx, func([]byte) {})
+		capDone, err := startNativeSystemCapture(ctx, func([]byte) {})
+		result <- err
+		if capDone != nil {
+			<-capDone
+		}
+		close(done)
 	}()
 
 	select {
@@ -30,10 +36,15 @@ func TestWASAPILifecycleOnCI(t *testing.T) {
 		if err != nil {
 			t.Logf("无设备环境：初始化走清理路径返回错误（预期）: %v", err)
 		} else {
-			// 恰有设备：让捕获跑一会儿后取消，验证清理与退出
+			// 恰有设备：让捕获跑一会儿后取消，验证清理与退出确认
 			t.Logf("runner 存在渲染设备：启动成功，验证取消清理")
 			cancel()
-			time.Sleep(500 * time.Millisecond) // 给 loop 退出与 defer 清理时间
+			select {
+			case <-done:
+				t.Logf("捕获 goroutine 已在取消后退出（退出确认 channel 已关闭）")
+			case <-time.After(3 * time.Second):
+				t.Fatalf("捕获 goroutine 取消后 3s 未退出（退出确认缺失）")
+			}
 		}
 	case <-time.After(15 * time.Second):
 		cancel()
