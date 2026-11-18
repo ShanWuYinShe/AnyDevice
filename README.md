@@ -74,6 +74,8 @@
 | `ANY_DEVICE_AUDIO_DEBUG=1` | 音频链路诊断：捕获端每 2 秒输出 chunk/字节速率与静音标记；转发端输出帧到达统计 |
 | `ANY_DEVICE_KB_DEBUG=1` | 键鼠链路诊断：捕获端事件、执行端收到的事件与键盘模拟执行（均写日志文件） |
 | `ANY_DEVICE_TEST_TONE=1` | 生成 20ms 占位测试音：`-mode test-tone` 时强制使用；macOS/Linux 未装虚拟回环设备时也会作为回退。默认关闭（不设不出声），供远程端验证音频链路 |
+| `ANY_DEVICE_NATIVE_WASAPI=1` | Windows 系统声改用自研 WASAPI Loopback 捕获（默认走 miniaudio Loopback；自研路径会注册 MMCSS 音频线程优先级，游戏满载时更抗断音） |
+| `ANY_DEVICE_DISCOVERY_OFF=1` | 跳过设备发现的 UDP 绑定与广播（单测隔离、无局域网副作用的本地调试用，`scripts/smoke.sh` 内部即依赖它） |
 
 **日志位置**：原生窗口没有控制台，日志同时写入文件——macOS `.app` 形态写入用户配置目录 `~/Library/Application Support/AnyDevice/any_device.log`（包内文件受代码签名保护，禁止写入）；Windows / 裸二进制写入可执行文件同目录的 `any_device.log`。界面底部（页脚）会显示日志实际路径。
 
