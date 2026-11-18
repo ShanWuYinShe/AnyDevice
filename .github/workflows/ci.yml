@@ -160,6 +160,13 @@ jobs:
           kill $APP_PID 2>/dev/null || true
           exit 1
 
+      - name: HTTP 面冒烟（Origin CSRF/空闲态/优雅退出）
+        # scripts/smoke.sh 自建无 tag 二进制跑真实进程 15 项断言：空闲态
+        # 引擎/钩子全 false、audio_format 契约、写接口 Origin 中间件（恶意
+        # Origin 403、无 Origin 放行进参数校验）、手动对端入库、SIGTERM
+        # 优雅退出。内部置 ANY_DEVICE_DISCOVERY_OFF=1，不绑发现端口不广播
+        run: ./scripts/smoke.sh 18095
+
       - name: 上传 Linux amd64 包
         uses: actions/upload-artifact@v7
         with:
