@@ -210,11 +210,12 @@ import "C"
 
 import (
 	"context"
-	"fmt"
 	"runtime"
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+	"any_device/internal/util"
 )
 
 func getScreenSize() (int, int) {
@@ -391,7 +392,7 @@ func runEventCapture(ctx context.Context, emit func(MouseEvent)) bool {
 	}()
 
 	if !<-installed {
-		fmt.Println("[鼠标捕获] CGEventTap 安装失败（未授予辅助功能权限），回退轮询模式")
+		util.Logf("[鼠标捕获] CGEventTap 安装失败（未授予辅助功能权限），回退轮询模式")
 		return false
 	}
 
@@ -406,7 +407,7 @@ func runEventCapture(ctx context.Context, emit func(MouseEvent)) bool {
 		select {
 		case <-tapExited:
 		case <-time.After(2 * time.Second):
-			fmt.Println("[鼠标捕获] CGEventTap 停止等待超时（继续，避免卡死退出路径）")
+			util.Logf("[鼠标捕获] CGEventTap 停止等待超时（继续，避免卡死退出路径）")
 		}
 	}
 

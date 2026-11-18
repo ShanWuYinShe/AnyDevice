@@ -273,8 +273,11 @@ func runEventCapture(ctx context.Context, emit func(MouseEvent)) bool {
 			case "move":
 				cp := evt
 				pending = &cp
-			case "down", "up":
-				// 依据消息类型补按钮状态（msg 语义在钩子回调里已判断；这里按坐标+消息换算）
+			case "down", "up", "wheel":
+				// 钩子回调只填 RawX/RawY：按下/抬起/滚轮即时发送前同样要补全
+				// 归一化坐标，否则接收端把落点当成 (0,0)（点击跑到屏幕左上角）
+				screenW, screenH := getScreenSize()
+				fillMouseEventGeometry(&evt, screenW, screenH)
 				emit(evt)
 			default:
 				emit(evt)
@@ -282,9 +285,7 @@ func runEventCapture(ctx context.Context, emit func(MouseEvent)) bool {
 		case <-ticker.C:
 			if pending != nil {
 				screenW, screenH := getScreenSize()
-				pending.ScreenWidth, pending.ScreenHeight = screenW, screenH
-				pending.X = float64(pending.RawX) / float64(screenW)
-				pending.Y = float64(pending.RawY) / float64(screenH)
+				fillMouseEventGeometry(pending, screenW, screenH)
 				emit(*pending)
 				pending = nil
 			}

@@ -34,6 +34,19 @@ type MouseEvent struct {
 	Timestamp    int64   `json:"timestamp"`             // Unix millisecond timestamp
 }
 
+// fillMouseEventGeometry 按物理坐标与屏幕尺寸补全归一化坐标字段。
+// 钩子回调为了最快返回只填 RawX/RawY，消费循环对发出的每类事件统一在此补全：
+// 接收端 SimulateAbsolute 以 X/Y（0.0~1.0）为落点，缺了会落到 (0,0)。
+// screenW/H 非正（GetSystemMetrics 失败等）时保持零值不动，避免除零。
+func fillMouseEventGeometry(evt *MouseEvent, screenW, screenH int) {
+	if screenW <= 0 || screenH <= 0 {
+		return
+	}
+	evt.ScreenWidth, evt.ScreenHeight = screenW, screenH
+	evt.X = float64(evt.RawX) / float64(screenW)
+	evt.Y = float64(evt.RawY) / float64(screenH)
+}
+
 // Engine captures local host mouse events and emits them to a callback.
 // 捕获优先使用平台事件钩子（macOS CGEventTap / Windows 低级鼠标钩子，
 // 参照 Deskflow 的事件驱动模型：实时、支持滚轮、空闲零开销），

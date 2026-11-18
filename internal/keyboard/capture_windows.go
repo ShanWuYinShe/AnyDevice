@@ -123,6 +123,13 @@ var vkToKeyName = func() map[int]string {
 func getPressedKeys() map[string]int {
 	pressed := make(map[string]int)
 	for key, vk := range windowsKeyMap {
+		// NumpadEnter 与 Enter 同为 VK 0x0D：轮询模式没有 LLKHF_EXTENDED
+		// 扩展位可区分，GetAsyncKeyState 对两个键名同时命中，一次回车会
+		// 产出 Enter + NumpadEnter 两对 down/up（接收端注入两个键码、
+		// 表现为打两个字）。统一只保留主回车，与钩子路径的非扩展分支一致。
+		if key == NumpadEnter {
+			continue
+		}
 		r, _, _ := procGetAsyncKeyState.Call(uintptr(vk))
 		if (r & 0x8000) != 0 {
 			pressed[key] = vk

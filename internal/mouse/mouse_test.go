@@ -32,6 +32,32 @@ func TestMouseEventJSON(t *testing.T) {
 	}
 }
 
+// TestFillMouseEventGeometry 回归：钩子回调只填 RawX/RawY，所有发出的
+// 事件（move/down/up/wheel）都必须补全归一化坐标与屏幕尺寸——缺了会被
+// 接收端当成落点 (0,0)，表现为点击跑到屏幕左上角。
+func TestFillMouseEventGeometry(t *testing.T) {
+	evt := MouseEvent{Action: "down", RawX: 1920, RawY: 540}
+	fillMouseEventGeometry(&evt, 3840, 1080)
+	if evt.ScreenWidth != 3840 || evt.ScreenHeight != 1080 {
+		t.Fatalf("屏幕尺寸未补全: %+v", evt)
+	}
+	if evt.X != 0.5 || evt.Y != 0.5 {
+		t.Fatalf("归一化坐标错误: X=%v Y=%v, want 0.5/0.5", evt.X, evt.Y)
+	}
+
+	// 屏幕尺寸非法（GetSystemMetrics 失败）时不得除零，保持零值
+	evt2 := MouseEvent{Action: "up", RawX: 100, RawY: 100}
+	fillMouseEventGeometry(&evt2, 0, 0)
+	if evt2.X != 0 || evt2.Y != 0 || evt2.ScreenWidth != 0 {
+		t.Fatalf("非法屏幕尺寸应保持零值: %+v", evt2)
+	}
+	evt3 := MouseEvent{Action: "wheel", RawX: 10, RawY: 10}
+	fillMouseEventGeometry(&evt3, -1, 100)
+	if evt3.X != 0 || evt3.ScreenWidth != 0 {
+		t.Fatalf("负屏幕尺寸应保持零值: %+v", evt3)
+	}
+}
+
 func TestMouseWheelEventJSON(t *testing.T) {
 	evt := MouseEvent{
 		Type:       "mouse",
