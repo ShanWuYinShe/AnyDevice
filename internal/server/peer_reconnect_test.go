@@ -129,8 +129,11 @@ func TestPeerAutoReconnect(t *testing.T) {
 	if after := atomic.LoadInt32(&accepted); after != before {
 		t.Fatalf("关闭映射后不应再有重连拨号：前 %d 后 %d", before, after)
 	}
-	if s := statusOf(pm, peer.ID); s != "disconnected" {
-		t.Fatalf("关闭映射后状态应为 disconnected，实得 %s", s)
+	// 关闭映射后：订阅全关的映射条目会随连接清理被删除（防 pm.mappings
+	// 只增不减的残留），statusOf 因此返回空串；条目仍在时状态必须是
+	// disconnected（ListPeers 对不存在条目同样显示 disconnected，UI 行为一致）
+	if s := statusOf(pm, peer.ID); s != "" && s != "disconnected" {
+		t.Fatalf("关闭映射后状态应为 disconnected 或条目已清理，实得 %s", s)
 	}
 
 	// 收尾：确认重连会话已清理（无泄漏）

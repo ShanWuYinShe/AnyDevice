@@ -89,7 +89,12 @@ type Engine struct {
 	ctx       *malgo.AllocatedContext
 	device    *malgo.Device
 	cancelGen context.CancelFunc
-	opus      *OpusEncoder // float32 PCM → Opus（新协议 AUPS/AUPM）；nil=输出 float32 PCM（AUDS/AUDM 旧协议）
+	// wasapiDone 自研 WASAPI 捕获 goroutine 的退出确认 channel（仅
+	// ANY_DEVICE_NATIVE_WASAPI 路径非 nil）：Stop 在 cancel 后带超时等待
+	// 其关闭，保证快速 Stop→Start 时旧 goroutine 对 e.encQueue 等字段的
+	// 裸读（emitPCM）已结束，与新 Start 的重新赋值不再构成数据竞争。
+	wasapiDone <-chan struct{}
+	opus       *OpusEncoder // float32 PCM → Opus（新协议 AUPS/AUPM）；nil=输出 float32 PCM（AUDS/AUDM 旧协议）
 
 	// opusMu 仅保护 opus 指针与 Feed 调用：编码在独立 goroutine 执行，
 	// Stop 销毁编码器与 Feed 之间靠本锁互斥，避免 use-after-free。
@@ -506,8 +511,12 @@ func (e *Engine) start() error {
 	// 方波噪声，捕不到真实音频，原因待查）。
 	if runtime.GOOS == "windows" && e.kind == KindSystem && os.Getenv("ANY_DEVICE_NATIVE_WASAPI") != "" {
 		captureCtx, cancel := context.WithCancel(context.Background())
-		if err := startNativeSystemCapture(captureCtx, func(pcm []byte) { e.emitPCM(pcm) }); err == nil {
+		capDone, err := startNativeSystemCapture(captureCtx, func(pcm []byte) { e.emitPCM(pcm) })
+		if err == nil {
 			e.cancelGen = cancel
+			// 保存退出确认 channel：Stop 在 cancel 后等待捕获 goroutine 结束，
+			// 再允许后续 Start 重新赋值 e.encQueue 等字段（防数据竞争）
+			e.wasapiDone = capDone
 			e.setDevName("系统声音输出 (WASAPI 原生 Loopback)")
 
 			return nil
@@ -746,6 +755,20 @@ func (e *Engine) Stop() {
 	if e.cancelGen != nil {
 		e.cancelGen()
 		e.cancelGen = nil
+		// 自研 WASAPI 路径：等待捕获 goroutine 退出（含 COM 清理）后再继续。
+		// 旧 goroutine 的 emitPCM 会裸读 e.encQueue/e.latEncodeMs 等字段，
+		// 不等它退出就进入下一次 Start（重新赋值字段）是数据竞争，迟到帧
+		// 还会污染 latEncodeMs EWMA、触发自适应误降档。对齐 mouse/keyboard
+		// 的 done 等待模式；超时兜底（goroutine 会随 ctx 取消自行退出），
+		// 避免异常时阻塞 Stop 流程。
+		if e.wasapiDone != nil {
+			select {
+			case <-e.wasapiDone:
+			case <-time.After(2 * time.Second):
+				util.Logf("[音频] 等待自研 WASAPI 捕获 goroutine 退出超时（2s），继续停止流程")
+			}
+			e.wasapiDone = nil
+		}
 	}
 
 	if e.device != nil {

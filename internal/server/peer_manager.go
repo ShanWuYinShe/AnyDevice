@@ -109,6 +109,10 @@ func (pm *PeerManager) peerOS(peerID string) string {
 func (pc *peerConnection) writeJSON(v interface{}) error {
 	pc.writeMu.Lock()
 	defer pc.writeMu.Unlock()
+	// 出站写超时 5s（与 hub.writePump 同口径）：假死对端（TCP 未断但不收
+	// 数据）会让 WriteJSON 无限阻塞，挂住 SetMapping 的 HTTP handler 与
+	// connectAndLoop 的连接 goroutine。
+	_ = pc.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	return pc.conn.WriteJSON(v)
 }
 
@@ -373,6 +377,17 @@ func (pm *PeerManager) mappingHandshake(m PeerMappingState) map[string]interface
 	}
 }
 
+// handshakeDecisionsEqual 判断两个映射快照对握手声明的影响是否一致：
+// 只比较 mappingHandshake 实际读取的订阅字段，延迟统计等展示字段不参与
+// （连接初期 audio_stats 到达会更新指针字段，不该因此触发补发）。
+func handshakeDecisionsEqual(a, b PeerMappingState) bool {
+	return a.PlaySystemAudioLocal == b.PlaySystemAudioLocal &&
+		a.PlayMicAudioLocal == b.PlayMicAudioLocal &&
+		a.PlayAudioLocal == b.PlayAudioLocal &&
+		a.ExecuteMouseLocal == b.ExecuteMouseLocal &&
+		a.ExecuteKeyboardLocal == b.ExecuteKeyboardLocal
+}
+
 func (pm *PeerManager) ensureConnected(peerID, target string) {
 	pm.mu.Lock()
 	if _, exists := pm.conns[peerID]; exists {
@@ -386,7 +401,14 @@ func (pm *PeerManager) ensureConnected(peerID, target string) {
 	}
 
 	mapping := pm.mappings[peerID]
-	mapping.ConnectionStatus = "connecting"
+	if mapping == nil {
+		// 映射条目可能已被清理（连接生命周期结束且订阅全关时删除）：
+		// 正常路径 SetMapping 已先创建条目，这里兜底新建防 nil 解引用
+		mapping = &PeerMappingState{ConnectionStatus: "connecting"}
+		pm.mappings[peerID] = mapping
+	} else {
+		mapping.ConnectionStatus = "connecting"
+	}
 	mapping.LastError = ""
 	retryCtx, cancel := context.WithCancel(context.Background())
 	pm.retries[peerID] = &peerRetry{sessionCtx: retryCtx, cancel: cancel}
@@ -685,6 +707,22 @@ func (pm *PeerManager) runPeerConnection(sessionCtx context.Context, peerID, tar
 	snap := *mapping
 	pm.mu.Unlock()
 	_ = connObj.writeJSON(pm.mappingHandshake(snap))
+	// 乱序竞态防护：conns 注册（锁内）与初始握手发送（解锁后）之间，
+	// SetMapping 已能看到本连接并推送新订阅声明；若旧快照握手晚于该推送
+	// 到达，会覆盖新决策（违背「关闭即停采」）。发送完成后在锁内重读当前
+	// mapping，订阅决策不同则补发一次——写操作经 writeMu 串行且握手为
+	// 全量声明（幂等），补发安全收敛到最新决策。
+	pm.mu.RLock()
+	var latest PeerMappingState
+	latestOK := false
+	if m := pm.mappings[peerID]; m != nil {
+		latest = *m
+		latestOK = true
+	}
+	pm.mu.RUnlock()
+	if latestOK && !handshakeDecisionsEqual(latest, snap) {
+		_ = connObj.writeJSON(pm.mappingHandshake(latest))
+	}
 
 	// 网络 RTT：每 ~3s 发一个 WebSocket ping，pong 回包时更新 mapping.net_rtt_ms。
 	// WriteControl 可与其它写并发（gorilla 允许），会话结束由 pingCtx 停止。
@@ -786,6 +824,13 @@ func (pm *PeerManager) runPeerConnection(sessionCtx context.Context, peerID, tar
 			m.NetRttMs = 0
 			m.SenderSysLatency = nil
 			m.SenderMicLatency = nil
+			// 不再重连且四个订阅开关全关：该对端的映射条目已无存在意义，
+			// 删除以免 LastError/延迟指针等随对端增删无限残留（此前
+			// pm.mappings 只增不减）。之后 ListPeers/SetMapping/ensureConnected
+			// 对「不存在」条目均按初始状态处理（新建/默认 disconnected）。
+			if !willRetry && !(m.PlaySystemAudioLocal || m.PlayMicAudioLocal || m.ExecuteMouseLocal || m.ExecuteKeyboardLocal) {
+				delete(pm.mappings, peerID)
+			}
 		}
 		pm.mu.Unlock()
 	}()
@@ -811,7 +856,12 @@ func (pm *PeerManager) runPeerConnection(sessionCtx context.Context, peerID, tar
 		}
 
 		pm.mu.RLock()
-		curMapping := *pm.mappings[peerID]
+		// 条目可能在连接清理时被删除（订阅全关）：nil 时按全关零值处理，
+		// 消息不转发（安全默认；防御性保护，正常时序下删除晚于读循环退出）
+		var curMapping PeerMappingState
+		if m := pm.mappings[peerID]; m != nil {
+			curMapping = *m
+		}
 		pm.mu.RUnlock()
 		if msgType == websocket.BinaryMessage {
 			if len(data) >= 4 {

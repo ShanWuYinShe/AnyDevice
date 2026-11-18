@@ -9,7 +9,8 @@ package audio
 //  2. 固定回调周期与 WASAPI 设备周期不匹配时约一半回调拿到空数据，
 //     形成 "20ms 声音 / 20ms 静音" 交替（嘟嘟声）。
 // 本实现事件驱动读取音频包，精确处理 SILENT 标志与设备原生格式
-// （float32/int16/int24/int32，任意采样率/声道），统一输出 48kHz 立体声 16bit。
+// （float32/int16/int24/int32，任意采样率/声道），统一输出 48kHz 立体声 float32
+// （float 全链防削波：采集→传输→播放全程不落 int16）。
 
 import (
 	"context"
@@ -125,6 +126,13 @@ type wasapiCapture struct {
 	hpX1R, hpY1R float64
 	lastL, lastR float64 // 上一包最后一帧（跨包插值用）
 	haveLast     bool
+
+	// DISCONTINUITY 诊断状态（仅捕获 goroutine 读写，无并发）：
+	// discFrames 累计丢弃的撕裂帧数，lastDiscLog 上次限频日志时刻。
+	// 持续 overrun 时每个断点包都打日志会每秒上百条，日志 IO 反向
+	// 加剧负载，故限频每秒 1 条并在日志里带上累计值。
+	discFrames  int64
+	lastDiscLog time.Time
 }
 
 // Close 释放全部 COM 资源与事件句柄。
@@ -153,17 +161,21 @@ func (w *wasapiCapture) Close() {
 }
 
 // startNativeSystemCapture 启动自研 WASAPI Loopback 捕获。
-// 成功时在后台 goroutine 中持续回调 onPCM（48kHz S16 立体声交错）。
+// 成功时在后台 goroutine 中持续回调 onPCM（48kHz float32 立体声交错），
+// 并返回该 goroutine 的退出确认 channel：ctx 取消后捕获 goroutine 退出
+// （含 COM 清理）时关闭。调用方（Engine.Stop）必须等待其关闭后再重建
+// 采集——快速 Stop→Start 时旧 goroutine 的 emitPCM 裸读 e.encQueue 等
+// Engine 字段，不等退出就重新赋值会构成数据竞争。
 //
 // 线程亲和：COM 的 CoInitializeEx/CoUninitialize 必须同线程配对，且 Go
 // goroutine 会在调用间迁移线程。原实现 Init 在调用方 goroutine、Uninit
 // 在捕获 goroutine，违反配对契约。现在初始化、捕获循环与清理全部在
 // 同一 goroutine 内完成并用 LockOSThread 钉死单一线程；初始化结果经
 // ready 通道同步回调用方，保持原有的同步错误语义（失败回退 miniaudio）。
-func startNativeSystemCapture(ctx context.Context, onPCM func([]byte)) error {
+func startNativeSystemCapture(ctx context.Context, onPCM func([]byte)) (<-chan struct{}, error) {
 	for _, p := range []*syscall.LazyProc{procCoInitializeEx, procCoCreateInstance, procCoTaskMemFree} {
 		if err := p.Find(); err != nil {
-			return fmt.Errorf("WASAPI 依赖不可用: %w", err)
+			return nil, fmt.Errorf("WASAPI 依赖不可用: %w", err)
 		}
 	}
 
@@ -268,9 +280,13 @@ func startNativeSystemCapture(ctx context.Context, onPCM func([]byte)) error {
 	}
 
 	ready := make(chan error, 1)
+	exited := make(chan struct{})
 	go func() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
+		// 退出确认：无论初始化失败还是捕获循环结束，close(exited) 都是
+		// 本 goroutine 的最后一个动作，Stop 侧据此确认 emitPCM 不会再被调用
+		defer close(exited)
 
 		w, err := start()
 		ready <- err
@@ -295,7 +311,7 @@ func startNativeSystemCapture(ctx context.Context, onPCM func([]byte)) error {
 		}
 		w.loop(ctx, onPCM)
 	}()
-	return <-ready
+	return exited, <-ready
 }
 
 // parseFormat 解析 WAVEFORMATEX / WAVEFORMATEXTENSIBLE。
@@ -355,8 +371,14 @@ func (w *wasapiCapture) loop(ctx context.Context, onPCM func([]byte)) {
 			var pcm []byte
 			if flags&audclntBufferFlagsDiscontinuity != 0 {
 				// 撕裂包（缓冲溢出/流断点）：包内数据不可信，丢弃并以静音
-				// 维持时间轴——输出撕裂数据才是可闻"破音"的来源
-				util.Logf("[音频] 检测到数据流断点（DISCONTINUITY），丢弃 %d 帧撕裂数据", nframes)
+				// 维持时间轴——输出撕裂数据才是可闻"破音"的来源。
+				// 日志限频每秒最多 1 条：持续 overrun 时断点包每秒可达上百个，
+				// 逐包打日志的 IO 反向加剧负载（音频线程被日志拖慢 → 更多 overrun）。
+				w.discFrames += int64(nframes)
+				if now := time.Now(); now.Sub(w.lastDiscLog) >= time.Second {
+					util.Logf("[音频] 检测到数据流断点（DISCONTINUITY），丢弃 %d 帧撕裂数据（本次捕获累计丢弃 %d 帧）", nframes, w.discFrames)
+					w.lastDiscLog = now
+				}
 				pcm = w.renderSilence(int(nframes))
 			} else if flags&audclntBufferFlagsSilent != 0 {
 				// 静音段：缓冲区数据未定义，按静音输出（miniaudio 缺失的关键处理）
