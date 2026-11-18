@@ -114,6 +114,14 @@
     }
   }
 
+  // Tab 移出组件时关闭下拉（outside-click 只管鼠标；relatedTarget 仍在本
+  // 组件内——如触发按钮与 listbox 间移动焦点——则不关闭）
+  function handleFocusout(e) {
+    if (open && containerRef && !containerRef.contains(e.relatedTarget)) {
+      open = false;
+    }
+  }
+
   onMount(() => {
     window.addEventListener('click', handleOutsideClick);
     window.addEventListener('keydown', handleKeydown);
@@ -125,7 +133,7 @@
   });
 </script>
 
-<div class="nic-select-wrapper" bind:this={containerRef}>
+<div class="nic-select-wrapper" bind:this={containerRef} onfocusout={handleFocusout}>
   <button
     type="button"
     bind:this={triggerRef}
@@ -175,6 +183,7 @@
             {@const isSelected = iface.ip === value}
             <button
               type="button"
+              tabindex="-1"
 	              id={`nic-opt-${i}`}
               class="nic-option"
               class:is-selected={isSelected}
