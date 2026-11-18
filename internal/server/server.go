@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -40,12 +39,19 @@ var upgrader = websocket.Upgrader{
 //
 // 其余（任意网页跨源直连 ws://<本机IP>:8080/ws 窃听键鼠/音频）一律拒绝。
 func isAllowedOrigin(r *http.Request) bool {
+	return originAllowed(r, "[WS] 拒绝跨源 WebSocket 连接")
+}
+
+// originAllowed 是 isAllowedOrigin 的共享实现，供 WS 升级与写接口 CSRF 校验
+// 复用同一份白名单口径；rejectLabel 只区分日志来源。
+func originAllowed(r *http.Request, rejectLabel string) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {
+		// 非浏览器客户端（curl、peer_manager 出站连接、桌面窗口相对路径请求）
 		return true
 	}
 	reject := func() {
-		util.Logf("[WS] 拒绝跨源 WebSocket 连接: Origin=%q RemoteAddr=%s (若桌面窗口被误拒，请把日志里的 Origin 值加入白名单)", origin, r.RemoteAddr)
+		util.Logf("%s: Origin=%q RemoteAddr=%s (合法来源：无 Origin、本机地址、localhost/wails.localhost、.local/.home.arpa 局域网保留域名)", rejectLabel, origin, r.RemoteAddr)
 	}
 	u, err := url.Parse(origin)
 	if err != nil {
@@ -62,8 +68,9 @@ func isAllowedOrigin(r *http.Request) bool {
 			reject()
 			return false
 		}
-		// Windows WebView2 的 Wails 窗口固定以 wails.localhost 为来源
-		if host == "localhost" || host == "wails.localhost" {
+		// Windows WebView2 的 Wails 窗口固定以 wails.localhost 为来源；
+		// *.localhost 按规范解析到回环地址，与前端 isDesktopShell 的判断口径一致
+		if host == "localhost" || host == "wails.localhost" || strings.HasSuffix(host, ".wails.localhost") {
 			return true
 		}
 		if ip := net.ParseIP(host); ip != nil {
@@ -73,15 +80,14 @@ func isAllowedOrigin(r *http.Request) bool {
 			reject()
 			return false
 		}
-		// 主机名（如 mDNS 名称）解析到本机地址也算同源
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		if addrs, err := net.DefaultResolver.LookupHost(ctx, host); err == nil {
-			for _, a := range addrs {
-				if util.IsLocalIP(a) {
-					return true
-				}
-			}
+		// 局域网保留域名（RFC 6762 .local、RFC 8375 home.arpa）只在局域网内
+		// 解析，公网 DNS 无法持有，不存在 rebinding 路径；本应用的入口 URL
+		// （二维码/日志打印）均为 IP 形态，其余主机名一律拒绝。
+		// 不做「主机名解析到本机地址」判断：攻击者完全控制自己域名的 DNS，
+		// 先解析到自己服务器拿页面、握手时 TTL=0 rebind 到受害者内网 IP，
+		// 即可绕过该检查（DNS rebinding）；且每次跨源握手同步 DNS 最多阻塞 2s。
+		if strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".home.arpa") {
+			return true
 		}
 		reject()
 		return false
@@ -89,6 +95,20 @@ func isAllowedOrigin(r *http.Request) bool {
 		reject()
 		return false
 	}
+}
+
+// requireTrustedOrigin 包裹有副作用的写接口：恶意网页可用 no-cors fetch 以
+// text/plain 盲打任意 JSON body（CSRF），浏览器只在「同源」时才允许携带
+// 凭据性请求，因此写接口必须与 WS 同口径校验 Origin。纯读接口不需要：
+// 本服务不返回 CORS 头，浏览器本就拦截跨源读取响应。
+func requireTrustedOrigin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !originAllowed(r, "[安全] 拒绝跨源写接口请求") {
+			http.Error(w, "origin not allowed", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // isLocalInterfaceIP 判断给定 IP 字符串是否属于本机现有网卡地址。
@@ -380,8 +400,8 @@ func (s *Server) buildRoutes() http.Handler {
 		json.NewEncoder(w).Encode(resp)
 	})
 
-	// Network interface switch/select API
-	mux.HandleFunc("/api/interfaces/select", func(w http.ResponseWriter, r *http.Request) {
+	// Network interface switch/select API（写接口：Origin 校验防 CSRF，下同）
+	mux.Handle("/api/interfaces/select", requireTrustedOrigin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 仅允许 POST：GET 会被网页 <img> 直接触发（CSRF 可打乱通信地址）
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -417,7 +437,7 @@ func (s *Server) buildRoutes() http.Handler {
 			"current_url": s.GetCurrentURL(),
 		}
 		json.NewEncoder(w).Encode(resp)
-	})
+	})))
 
 	// Unified Peer Discovery & Mapping APIs (发现的所有对端与自主映射)
 	mux.HandleFunc("/api/peers", func(w http.ResponseWriter, r *http.Request) {
@@ -431,7 +451,11 @@ func (s *Server) buildRoutes() http.Handler {
 		})
 	})
 
-	mux.HandleFunc("/api/peers/add", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/peers/add", requireTrustedOrigin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		var body struct {
 			Target string `json:"target"`
@@ -454,9 +478,13 @@ func (s *Server) buildRoutes() http.Handler {
 			"success": true,
 			"peer":    peer,
 		})
-	})
+	})))
 
-	mux.HandleFunc("/api/peers/rename", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/peers/rename", requireTrustedOrigin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		var body struct {
 			PeerID string `json:"peer_id"`
@@ -476,9 +504,13 @@ func (s *Server) buildRoutes() http.Handler {
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
-	})
+	})))
 
-	mux.HandleFunc("/api/peers/map", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/peers/map", requireTrustedOrigin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		var body struct {
 			PeerID          string `json:"peer_id"`
@@ -506,12 +538,12 @@ func (s *Server) buildRoutes() http.Handler {
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
-	})
+	})))
 
 	// Self node status & capabilities sharing configuration
 	// 前端自检上报：页面内 JS 把 WebSocket 连接状态/错误 POST 回来，
 	// 写入日志（桌面窗口无控制台/DevTools 时排查前端连接问题的唯一通道）
-	mux.HandleFunc("/api/client-report", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/client-report", requireTrustedOrigin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -532,9 +564,9 @@ func (s *Server) buildRoutes() http.Handler {
 		util.Logf("[前端自检] %s %s (ws=%s, ua=%s)",
 			truncLogField(body.Event), truncLogField(body.Detail), truncLogField(body.URL), truncLogField(r.UserAgent()))
 		json.NewEncoder(w).Encode(map[string]bool{"ok": true})
-	})
+	})))
 
-	mux.HandleFunc("/api/self", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/self", requireTrustedOrigin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPost {
 			var body struct {
@@ -612,7 +644,7 @@ func (s *Server) buildRoutes() http.Handler {
 			"log_path":            util.LogFilePath(),
 		}
 		json.NewEncoder(w).Encode(resp)
-	})
+	})))
 
 	// Status API
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
