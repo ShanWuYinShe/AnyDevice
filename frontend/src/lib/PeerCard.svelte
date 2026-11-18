@@ -54,7 +54,10 @@
       : 'laptop'
   );
 
-  const audioSuspended = $derived(sysAudioMapped && String(audioPlayState.text).includes('suspended'));
+  // 系统声或麦克风任一路映射开启时，AudioContext 被系统挂起都应可检测可恢复
+  const audioSuspended = $derived(
+    (sysAudioMapped || micAudioMapped) && String(audioPlayState.text).includes('suspended')
+  );
   const connectionText = $derived(
     mapping.connection_status === 'connected' ? '已连接'
       : mapping.connection_status && mapping.connection_status !== 'disconnected'
@@ -175,8 +178,9 @@
       + '数字持续增长说明接收端（本机）负载高、在反复重新预缓冲，与对端采集无关。';
   }
 
-  const cursorText = $derived(String(telemetry.cursor[peer.id] || '').replace(/^●\s*/, ''));
-  const keyboardText = $derived(String(telemetry.keyboard[peer.id] || '').replace(/^●\s*/, ''));
+  // 遥测条目为 { text, at }（写入端带时间戳、fetchPeers 轮询过期清除）
+  const cursorText = $derived(String(telemetry.cursor[peer.id]?.text || '').replace(/^●\s*/, ''));
+  const keyboardText = $derived(String(telemetry.keyboard[peer.id]?.text || '').replace(/^●\s*/, ''));
 
   const sysAudioTitle = $derived(sysAudioMapped ? '停止播放' : '映射播放');
   const micAudioTitle = $derived(micAudioMapped ? '停止收听' : '映射收听');
@@ -314,14 +318,17 @@
           {:else if !hasMicAudio}
             <span>对端未开启麦克风共享</span>
           {:else if micAudioMapped}
-            <span class="status-dot is-live" aria-hidden="true"></span>
-            <span title={audioPlayState.text}>正在收听</span>
+            <span class="status-dot" class:is-live={!audioSuspended} class:is-warn={audioSuspended} aria-hidden="true"></span>
+            <span title={audioPlayState.text}>{audioSuspended ? '播放器被系统挂起' : '正在收听'}</span>
             <span class="meta-dot" aria-hidden="true"></span>
             <span class="mono" title={audioRateTitle}>{micRateKBps} KB/s</span>
             <span class="meta-dot" aria-hidden="true"></span>
             <span class="mono latency-chip" title={latencyTitle('麦克风', micLatency)}>≈{micLatency.totalMs}ms</span>
             {#if micLatency.underflows > 0}
               <span class="latency-warn" title={underflowTitle(micLatency)}>欠载 {micLatency.underflows}</span>
+            {/if}
+            {#if audioSuspended}
+              <button class="link-btn" onclick={resumeAudio}>点击恢复播放</button>
             {/if}
           {:else}
             <span>把对端的麦克风拾音映射到本机播放</span>

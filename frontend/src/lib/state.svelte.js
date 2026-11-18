@@ -48,6 +48,10 @@ export function targetSubs() {
 }
 
 let lastSubs = { audio: null, sys: null, mic: null, mouse: null, keyboard: null };
+// 本端 set_mapping 已协商的 pcm 标志（无 WebCodecs AudioDecoder 时为 true，
+// 服务端会把音频解码成无 tag 的裸 float32 PCM 下发）。二进制帧兜底播放
+// 用它区分「确实会收到裸 PCM」与「带未知 tag 的新协议帧」。
+let negotiatedPcm = typeof AudioDecoder === 'undefined';
 
 export function openModal(id) {
   uiState.modal = id;
@@ -103,6 +107,20 @@ export function formatOs(os) {
     : os || '未知系统';
 }
 
+// 遥测文本过期上限（ms）：光标/按键条目超过此时长无新事件即清除，
+// 由 ~1.2s 的 fetchPeers 轮询驱动，不新增定时器
+const TELEMETRY_TTL_MS = 4000;
+// pruneTelemetry 清除过期的遥测条目，让卡片回到「等待对端事件」占位
+function pruneTelemetry() {
+  const now = Date.now();
+  for (const id of Object.keys(telemetry.cursor)) {
+    if (!telemetry.cursor[id] || now - telemetry.cursor[id].at > TELEMETRY_TTL_MS) delete telemetry.cursor[id];
+  }
+  for (const id of Object.keys(telemetry.keyboard)) {
+    if (!telemetry.keyboard[id] || now - telemetry.keyboard[id].at > TELEMETRY_TTL_MS) delete telemetry.keyboard[id];
+  }
+}
+
 // —— 数据轮询 ——
 // 请求序号守卫：轮询是无守卫的 async，服务端变慢时会多个请求并发，
 // 先发后至的旧响应会覆盖新响应（设备列表闪回旧状态、离线设备“复活”）。
@@ -131,6 +149,8 @@ export async function fetchPeers() {
     if (seq !== fetchPeersSeq) return;
     // 服务端已按查看者过滤“自己”，这里再兜底过滤一次
     peerState.list = (data.peers || []).filter((p) => !isSelfPeer(p));
+    // 复用本次轮询清除过期遥测（不新增定时器）
+    pruneTelemetry();
   } catch (e) {
     console.error('fetchPeers failed:', e);
   }
@@ -145,6 +165,7 @@ export function sendSubscriptions() {
   // pcm：客户端没有 WebCodecs AudioDecoder（Wails macOS WKWebView / Safari）时
   // 声明 true，服务端把对端音频解码成 float32 PCM 再下发（见 server/hub.go）。
   // sys_audio/mic_audio 为新协议分流订阅；audio 是旧协议并集字段。
+  negotiatedPcm = typeof AudioDecoder === 'undefined';
   ws.send(JSON.stringify({
     action: 'set_mapping',
     audio: t.audio,
@@ -152,7 +173,7 @@ export function sendSubscriptions() {
     mic_audio: t.mic,
     mouse: t.mouse,
     keyboard: t.keyboard,
-    pcm: typeof AudioDecoder === 'undefined',
+    pcm: negotiatedPcm,
   }));
   lastSubs = { audio: t.audio, sys: t.sys, mic: t.mic, mouse: t.mouse, keyboard: t.keyboard };
 }
@@ -160,6 +181,10 @@ export function sendSubscriptions() {
 // —— WebSocket 音频与遥测流 ——
 let ws = null;
 let reconnectTimer = null;
+// 生命周期停止标志：startPolling 的清理函数置位，阻止 close() 异步触发的
+// onclose 再无条件安排重连（否则组件卸载后会留下无人管理的僵尸 WS）；
+// 重新 startPolling 时复位，重连走同一套防重入路径。
+let stopped = false;
 
 // isAllZeroPCM 判断 float32 交错 PCM 是否全零（静音段）。
 // 全扫描开销在 50 帧/秒下可忽略，避免误伤真实音频开头的静音采样。
@@ -258,9 +283,15 @@ async function resolveWsBase() {
 }
 
 export async function connectWebSocket() {
+  // 已停止（清理函数已执行）时不再新建连接：拦截残留的重连定时器等外部调用
+  if (stopped) return;
   // 异步解析基地址期间可能被再次调用（轮询/重连），已有连接时直接跳过
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
   const wsBase = await resolveWsBase();
+  // await 窗口内可能有并发调用已创建连接：复查一次避免双连——否则旧 socket
+  // 的 handlers 仍在，覆盖引用后广播音频会被两路重复喂缓冲
+  if (stopped) return;
+  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
   ws = new WebSocket(wsBase + '/ws');
   ws.binaryType = 'arraybuffer';
 
@@ -333,7 +364,10 @@ export async function connectWebSocket() {
           return;
         }
       }
-      if (playState().system || playState().mic) {
+      // 兜底播放仅限旧协议裸 PCM：帧短到解析不出 tag，或本端 set_mapping
+      // 协商过 pcm=true（服务端确实会下发无 tag 裸 PCM）。带未知 tag 的帧
+      // 一律丢弃——否则未来新增帧类型会连 4 字节 tag 一起被当 PCM 播（噪声）。
+      if ((!tag || negotiatedPcm) && (playState().system || playState().mic)) {
         playPCM(event.data, playState().system ? 'sys' : 'mic');
       }
       return;
@@ -341,14 +375,17 @@ export async function connectWebSocket() {
     if (typeof event.data === 'string') {
       try {
         const msg = JSON.parse(event.data);
+        // 写入带时间戳（{ text, at }）：光标/按键是瞬时状态，由 fetchPeers
+        // 轮询清除过期条目（pruneTelemetry），不新增定时器
         if (msg.type === 'mouse' && msg.peer_id) {
+          // screen_w/h 是对端屏幕尺寸，坐标是对端屏幕上的位置（不是本地执行位置）
           const posX = Math.round(msg.x * (msg.screen_w || 1920));
           const posY = Math.round(msg.y * (msg.screen_h || 1080));
-          telemetry.cursor[msg.peer_id] = '● 正在本地执行: (' + posX + ', ' + posY + ')';
+          telemetry.cursor[msg.peer_id] = { text: '● 对端光标 (' + posX + ', ' + posY + ')', at: Date.now() };
         } else if (msg.type === 'keyboard' && msg.peer_id) {
           const actionText = msg.action === 'down' ? '按下' : '释放';
           const keyName = msg.friendly || msg.key || '按键';
-          telemetry.keyboard[msg.peer_id] = '● 正在本地执行: ' + actionText + ' [' + keyName + ']';
+          telemetry.keyboard[msg.peer_id] = { text: '● 正在本地执行: ' + actionText + ' [' + keyName + ']', at: Date.now() };
         }
       } catch {
         // 忽略非 JSON 文本帧
@@ -357,6 +394,9 @@ export async function connectWebSocket() {
   };
 
   ws.onclose = (e) => {
+    // 清理函数已先摘除本 handler 再 close()；这里只在摘除与事件派发竞态等
+    // 边界下兜底生效，绝不能再安排重连（否则卸载后留下僵尸 WS）
+    if (stopped) return;
     connState.wsOpen = false;
     report('ws_close', 'code=' + (e && e.code) + ' reason=' + (e && e.reason) + ' wasClean=' + (e && e.wasClean));
     // 重连后服务端订阅回到默认值：重置已发送标记，onopen 时重新同步
@@ -479,6 +519,8 @@ export async function saveSelfSettings(payload) {
 
 // —— 生命周期：轮询定时器（供组件 onMount/onDestroy 调用） ——
 export function startPolling() {
+  // 组件重新挂载会再次调用：复位清理函数置位的停止标志，重连走同一套防重入路径
+  stopped = false;
   hookStreamStats(); // 播放水位/延迟接入 UI 状态（重复调用由 guard 兜底）
   refreshAudioCtxInfo();
   fetchSelf().then(fetchPeers);
@@ -494,9 +536,19 @@ export function startPolling() {
     fetchSelf();
   }, 5000);
   return () => {
+    stopped = true;
     clearInterval(peersTimer);
     clearInterval(selfTimer);
     clearTimeout(reconnectTimer);
-    if (ws) ws.close();
+    if (ws) {
+      // 先摘除 onclose 再 close：close 异步触发的 onclose 不再无条件安排重连
+      //（close 事件由浏览器异步派发，置位 stopped 只是兜底）
+      ws.onclose = null;
+      ws.close();
+      ws = null;
+    }
+    // 与 onclose 保持同一不变量：连接已断，下次 onopen 必须重新同步订阅
+    lastSubs = { audio: null, sys: null, mic: null, mouse: null, keyboard: null };
+    connState.wsOpen = false;
   };
 }
