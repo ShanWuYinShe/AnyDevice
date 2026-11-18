@@ -47,6 +47,13 @@ jobs:
         working-directory: frontend
         run: bun install --frozen-lockfile && bun run check
 
+      - name: worklet 自适应缓冲数值验证
+        # 虚拟时钟驱动真实 worklet 源码，锁定抖动缓冲自适应行为
+        # （初始 60ms / 降 40ms / 欠载 +30 / 封顶 200 / 抖动与丢包响应 /
+        # 软限幅），详见 frontend/scripts/validate-worklet.mjs 头注
+        working-directory: frontend
+        run: bun run test:worklet
+
       - name: 前端构建（产物嵌入 internal/web/dist）
         working-directory: frontend
         run: bun run build
