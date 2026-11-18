@@ -187,7 +187,15 @@ go test ./...                              # 默认测试：含 Opus 编解码�
                                            #（cgo libopus 已静态链接，无需额外 tag）
 go test ./internal/audio -run RoundTrip -v  # 只跑往返保真（TestOpusRoundTripFidelity：
                                            #  断言解出正弦的幅度/频率与输入一致）
+bun run test:worklet                        # 前端 worklet 自适应缓冲数值验证
+                                           #  （虚拟时钟驱动真实 worklet 源码，15 项断言：
+                                           #   初始 60ms/降 40ms/欠载 +30/封顶 200/抖动丢包响应/软限幅）
+./scripts/smoke.sh                          # 真实进程 HTTP 面冒烟（15 项断言：空闲态、Origin CSRF
+                                           #  中间件、手动对端、优雅退出；无局域网副作用，自动清理）
 ```
+
+以上均已在 CI 中执行（`test:worklet` 在 macos job、`smoke.sh` 在 linux-build job），
+本地改动后可单独复跑对应项。
 
 ### 前端开发
 
