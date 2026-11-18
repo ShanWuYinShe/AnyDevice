@@ -238,7 +238,20 @@ export function ensureAudioContext() {
     return;
   }
   const Ctx = window.AudioContext || window.webkitAudioContext;
-  audioCtx = new Ctx({ sampleRate: 48000 });
+  // 构造可能抛错（部分 WKWebView 对强制 sampleRate 支持不佳）：先按 48kHz
+  // 构造，失败回退为不指定采样率（跟随设备默认）再试一次；仍失败时把错误
+  // 写入 workletError 诊断通道并保持 audioCtx 为空——primeAudio/resumeAudio
+  // 等调用方安全跳过，不阻断 toggleMapping 的 API 调用。
+  try {
+    audioCtx = new Ctx({ sampleRate: 48000 });
+  } catch (_) {
+    try {
+      audioCtx = new Ctx();
+    } catch (e) {
+      workletError = 'AudioContext 创建失败: ' + String((e && e.message) || e);
+      return;
+    }
+  }
   if (!audioCtx.audioWorklet) {
     workletError = '浏览器不支持 AudioWorklet';
     return;
@@ -356,6 +369,9 @@ const opusDecoders = { sys: null, mic: null };
 // 每个解码器实例的首块必须是 key frame；解码报错后需重置按关键帧重来
 const opusNeedKey = { sys: true, mic: true };
 let opusTsUs = 0;
+// 「无 AudioDecoder」提示只写一次：ensureOpusDecoder 每包调用（约 50 次/秒），
+// 重复赋值同一字符串纯属浪费
+let noDecoderNoteWritten = false;
 
 function ensureOpusDecoder(key) {
   if (opusDecoders[key]) return;
@@ -363,7 +379,10 @@ function ensureOpusDecoder(key) {
     // 没有 AudioDecoder 的客户端（macOS Wails 窗口的 WKWebView、Safari）不会走到
     // 这里：连接建立时 set_mapping 已声明 pcm=true，服务端把对端音频解码成
     // float32 PCM 下发（AUDS/AUDM），由 playPCM 路径播放。这里只做兜底提示。
-    workletError = '当前环境无 WebCodecs AudioDecoder（服务端将改为下发 PCM）';
+    if (!noDecoderNoteWritten) {
+      noDecoderNoteWritten = true;
+      workletError = '当前环境无 WebCodecs AudioDecoder（服务端将改为下发 PCM）';
+    }
     return;
   }
   const decoder = new AudioDecoder({
