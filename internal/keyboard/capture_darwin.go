@@ -118,7 +118,6 @@ import "C"
 
 import (
 	"context"
-	"fmt"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -388,7 +387,7 @@ func runEventCapture(ctx context.Context, emit func(KeyEvent)) bool {
 	}()
 
 	if !<-installed {
-		fmt.Println("[键盘捕获] CGEventTap 安装失败（未授予辅助功能权限），回退轮询模式")
+		util.Logf("[键盘捕获] CGEventTap 安装失败（未授予辅助功能权限），回退轮询模式")
 		return false
 	}
 
@@ -403,7 +402,7 @@ func runEventCapture(ctx context.Context, emit func(KeyEvent)) bool {
 		select {
 		case <-tapExited:
 		case <-time.After(2 * time.Second):
-			fmt.Println("[键盘捕获] CGEventTap 停止等待超时（继续，避免卡死退出路径）")
+			util.Logf("[键盘捕获] CGEventTap 停止等待超时（继续，避免卡死退出路径）")
 		}
 	}
 

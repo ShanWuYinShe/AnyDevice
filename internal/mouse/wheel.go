@@ -65,5 +65,13 @@ func WheelDeltaForLocal(unit string, raw int, localOS, peerOS string, accum *int
 		}
 		return raw * wheelDelta
 	}
+	// darwin/linux 注入端按行注入：同样加单事件上限（此前原值直传，
+	// 异常对端一次最多可注入 10000 行），与上方 Windows 分支同口径
+	const maxLines = 500
+	if raw > maxLines {
+		raw = maxLines
+	} else if raw < -maxLines {
+		raw = -maxLines
+	}
 	return raw
 }
