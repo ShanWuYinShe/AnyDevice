@@ -584,7 +584,9 @@ func (pm *PeerManager) connectAndLoop(sessionCtx context.Context, peerID, target
 		}
 
 		t0 := time.Now()
-		conn, _, err := dialer.Dial(u.String(), nil)
+		// 带会话 ctx：用户在拨号窗口内关闭映射（disconnect → cancel）时，
+		// 在途拨号立即中断，不再留下注册后无人订阅的僵尸连接
+		conn, _, err := dialer.DialContext(sessionCtx, u.String(), nil)
 		latency := time.Since(t0).Milliseconds()
 
 		if err != nil {

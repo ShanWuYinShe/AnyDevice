@@ -303,6 +303,14 @@ func (s *Service) GetProvides() DeviceCapabilities {
 }
 
 func (s *Service) Start() {
+	// 测试隔离开关：go test 下置位可跳过真实 UDP 绑定与广播/监听循环，
+	// 避免单测与开发机上常驻实例互抢 DiscoveryPort、互发 beacon（listenLoop
+	// 对未知包每 5s 重试刷日志）。手动对端（AddManualPeer）不依赖网络循环，
+	// GetPeers/AddManualPeer 在跳过后行为不变。仅测试使用，生产环境勿设。
+	if os.Getenv("ANY_DEVICE_DISCOVERY_OFF") != "" {
+		util.Logf("[Discovery] ANY_DEVICE_DISCOVERY_OFF 已设置：跳过 UDP 绑定与广播")
+		return
+	}
 	s.mu.Lock()
 	if s.cancel != nil {
 		s.mu.Unlock()
@@ -344,7 +352,12 @@ func (s *Service) broadcastLoop(ctx context.Context) {
 		IP:   net.ParseIP(MulticastGroup),
 		Port: DiscoveryPort,
 	}
-	mconn, _ := net.DialUDP("udp4", nil, mcastAddr)
+	// 失败只降级（组播出口缺失时仍走受限广播/定向广播，见下方 nil 保护），
+	// 但要留痕：多网卡机器悄悄退化极难排查
+	mconn, err := net.DialUDP("udp4", nil, mcastAddr)
+	if err != nil {
+		util.Logf("[Discovery] UDP 组播套接字警告: %v", err)
+	}
 
 	// 定向广播套接字池：按目标地址复用，网卡变化时清理失效项
 	directed := make(map[string]*net.UDPConn)

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"any_device/internal/audio"
-	"any_device/internal/mouse"
 
 	"github.com/gorilla/websocket"
 )
@@ -648,8 +647,11 @@ func (c *Client) writePump() {
 }
 
 func (c *Client) readPump() {
+	// 不在此释放鼠标按键：入站客户端（UI 页面/手机浏览器）只消费事件流，
+	// readPump 只处理 set_mapping 订阅声明，从不注入；这里的释放会误放
+	// 出站对端连接（peer_manager.runPeerConnection，自带同款 defer）正
+	// 持有的按钮，掐断远端拖拽
 	defer func() {
-		mouse.ReleaseAllButtons()
 		c.hub.unregister <- c
 		c.conn.Close()
 	}()

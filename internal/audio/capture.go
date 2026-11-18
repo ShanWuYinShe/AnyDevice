@@ -787,8 +787,9 @@ func (e *Engine) Stop() {
 	// 不会新建孤儿编码器；其后 opusMu 互斥下销毁，与任何在途 Feed 不重叠
 	e.isRunning.Store(false)
 
-	// 关闭编码队列：编码 goroutine 排空剩余帧（Feed 前检查 isRunning，
-	// 迟到帧丢弃）后退出；close 与入队无竞争——设备已停、回调不再入队
+	// 关闭编码队列：编码 goroutine 在 done 分支立即退出（绝不常驻，也
+	// 不排空积压帧——Stop 场景丢帧语义可接受）；close 与入队无竞争——
+	// 设备已停、回调不再入队（Feed 前检查 isRunning，迟到帧丢弃）
 	close(e.encDone)
 
 	e.opusMu.Lock()
