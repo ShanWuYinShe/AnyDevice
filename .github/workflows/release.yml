@@ -50,7 +50,7 @@ jobs:
         run: |
           cd dist
           for A in arm64 amd64 universal; do
-            zip -qry "AnyDevice-macOS-${A}.zip" "AnyDevice_${A}.app"
+            zip -qry "AnyDevice-macOS-${A}.zip" "./AnyDevice_${A}.app"
           done
           ls -lh *.zip
 
@@ -202,7 +202,10 @@ jobs:
           PYEOF
 
       - name: 创建 GitHub Release
-        uses: softprops/action-gh-release@v2
+        # v3 起原生跑在 Node 24 运行时（v2 线停在 Node 20，会被 GitHub 强制
+        # 升到 Node 24 并持续报弃用注解）；v2→v3 输入接口无破坏性变更，
+        # tag_name/name/body_path/files/draft/prerelease 语义不变
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: AnyDevice ${{ github.ref_name }}
