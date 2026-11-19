@@ -52,7 +52,7 @@ jobs:
           for A in arm64 amd64 universal; do
             zip -qry "AnyDevice-macOS-${A}.zip" "./AnyDevice_${A}.app"
           done
-          ls -lh *.zip
+          ls -lh ./*.zip
 
       - uses: actions/upload-artifact@v7
         with:
