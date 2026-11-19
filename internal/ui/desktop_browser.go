@@ -37,7 +37,7 @@ func RunDesktop(handler http.Handler, localURL, title string, width, height int)
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
-	fmt.Println("\n窗口已关闭，正在停止服务...")
+	fmt.Println("\n5 秒内未检测到页面连接（窗口可能已关闭，或浏览器仍在启动中）。正在停止服务...")
 }
 
 func openAppWindow(url, title string, width, height int) {
