@@ -44,7 +44,7 @@ go build -tags wails,desktop,production \
   CGO_ENABLED=1 CC=x86_64-w64-mingw32-gcc GOOS=windows GOARCH=amd64 go build ./internal/audio/  # 需本机 mingw-w64
   ```
 
-- CI 覆盖（`.github/workflows/ci.yml`，5 个并行 job）：
+- CI 覆盖（`.github/workflows/ci.yml`；job 列表与数量以该文件为准，数量用 `yq '.jobs | keys | length' .github/workflows/ci.yml` 现取）：
   `macos`（gofmt / go vet / go test / 前端 svelte-check + build / Wails 生产构建 /
   vendored libopus 可复现性校验 / 三架构 .app 打包上传）、
   `windows-cross`（Linux 上交叉编译 Windows 平台层 mouse/keyboard）、
